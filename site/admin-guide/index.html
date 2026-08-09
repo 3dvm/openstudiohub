@@ -12,32 +12,34 @@
         <meta name="author" content="Ernesto Del Valle Macuare">
       
       
-        <link rel="canonical" href="https://osh.estudiomacuare.com/docs/features/automated-qa/">
+        <link rel="canonical" href="https://osh.estudiomacuare.com/docs/admin-guide/">
       
+      
+        <link rel="prev" href="../artist-guide/">
       
       
       
         
       
       
-      <link rel="icon" href="../../assets/logo_openstudiohub.svg">
+      <link rel="icon" href="../assets/logo_openstudiohub.svg">
       <meta name="generator" content="zensical-0.0.53">
     
     
       
-        <title>Automated QA & Auto-Fixing (Gatekeeper) - OpenStudioHub</title>
+        <title>Technical Director & Admin Guide - OpenStudioHub</title>
       
     
     
       
         
       
-      <link rel="stylesheet" href="../../assets/stylesheets/modern/main.20815dad.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/modern/main.20815dad.min.css">
       
         
           
         
-        <link rel="stylesheet" href="../../assets/stylesheets/modern/palette.dfe2e883.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/modern/palette.dfe2e883.min.css">
       
       
 
@@ -56,7 +58,7 @@
       
     
     
-    <script>__md_scope=new URL("../..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
+    <script>__md_scope=new URL("..",location),__md_scope.pathname.endsWith("/")||(__md_scope=new URL(__md_scope.pathname+"/",location)),__md_hash=e=>[...e].reduce(((e,t)=>(e<<5)-e+t.charCodeAt(0)),0),__md_get=(e,t=localStorage,_=__md_scope)=>JSON.parse(t.getItem(_.pathname+"."+e)),__md_set=(e,t,_=localStorage,a=__md_scope)=>{try{_.setItem(a.pathname+"."+e,JSON.stringify(t))}catch(e){}},document.documentElement.setAttribute("data-platform",navigator.platform)</script>
     
       
 
@@ -81,7 +83,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#automated-qa-auto-fixing-gatekeeper" class="md-skip">
+        <a href="#technical-director-admin-guide" class="md-skip">
           Skip to content
         </a>
       
@@ -97,9 +99,9 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="OpenStudioHub" class="md-header__button md-logo" aria-label="OpenStudioHub" data-md-component="logo">
+    <a href="./.." title="OpenStudioHub" class="md-header__button md-logo" aria-label="OpenStudioHub" data-md-component="logo">
       
-  <img src="../../assets/logo_openstudiohub.svg" alt="OpenStudioHub">
+  <img src="../assets/logo_openstudiohub.svg" alt="OpenStudioHub">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer" aria-label="Navigation">
@@ -116,7 +118,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Automated QA &amp; Auto-Fixing (Gatekeeper)
+              Technical Director &amp; Admin Guide
             
           </span>
         </div>
@@ -215,9 +217,9 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="OpenStudioHub" class="md-nav__button md-logo" aria-label="OpenStudioHub" data-md-component="logo">
+    <a href="./.." title="OpenStudioHub" class="md-nav__button md-logo" aria-label="OpenStudioHub" data-md-component="logo">
       
-  <img src="../../assets/logo_openstudiohub.svg" alt="OpenStudioHub">
+  <img src="../assets/logo_openstudiohub.svg" alt="OpenStudioHub">
 
     </a>
     OpenStudioHub
@@ -244,7 +246,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="./.." class="md-nav__link">
         
   
   
@@ -270,7 +272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../features/" class="md-nav__link">
         
   
   
@@ -296,7 +298,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../artist-guide/" class="md-nav__link">
+      <a href="../artist-guide/" class="md-nav__link">
         
   
   
@@ -319,10 +321,19 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../admin-guide/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -337,6 +348,7 @@
   
 
       </a>
+      
     </li>
   
 
@@ -358,11 +370,6 @@
                       
                     
                     
-                      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-                      <div class="md-sidebar-button__wrapper">
-                        <label class="md-sidebar-button" for="__toc"></label>
-                      </div>
-                    
                   
                   <div class="md-sidebar__inner">
                     
@@ -374,75 +381,6 @@
   
     
   
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#what-is-the-gatekeeper" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        What is the Gatekeeper?
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#key-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Key Features
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Key Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-out-of-bounds-dependency-resolution" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        1. Out-of-Bounds Dependency Resolution
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-geometry-sanity-scale-auto-fix" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        2. Geometry Sanity &amp; Scale Auto-Fix
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-silent-orphan-purging" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        3. Silent Orphan Purging
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
   
 </nav>
                   </div>
@@ -468,23 +406,15 @@
   
 
 
-<h1 id="automated-qa-auto-fixing-gatekeeper">Automated QA &amp; Auto-Fixing (Gatekeeper)<a class="headerlink" href="#automated-qa-auto-fixing-gatekeeper" title="Permanent link">&para;</a></h1>
-<p>In a fast-paced production environment, sending a file back and forth between artists and supervisors due to technical errors—like an unapplied scale or a missing texture—is a massive waste of time and money. </p>
-<p>OpenStudio Hub solves this natively through its <strong>Gatekeeper</strong> engine.</p>
-<h2 id="what-is-the-gatekeeper">What is the Gatekeeper?<a class="headerlink" href="#what-is-the-gatekeeper" title="Permanent link">&para;</a></h2>
-<p>The Gatekeeper is a strict, automated Quality Assurance (QA) protocol that runs silently in the background. Before an artist is allowed to push or publish their work to the server, the Gatekeeper audits the scene to ensure it complies with the studio's technical standards.</p>
-<p>Instead of just warning the user, <strong>it actively attempts to fix the issues for them.</strong></p>
-<h2 id="key-features">Key Features<a class="headerlink" href="#key-features" title="Permanent link">&para;</a></h2>
-<h3 id="1-out-of-bounds-dependency-resolution">1. Out-of-Bounds Dependency Resolution<a class="headerlink" href="#1-out-of-bounds-dependency-resolution" title="Permanent link">&para;</a></h3>
-<p>A classic mistake: an artist links a texture or an HDRI from their personal <code>Downloads</code> folder instead of the project's network drive (NAS). 
-* <strong>Detection:</strong> The Gatekeeper scans all external dependency paths in Blender.
-* <strong>Auto-Fix (The Concierge):</strong> If a file resides outside the <code>OPENSTUDIO_PROJECT_ROOT</code>, it triggers an interactive pop-up. The artist classifies the file, and the Hub automatically copies the asset to the correct shared folder and makes the paths relative. No more "pink meshes".</p>
-<h3 id="2-geometry-sanity-scale-auto-fix">2. Geometry Sanity &amp; Scale Auto-Fix<a class="headerlink" href="#2-geometry-sanity-scale-auto-fix" title="Permanent link">&para;</a></h3>
-<p>Delivering an asset with unapplied rotations or incorrect scales will break rigs and downstream simulations.
-* <strong>Detection:</strong> Scans all published objects for Scale anomalies (anything != 1.0, 1.0, 1.0) and unapplied rotations.
-* <strong>Auto-Fix:</strong> Automatically applies transformations (<code>bpy.ops.object.transform_apply</code>) and enforces the studio's strict naming conventions (e.g., <code>{asset_name}-{suffix}</code>).</p>
-<h3 id="3-silent-orphan-purging">3. Silent Orphan Purging<a class="headerlink" href="#3-silent-orphan-purging" title="Permanent link">&para;</a></h3>
-<p>To keep files lightweight and repository sizes small, the system runs a transparent purge of unused data blocks (orphan data) and explicitly excludes temporary collections (like <code>__TEMP__</code>) from the final publish.</p>
+<h1 id="technical-director-admin-guide">Technical Director &amp; Admin Guide<a class="headerlink" href="#technical-director-admin-guide" title="Permanent link">&para;</a></h1>
+<p>Welcome to the infrastructure core of OpenStudio Hub. This section is dedicated to Technical Directors (TDs), IT administrators, and Production Managers who need to deploy, maintain, and oversee the studio's technical pipeline.</p>
+<p>While artists enjoy a seamless, one-click interface, the backend relies on robust networking and version control orchestration.</p>
+<p>Navigate through the administrative documentation:</p>
+<ul>
+<li><strong><a href="../admin-guide/deployment/">B2B Studio Deployment &amp; Provisioning</a>:</strong> A comprehensive guide to packaging the global configuration into <code>.seed</code> files for zero-friction Day 0 deployments.</li>
+<li><strong><a href="../admin-guide/vcs-abstraction/">VCS Abstraction (SVN / Git LFS)</a>:</strong> Technical details on how the Hub abstractly supports both SVN and Git LFS under the hood.</li>
+<li><strong><a href="../admin-guide/process-guardian/">Process Guardian &amp; Corruption Prevention</a>:</strong> Understand how the Hub protects your repository by preventing orphan server locks and safely handling crash recoveries.</li>
+</ul>
 
 
 
@@ -520,6 +450,28 @@
         <footer class="md-footer">
   
     
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../artist-guide/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Artist Guide">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Artist Guide
+              </div>
+            </div>
+          </a>
+        
+        
+      </nav>
+    
   
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
@@ -550,10 +502,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate":null,"base":"../..","features":["announce.dismiss","content.code.annotate","content.code.copy","content.code.select","content.footnote.tooltips","content.tabs.link","content.tooltips","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
+      <script id="__config" type="application/json">{"annotate":null,"base":"..","features":["announce.dismiss","content.code.annotate","content.code.copy","content.code.select","content.footnote.tooltips","content.tabs.link","content.tooltips","navigation.footer","navigation.indexes","navigation.instant","navigation.instant.prefetch","navigation.path","navigation.sections","navigation.top","navigation.tracking","search.highlight"],"search":"../assets/javascripts/workers/search.7d14d953.min.js","tags":null,"translations":{"clipboard.copied":"Copied to clipboard","clipboard.copy":"Copy to clipboard","search.result.more.one":"1 more on this page","search.result.more.other":"# more on this page","search.result.none":"No matching documents","search.result.one":"1 matching document","search.result.other":"# matching documents","search.result.placeholder":"Type to start searching","search.result.term.missing":"Missing","select.version":"Select version"},"version":null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.69c251d7.min.js"></script>
+      <script src="../assets/javascripts/bundle.69c251d7.min.js"></script>
       
     
   </body>

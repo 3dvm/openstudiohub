@@ -20,6 +20,7 @@ Optimizado para Cero-Latencia en el arranque del Dashboard y enrutamiento PM.
 from _version import __version__
 
 import sys
+import os
 from pathlib import Path
 import urllib.parse
 
@@ -27,7 +28,7 @@ import urllib.parse
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget
 from ui.web_context_view import WebContextView
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
 
 # --- CORE (Motores) ---
 #from core import vault_manager
@@ -43,6 +44,8 @@ from ui.view_artist import ViewArtist
 from ui.view_td import ViewTD
 from ui.view_pm import ViewPM
 
+if getattr(sys, 'frozen', False):
+    os.chdir(sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable))
 
 class OpenStudioHub(QMainWindow):
     def __init__(self):
@@ -52,6 +55,8 @@ class OpenStudioHub(QMainWindow):
         self.setWindowTitle(f"OpenStudioHub - v{__version__}")
         self.resize(1000, 700) 
         self.setMinimumSize(800, 600)
+
+        self.setWindowIcon(QIcon("assets/openstudiohub.ico"))
 
         # Guardián de Procesos (Protección de Lock Passing)
         self.blender_instances = 0

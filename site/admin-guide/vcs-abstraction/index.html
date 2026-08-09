@@ -12,7 +12,7 @@
         <meta name="author" content="Ernesto Del Valle Macuare">
       
       
-        <link rel="canonical" href="https://osh.estudiomacuare.com/docs/features/automated-qa/">
+        <link rel="canonical" href="https://osh.estudiomacuare.com/docs/admin-guide/vcs-abstraction/">
       
       
       
@@ -25,7 +25,7 @@
     
     
       
-        <title>Automated QA & Auto-Fixing (Gatekeeper) - OpenStudioHub</title>
+        <title>VCS Abstraction (SVN / Git LFS) - OpenStudioHub</title>
       
     
     
@@ -81,7 +81,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#automated-qa-auto-fixing-gatekeeper" class="md-skip">
+        <a href="#vcs-abstraction-svn-git-lfs" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Automated QA &amp; Auto-Fixing (Gatekeeper)
+              VCS Abstraction (SVN / Git LFS)
             
           </span>
         </div>
@@ -270,7 +270,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../features/" class="md-nav__link">
         
   
   
@@ -322,7 +322,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../admin-guide/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -382,10 +382,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#what-is-the-gatekeeper" class="md-nav__link">
+  <a href="#how-the-abstraction-layer-works" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        What is the Gatekeeper?
+        How the Abstraction Layer Works
       </span>
     </span>
   </a>
@@ -393,52 +393,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#key-features" class="md-nav__link">
+  <a href="#serialized-binary-access-needs-lock" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Key Features
+        Serialized Binary Access (Needs-Lock)
       </span>
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Key Features">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#1-out-of-bounds-dependency-resolution" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        1. Out-of-Bounds Dependency Resolution
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#2-geometry-sanity-scale-auto-fix" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        2. Geometry Sanity &amp; Scale Auto-Fix
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#3-silent-orphan-purging" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        3. Silent Orphan Purging
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -468,23 +429,18 @@
   
 
 
-<h1 id="automated-qa-auto-fixing-gatekeeper">Automated QA &amp; Auto-Fixing (Gatekeeper)<a class="headerlink" href="#automated-qa-auto-fixing-gatekeeper" title="Permanent link">&para;</a></h1>
-<p>In a fast-paced production environment, sending a file back and forth between artists and supervisors due to technical errors—like an unapplied scale or a missing texture—is a massive waste of time and money. </p>
-<p>OpenStudio Hub solves this natively through its <strong>Gatekeeper</strong> engine.</p>
-<h2 id="what-is-the-gatekeeper">What is the Gatekeeper?<a class="headerlink" href="#what-is-the-gatekeeper" title="Permanent link">&para;</a></h2>
-<p>The Gatekeeper is a strict, automated Quality Assurance (QA) protocol that runs silently in the background. Before an artist is allowed to push or publish their work to the server, the Gatekeeper audits the scene to ensure it complies with the studio's technical standards.</p>
-<p>Instead of just warning the user, <strong>it actively attempts to fix the issues for them.</strong></p>
-<h2 id="key-features">Key Features<a class="headerlink" href="#key-features" title="Permanent link">&para;</a></h2>
-<h3 id="1-out-of-bounds-dependency-resolution">1. Out-of-Bounds Dependency Resolution<a class="headerlink" href="#1-out-of-bounds-dependency-resolution" title="Permanent link">&para;</a></h3>
-<p>A classic mistake: an artist links a texture or an HDRI from their personal <code>Downloads</code> folder instead of the project's network drive (NAS). 
-* <strong>Detection:</strong> The Gatekeeper scans all external dependency paths in Blender.
-* <strong>Auto-Fix (The Concierge):</strong> If a file resides outside the <code>OPENSTUDIO_PROJECT_ROOT</code>, it triggers an interactive pop-up. The artist classifies the file, and the Hub automatically copies the asset to the correct shared folder and makes the paths relative. No more "pink meshes".</p>
-<h3 id="2-geometry-sanity-scale-auto-fix">2. Geometry Sanity &amp; Scale Auto-Fix<a class="headerlink" href="#2-geometry-sanity-scale-auto-fix" title="Permanent link">&para;</a></h3>
-<p>Delivering an asset with unapplied rotations or incorrect scales will break rigs and downstream simulations.
-* <strong>Detection:</strong> Scans all published objects for Scale anomalies (anything != 1.0, 1.0, 1.0) and unapplied rotations.
-* <strong>Auto-Fix:</strong> Automatically applies transformations (<code>bpy.ops.object.transform_apply</code>) and enforces the studio's strict naming conventions (e.g., <code>{asset_name}-{suffix}</code>).</p>
-<h3 id="3-silent-orphan-purging">3. Silent Orphan Purging<a class="headerlink" href="#3-silent-orphan-purging" title="Permanent link">&para;</a></h3>
-<p>To keep files lightweight and repository sizes small, the system runs a transparent purge of unused data blocks (orphan data) and explicitly excludes temporary collections (like <code>__TEMP__</code>) from the final publish.</p>
+<h1 id="vcs-abstraction-svn-git-lfs">VCS Abstraction (SVN / Git LFS)<a class="headerlink" href="#vcs-abstraction-svn-git-lfs" title="Permanent link">&para;</a></h1>
+<p>Modern studios have diverse infrastructure needs. Some rely on the centralized locking mechanisms of Apache Subversion (SVN), while others prefer the distributed nature of Git coupled with Git LFS. </p>
+<p>OpenStudio Hub solves this through a robust architectural pattern: <strong>VCS Abstraction</strong>.</p>
+<h2 id="how-the-abstraction-layer-works">How the Abstraction Layer Works<a class="headerlink" href="#how-the-abstraction-layer-works" title="Permanent link">&para;</a></h2>
+<p>The Hub does not hardcode version control commands into its application logic. Instead, it relies on an <code>AbstractVCS</code> interface that defines base methods such as <code>sparse_pull()</code>, <code>commit()</code>, and <code>lock()</code>.</p>
+<ul>
+<li><strong>The VCS Router:</strong> When the application boots, a <code>VCSRouter</code> reads the studio's configuration and dynamically instantiates the correct concrete adapter (e.g., <code>SVNAdapter</code> or <code>GitLFSAdapter</code>). </li>
+<li><strong>Seamless Polymorphism:</strong> The Hub is capable of supporting SVN or Git LFS under the exact same abstract interface. </li>
+<li><strong>Artist Transparency:</strong> For the end-user (the artist), this underlying complexity is completely invisible. They simply interact with the "Work" and "Publish" buttons, while the <code>VCSRouter</code> dispatches the correct network commands in the background.</li>
+</ul>
+<h2 id="serialized-binary-access-needs-lock">Serialized Binary Access (Needs-Lock)<a class="headerlink" href="#serialized-binary-access-needs-lock" title="Permanent link">&para;</a></h2>
+<p>To prevent simultaneous file corruption on binary files (like <code>.blend</code>), the concrete adapters enforce strict file locking. The VCS adapter will execute <code>svn lock</code> before launching the DCC, and intercept the closure of the environment to mandate an <code>svn unlock</code>, safely passing the baton to the rest of the team.</p>
 
 
 

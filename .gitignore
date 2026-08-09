@@ -3,7 +3,6 @@ __pycache__/
 .macuare/
 build/
 dist/
-*.spec
 *.bin
 tools/
 prompt_context.txt

@@ -12,7 +12,9 @@ repo_url = "https://github.com/3dvm/openstudiohub"
 
 nav = [
   { "Get started" = "index.md" },
-  { "Markdown in 5min" = "markdown.md" },
+  { "Features" = "features.md" },
+  { "Artist Guide" = "artist-guide.md" },
+  { "TD Guide" = "admin-guide.md" },
 ]
 
 # extra_css = ["stylesheets/extra.css"]
@@ -52,14 +54,14 @@ features = [
   # "toc.integrate",
 ]
 
-# logo = "assets/logo.png"
+logo = "assets/logo_openstudiohub.svg"
 
 # [project.theme.icon]
 # logo = "lucide/smile"
 
-# [project.theme.font]
-# text = "Inter"
-# code = "Jetbrains Mono"
+[project.theme.font]
+text = "Inter"
+code = "Jetbrains Mono"
 
 [[project.theme.palette]]
 media = "(prefers-color-scheme)"

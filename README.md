@@ -23,7 +23,7 @@ Here is where **OpenStudio Hub** comes in. Designed under a "zero friction" phil
 
 ---
 
-## ⚠️ The Problem: Dependency Hell
+## ⚠️ The Problem: Changing Blender versions.
 In large-scale productions, updating software versions or add-ons mid-show often breaks backward compatibility. Artists waste hours dealing with Python tracebacks, missing add-ons, and manual path configurations just to open a legacy file without corrupting modern production data.
 
 ## 💡 The Solution: A "rez-like" Ephemeral Sandbox
