@@ -15,6 +15,7 @@ nav = [
   { "Features" = "features.md" },
   { "Artist Guide" = "artist-guide.md" },
   { "TD Guide" = "admin-guide.md" },
+  { "Roadmap" = "roadmap.md" },
 ]
 
 # extra_css = ["stylesheets/extra.css"]
@@ -80,13 +81,13 @@ scheme = "slate"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to system preference"
 
-# [[project.extra.social]]
-# icon = "fontawesome/brands/github"
-# link = "https://github.com/user/repo"
+[[project.extra.social]]
+icon = "fontawesome/brands/linkedin"
+link = "https://www.linkedin.com/company/macuare-estudio/"
 
-# [[project.extra.social]]
-# icon = "fontawesome/brands/mastodon"
-# link = "https://fosstodon.org/@user"
+[[project.extra.social]]
+icon = "fontawesome/brands/ko-fi"
+link = "https://ko-fi.com/3dvm_dev"
 
 [project.markdown_extensions]
 abbr = {}
