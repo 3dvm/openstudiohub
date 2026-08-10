@@ -94,7 +94,8 @@ class OpenStudioHub(QMainWindow):
             )
             event.ignore() 
         else:
-            self.auth.logout()
+            if self.auth.get_current_token():
+                self.auth.logout()
             self.vault.clear()
             event.accept()
 

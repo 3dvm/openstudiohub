@@ -12,9 +12,27 @@ repo_url = "https://github.com/3dvm/openstudiohub"
 
 nav = [
   { "Get started" = "index.md" },
-  { "Features" = "features.md" },
-  { "Artist Guide" = "artist-guide.md" },
-  { "TD Guide" = "admin-guide.md" },
+  { "Features" = [
+      { "Automated QA & Auto-Fixing" = "features/automated-qa.md" },
+      { "Vendor Jailing & Sparse Checkout" = "features/vendor-jailing.md" },
+      { "Automated Task Orchestration" = "features/kitsu-orchestration.md" },
+      { "Standardized Workspaces & Sandboxing" = "features/standardized-workspaces.md" },
+    ]
+  },
+  { "Artist Guide" = [
+      { "Getting Started" = "artist-guide/getting-started.md" },
+      { "The Daily Workflow" = "artist-guide/daily-workflow.md" },
+      { "Feedback and Notes" = "artist-guide/feedback-and-notes.md" },
+    ]
+  },
+  { "PM Guide" = "pm-guide.md" },
+  { "TD Guide" = [
+      { "System Requirements" = "admin-guide/system-requirements.md" },
+      { "Studio Deployment & Provisioning" = "admin-guide/deployment.md" },
+      { "Project Creation" = "admin-guide/project-creation.md" },
+    ]
+  },
+  { "Roadmap" = "roadmap.md" },
 ]
 
 # extra_css = ["stylesheets/extra.css"]
@@ -80,13 +98,13 @@ scheme = "slate"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to system preference"
 
-# [[project.extra.social]]
-# icon = "fontawesome/brands/github"
-# link = "https://github.com/user/repo"
+[[project.extra.social]]
+icon = "fontawesome/brands/linkedin"
+link = "https://www.linkedin.com/company/macuare-estudio/"
 
-# [[project.extra.social]]
-# icon = "fontawesome/brands/mastodon"
-# link = "https://fosstodon.org/@user"
+[[project.extra.social]]
+icon = "fontawesome/brands/ko-fi"
+link = "https://ko-fi.com/3dvm_dev"
 
 [project.markdown_extensions]
 abbr = {}
@@ -121,6 +139,7 @@ pymdownx.smartsymbols = {}
 # pymdownx.snippets = {
 #   base_path = "includes",
 # }
+pymdownx.blocks.caption = {}
 pymdownx.superfences = {
   custom_fences = [
     {
