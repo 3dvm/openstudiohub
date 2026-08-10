@@ -69,10 +69,12 @@ Here is how you can get involved or get help:
 
 ### Support the Open-Source Development
 If OpenStudioHub is helping your indie team save time and organize your pipeline, consider supporting our late-night coding sessions! Your contributions keep the core project free and actively maintained.
+
 * **Support us on Ko-fi:** [ko-fi.com/3dvm_dev](https://ko-fi.com/3dvm_dev)
 
 ### B2B Integration & Support
 Implementing a new pipeline in an active studio can be daunting. We offer professional, hands-on integration services to tailor OpenStudioHub to your specific infrastructure.
+
 * **Custom Onboarding:** Let our Production Management and Tech team set up your NAS, VPS, and artist sandboxes.
 * **Priority Support:** Get direct technical assistance to ensure your studio's downtime is minimum.
 

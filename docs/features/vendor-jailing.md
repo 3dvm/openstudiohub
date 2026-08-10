@@ -2,7 +2,7 @@
 
 When collaborating with external freelancers (Vendors), studios face two critical bottlenecks: **Intellectual Property (IP) Security** and **Bandwidth Waste**. Forcing a remote animator to download a 500GB repository just to work on a single shot is highly inefficient and exposes your entire production data.
 
-OpenStudio Hub introduces a Zero-Trust architecture through its **Vendor Jailing** engine.
+OpenStudioHub introduces a Zero-Trust architecture through its **Vendor Jailing** engine.
 
 ## How It Solves the Problem
 

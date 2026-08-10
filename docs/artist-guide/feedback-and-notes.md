@@ -1,6 +1,6 @@
 # Managing Feedback & Notes
 
-Review cycles and supervisor feedback are an essential part of production. OpenStudio Hub brings this communication directly to your desktop, keeping you in the zone.
+Review cycles and supervisor feedback are an essential part of production. OpenStudioHub brings this communication directly to your desktop, keeping you in the zone.
 
 ## The Integrated Activity Feed
 Instead of constantly switching between Blender and your web browser to check Kitsu for updates, you can manage your feedback directly inside the Hub.

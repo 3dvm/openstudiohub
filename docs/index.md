@@ -1,14 +1,16 @@
-# Welcome to OpenStudio Hub
+![OpenStudioHub Login Screen](assets/login-screen.png)
 
-**The zero-trust, automated pipeline orchestrator for modern 3D studios.**
+# Welcome to OpenStudioHub
 
-OpenStudio Hub is an advanced Desktop Client designed to eliminate daily production friction. By bridging the gap between your project management (Kitsu/Gazu), your version control system (SVN/Git), and your 3D Digital Content Creation tools (Blender), it ensures a bulletproof **Golden Path** for your artists.
+**Automated pipeline orchestrator for Blender 3D studios.**
 
-Say goodbye to missing textures, broken scene scales, and misnamed folders. 
+OpenStudio Hub is an advanced Desktop Client designed to eliminate daily production friction. By bridging the gap between your project management (Kitsu), your version control system (SVN), and your 3D Digital Content Creation tools (Blender), it ensures a bulletproof **Golden Path** for your artists.
+
+Built as 100% Free Open-Source Software (GPL v3.0), the Hub provides Pipeline TDs total flexibility to customize and extend the codebase, while ensuring artists focus entirely on creation rather than figthing with a terminal.
 
 ---
 
-## 🚀 Why OpenStudio Hub?
+## Why OpenStudio Hub?
 
 We built this tool to solve the most expensive problem in 3D production: **Human Error**.
 
@@ -19,24 +21,32 @@ We built this tool to solve the most expensive problem in 3D production: **Human
 
 ---
 
-## 📚 Documentation Navigation
+## Documentation Navigation
 
 Choose your path based on your role in the studio:
 
-### 🧑‍🎨 For Artists
+### For Artists
 * [Getting Started](artist-guide/getting-started.md)
 * [The Daily Workflow](artist-guide/daily-workflow.md)
 * [Managing Feedback & Notes](artist-guide/feedback-and-notes.md)
 
-### 🛠️ For Technical Directors (TDs) & Admins
-* [B2B Studio Deployment](admin-guide/deployment.md)
-* [VCS Abstraction (SVN/Git)](admin-guide/vcs-abstraction.md)
-* [Process Guardian & Lock Prevention](admin-guide/process-guardian.md)
+### For Project Managers (PMs)
+* [Managing projects and files](pm-guide.md)
+
+### For Technical Directors (TDs) & Admins
+* [System Requirements](admin-guide/system-requirements.md)
+* [Studio Deployment](admin-guide/deployment.md)
+* [Project Creation](admin-guide/project-creation.md)
+
 
 ---
 
-## 💖 Support the Development
+## Support the Development
 
-OpenStudio Hub is built with passion to make open-source pipelines a viable reality for professional studios. If this tool saves your studio hours of technical debugging, consider supporting the core development!
+OpenStudioHub is built with passion to make open-source pipelines a viable reality for professional studios. If this tool saves your studio hours of technical debugging, consider supporting the core development!
 
-[☕ **Support the project on Ko-fi**](https://ko-fi.com/3dvm_dev)
+[**Support the project on Ko-fi**](https://ko-fi.com/3dvm_dev)
+
+## Ready to upgrade your studio?
+
+Reach out to us at [contact@estudiomacuare.com](mailto:contact@estudiomacuare.com) to schedule a pipeline consultation.
