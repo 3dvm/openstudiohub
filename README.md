@@ -26,10 +26,10 @@ Here is where **OpenStudioHub** comes in. Designed under a "zero friction" philo
 ## ⚠️ The Problem: Changing Blender versions.
 In large-scale productions, updating software versions or add-ons mid-show often breaks backward compatibility. Artists waste hours dealing with Python tracebacks, missing add-ons, and manual path configurations just to open a legacy file without corrupting modern production data.
 
-## 💡 The Solution: A "rez-like" Ephemeral Sandbox
-OpenStudio  solves this by reading the "DNA" (`project_config.json`) of each project and **building dynamic software containers at runtime**. It bypasses global OS installations completely by injecting environment variables (`BLENDER_USER_RESOURCES`, `BLENDER_USER_SCRIPTS`) to isolate extensions, wheels, and preferences per project. 
+## 💡 The Solution: An Ephemeral Sandbox
+OpenStudioHub solves this by reading a configuration file (`project_config.json`) of each project and **building dynamic software containers at runtime**. It bypasses global OS installations completely by injecting environment variables to isolate extensions, wheels, and preferences per project. 
 
-This guarantees **100% backward compatibility** and allows artists to run conflicting legacy tools (e.g., Blender 3.6) and modern pipelines (e.g., Blender 5.1) simultaneously with zero cross-contamination.
+This guarantees **100% backward compatibility** and allows artists to run conflicting legacy tools (e.g., Blender 3.6) and modern pipelines (e.g., Blender 5.2) simultaneously with zero cross-contamination.
 
 ---
 
