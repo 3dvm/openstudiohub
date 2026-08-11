@@ -36,7 +36,7 @@ This guarantees **100% backward compatibility** and allows artists to run confli
 ## 🏗️ High-Level Studio Architecture
 
 ```mermaid
-flowchart TD
+flowchart LR
     subgraph Cloud [Studio Cloud Infrastructure]
         K[🦊 Kitsu API<br>SSO & Assignments]
         N[☁️ NAS<br>Software Vault & Manifests]
