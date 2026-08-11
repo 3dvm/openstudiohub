@@ -45,9 +45,9 @@ flowchart TD
 
     subgraph Workstation [Artist Local Machine]
         direction TB
-        MH{⚙️ OpenStudio <br>Standalone Executable}
+        MH{⚙️ OpenStudioHub <br>Standalone Executable}
         RAM[(🧠 In-Memory Vault<br>Volatile Credentials)]
-        SB[📦 Ephemeral Sandbox<br>./06_conf_LOCAL/]
+        SB[📦 Ephemeral Sandbox<br>./local/]
         DCC[🎨 Blender Subprocess]
     end
 
@@ -62,12 +62,12 @@ flowchart TD
 
     classDef cloud fill:#2c3e50,stroke:#fff,stroke-width:2px,color:#fff;
     classDef local fill:#34495e,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef fill:#e67e22,stroke:#fff,stroke-width:3px,color:#fff;
+    classDef hub fill:#e67e22,stroke:#fff,stroke-width:3px,color:#fff;
     classDef security fill:#e74c3c,stroke:#fff,stroke-width:2px,color:#fff;
 
     class K,N,S cloud;
     class SB,DCC local;
-    class MH ;
+    class MH hub;
     class RAM security;
 
 ```
