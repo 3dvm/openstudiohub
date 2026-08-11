@@ -11,9 +11,8 @@
 # =========================================================================================
 
 """
-Traduce las entidades de la API de Kitsu (Tareas) a rutas físicas de disco local.
-Implementa las convenciones de nomenclatura del estudio según el SDD, adaptado
-estrictamente a payloads de datos que mapean el tipo bajo 'entity_type_name'.
+Translate Kitsu tasks into phisical file paths. Cleans file names and keeps the
+naming conventions from the configuration. Mapping 'entity_type_name'.
 """
 
 from typing import Dict, Optional
