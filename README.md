@@ -7,7 +7,7 @@
 
 **OpenStudio Hub** is a standalone desktop application designed to orchestrate the production pipeline for a 3D animation studio. It acts as a seamless, deterministic bridge between artists, the version control system (SVN/NAS), and the production tracker (Kitsu).
 
-> 🎬 **[Watch the Demo Video Showcase Here](https://estudiomacuare.com/wp-content/uploads/openstudio-hub-demo.mp4)**
+> 🎬 **[Watch the Demo Video Showcase Here](https://estudiomacuare.com/wp-content/uploads/macuare-hub-demo.mp4)**
 
 ---
 
