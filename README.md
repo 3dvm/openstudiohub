@@ -74,41 +74,6 @@ flowchart TD
 
 ---
 
-## 🔒 Security: Just-In-Time (JIT) Credential Interception
-
-Traditional pipelines often rely on saving plain-text network credentials on local disks, creating significant security vulnerabilities. OpenStudioHub utilizes an **In-Memory Vault**. SVN and Kitsu passwords are asked once via a CustomTkinter modal, kept strictly in volatile RAM, injected into the DCC as OS environment variables during the subprocess launch, and wiped entirely upon logout.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Artist
-    participant UI as OpenStudioHub GUI
-    participant Vault as RAM Vault (Volatile)
-    participant Core as Env Launcher
-    participant DCC as Blender Subprocess
-
-    Artist->>UI: Clicks "Launch Project"
-    UI->>Vault: Check SVN/Kitsu Credentials
-    
-    alt Vault is Empty
-        Vault-->>UI: Missing Credentials
-        UI->>Artist: Prompt JIT Login Modal
-        Artist->>UI: Enters Passwords
-        UI->>Vault: Store in RAM (No Disk IO)
-    end
-    
-    UI->>Core: Trigger Thread (project_config.json)
-    Core->>Vault: Retrieve Credentials
-    Core->>Core: Inject Kitsu/SVN ENV variables
-    Core->>Core: Override DCC User Paths
-    Core->>DCC: subprocess.Popen()
-    
-    Note over DCC: DCC boots 100% isolated.<br/>Init scripts read ENVs<br/>and auto-authenticate.
-
-```
-
----
-
 ## 💻 Development & Installation
 
 The codebase is designed following the **Separation of Concerns (MVC)** principle, making it highly maintainable for Enterprise scaling.
