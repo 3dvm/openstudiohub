@@ -62,7 +62,7 @@ flowchart TD
 
     classDef cloud fill:#2c3e50,stroke:#fff,stroke-width:2px,color:#fff;
     classDef local fill:#34495e,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef  fill:#e67e22,stroke:#fff,stroke-width:3px,color:#fff;
+    classDef fill:#e67e22,stroke:#fff,stroke-width:3px,color:#fff;
     classDef security fill:#e74c3c,stroke:#fff,stroke-width:2px,color:#fff;
 
     class K,N,S cloud;
