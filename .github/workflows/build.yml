@@ -1,6 +1,5 @@
-name: Compilar Distribuibles (Win, Mac, Linux)
+name: Compile Dists (Win, Mac, Linux)
 
-# Este flujo se ejecutará cuando hagas push a la rama main o de forma manual
 on:
   push:
     tags:
@@ -9,10 +8,9 @@ on:
 
 jobs:
   build:
-    name: Compilando en ${{ matrix.os }}
+    name: Compiling in  ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     
-    # Aquí definimos las 3 máquinas virtuales que GitHub levantará simultáneamente
     strategy:
       fail-fast: false
       matrix:
