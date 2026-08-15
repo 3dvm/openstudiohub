@@ -10,10 +10,10 @@
 # Versión del archivo: 2.1.0 (Widget Extraction / Routing Only)
 # =========================================================================================
 
-from PySide6.QtWidgets import QStackedWidget, QLabel
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QStackedWidget#, QLabel
+#from PySide6.QtCore import Qt
 
-from core import vault_manager
+#from core import vault_manager
 from ui.base_dashboard import BaseDashboardView
 from ui.widget_blend_builder import WidgetBlendBuilder
 
@@ -24,7 +24,7 @@ class ViewPM(BaseDashboardView):
     def __init__(self, parent, auth_manager, config_factory, on_logout, vault_manager=None, **kwargs):
         self.vault_manager = vault_manager
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
-        
+
         self.setObjectName("ViewPMBase")
 
         # 1. Configurar Navegación Lateral
