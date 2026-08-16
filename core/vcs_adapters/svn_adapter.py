@@ -192,7 +192,7 @@ class SVNAdapter(AbstractVCS):
         """Crea el repositorio SVN en el servidor (Soporta Docker local para desarrollo)."""
         if "localhost" not in self.repo_url:
             # Hay que implementar la creación del repositorio en servers remotos con SSH.
-            print("[SVNAdapter] Repositorio remoto detectado. Asumiendo que el repo ya existe en el servidor.")
+            print("[SVNAdapter] Remote repository detected, assuming that the repository already exists.")
             return True # Si es un server real, asumimos que el admin ya creó el repo o se hace vía API
             
         try:
@@ -217,8 +217,8 @@ class SVNAdapter(AbstractVCS):
             mkdir_cmd = f"svn mkdir file:///home/svn/{project_name}/{vfs_svn} -m 'Init Hub Topology'"
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", mkdir_cmd], check=True, capture_output=True)
             
-            print(f"[SVNAdapter] ✓ Repositorio local '{project_name}' creado en Docker exitosamente.")
+            print(f"[SVNAdapter] ✓ Local repository '{project_name}' created succesfully on Docker.")
             return True
         except Exception as e:
-            print(f"[SVNAdapter] WARNING: Fallo en la configuración del SVN Docker: {e}")
+            print(f"[SVNAdapter] WARNING: Failed to configure SVN Docker: {e}")
             return False

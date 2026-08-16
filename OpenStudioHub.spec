@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
-    ['openstudio_hub.py'],
+    ['openstudiohub.py'],
     pathex=[],
     binaries=[],
     datas=[

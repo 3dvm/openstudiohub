@@ -19,11 +19,11 @@ from ui.components.status_bar import StatusBar
 class BaseDashboardView(QWidget):
     def __init__(self, parent, auth_manager, config_factory, on_logout, **kwargs):
         super().__init__(parent, **kwargs)
-        
+
         self.auth = auth_manager
         self.config_factory = config_factory
         self.on_logout = on_logout
-        
+
         self.setObjectName("ViewBase")
         self._build_shell()
 

@@ -17,13 +17,13 @@ utilizando contenedores Docker efímeros para pruebas y desarrollo.
 Incluye comandos automatizados para inyectar datos de prueba en la BD local.
 """
 
-import os
+#import os
 import subprocess
 from pathlib import Path
 
 from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QPushButton, QWidget, QMessageBox, QGridLayout)
-from PySide6.QtCore import Qt, QThread, Signal
+                               QPushButton, QMessageBox, QGridLayout)
+from PySide6.QtCore import QThread, Signal
 
 from core.kitsu_manager import KitsuManager
 
@@ -39,10 +39,10 @@ class DockerWorker(QThread):
     def run(self):
         try:
             result = subprocess.run(
-                self.command, 
+                self.command,
                 cwd=self.cwd,
-                check=True, 
-                capture_output=True, 
+                check=True,
+                capture_output=True,
                 text=True
             )
             self.finished_signal.emit(True, "Operación completada exitosamente.")

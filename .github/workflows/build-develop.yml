@@ -1,0 +1,47 @@
+name: Build Executables (Develop)
+
+# 1. Cuándo se ejecuta
+on:
+  #push:
+  #  branches:
+  #    - develop  # Se ejecuta automáticamente al hacer push a develop
+  workflow_dispatch: # Permite detonar el proceso manualmente desde GitHub
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    
+    # 2. Matriz de Sistemas Operativos
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Asegúrate de poner la versión que usa el Hub
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          # Asumiendo que tienes un requirements.txt con PySide6, requests, etc.
+          pip install -r requirements.txt 
+
+      - name: Compilar con PyInstaller
+        # Ajusta "openstudiohub.py" al nombre exacto de tu script de entrada
+        run: pyinstaller --noconfirm --onedir --windowed --name "OpenStudioHub" openstudiohub.py
+
+      - name: Subir Artefactos
+        uses: actions/upload-artifact@v4
+        with:
+          # Nombra el archivo descargable basándose en el OS
+          name: OpenStudioHub-${{ matrix.os }}
+          # Ruta donde PyInstaller deja el empaquetado (ajústala si usas --onefile)
+          path: dist/OpenStudioHub

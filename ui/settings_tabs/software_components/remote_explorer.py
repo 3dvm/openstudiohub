@@ -34,8 +34,9 @@ class BlenderBaseScraper(QThread):
 
     def run(self):
         url = "https://download.blender.org/release/"
+        headers = {'User-Agent': 'OpenStudioHub/1.0'}
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             matches = re.findall(r'href="Blender([0-9a-zA-Z.-]+)/"', response.text)
             versiones = sorted(list(set(matches)), reverse=True)
