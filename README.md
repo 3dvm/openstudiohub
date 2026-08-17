@@ -105,7 +105,7 @@ pip install -r requirements.txt
 4. Run the Hub:
 
 ```bash
-python openstudio_hub.py
+python openstudiohub.py
 
 ```
 
@@ -114,7 +114,7 @@ python openstudio_hub.py
 To distribute the tool to studio artists without requiring them to install Python, the application is "frozen" into a standalone executable using PyInstaller.
 
 ```bash
-pyinstaller --noconsole --onefile --name "OpenStudioHub" openstudio_hub.py
+pyinstaller --noconsole --onefile --name "OpenStudioHub" openstudiohub.py
 
 ```
 
