@@ -281,10 +281,10 @@ class ProjectCard(QFrame):
         kitsu_menu.setStyleSheet("QMenu { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; } QMenu::item { padding: 8px 25px; } QMenu::item:selected { background-color: #3B82F6; }")
         
         # Deeplinks Divulgación Progresiva
-        kitsu_menu.addAction("📦 To: Assets", lambda: self._abrir_kitsu_interno("/assets"))
-        kitsu_menu.addAction("🎬 To: Shots", lambda: self._abrir_kitsu_interno("/shots"))
-        kitsu_menu.addAction("🎞️ To: Sequences", lambda: self._abrir_kitsu_interno("/sequences"))
-        kitsu_menu.addAction("✂️ To: Edit", lambda: self._abrir_kitsu_interno("/edits"))
+        kitsu_menu.addAction("To: Assets", lambda: self._abrir_kitsu_interno("/assets"))
+        kitsu_menu.addAction("To: Shots", lambda: self._abrir_kitsu_interno("/shots"))
+        kitsu_menu.addAction("To: Sequences", lambda: self._abrir_kitsu_interno("/sequences"))
+        kitsu_menu.addAction("To: Edit", lambda: self._abrir_kitsu_interno("/edits"))
         self.btn_kitsu_dropdown.setMenu(kitsu_menu)
 
         # B) Construir el Ghost Button de Watchtower
@@ -339,7 +339,7 @@ class ProjectCard(QFrame):
             
         else:
             # PM & Artist Layout: Primary Action (Orange/Blue) + Kitsu Ghost + Watchtower Ghost
-            self.btn_kitsu_dropdown.setText("🦊 ▼")
+            self.btn_kitsu_dropdown.setText("▼")
             # Cargar SVG para la claqueta de Kitsu (clapperboard.svg)
             kitsu_icon_path = Path("assets/icons/kitsu.svg")
             if kitsu_icon_path.exists() and kitsu_icon_path.is_file():

@@ -7,7 +7,7 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.3.0 (Auto-Refresh & Reload Hooks)
+# Versión del archivo: 1.4.0 (Auto-Refresh & Reload Hooks)
 # =========================================================================================
 
 """
@@ -40,7 +40,7 @@ class ProjectGridWorker(QThread):
             proyectos = gazu.project.all_open_projects()
             self.data_ready.emit(proyectos)
         except Exception as e:
-            print(f"[ProjectList] Error obteniendo proyectos: {e}")
+            print(f"[ProjectList] Error retrieving projects: {e}")
             self.data_ready.emit([])
 
 

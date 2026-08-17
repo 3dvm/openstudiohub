@@ -12,21 +12,22 @@
 
 from PySide6.QtCore import Qt
 
-from ui import view_pm
+from pathlib import Path
 
-class DummyConfigFactory:
-    def get_studio_name(self):
-        return "Testing Studio"
-    def get_workspace_root(self):
-        return "/home/macuare/openstudio_projects/01_sample_project/"
+from ui import view_pm
+from core.config_factory import ConfigFactory
+from core.vault_manager import VaultManager
+from core.auth_manager import AuthManager
 
 def test_pm_asset_creation(qtbot):
 
     # PM logs in
 
-    dummy_config = DummyConfigFactory()
+    dummy_CF = ConfigFactory( Path("/home/macuare/openstudio_projects/01_sample_project/") )
+    dummy_VM = VaultManager(dummy_CF)
+    dummy_AM = AuthManager()
 
-    active_view = view_pm.ViewPM(None, None, dummy_config, None)
+    active_view = view_pm.ViewPM(None, dummy_AM, dummy_CF, None, dummy_VM)
 
     qtbot.addWidget(active_view)
     # PM clicks on the wizard starter of the project that he/she needs to work on

@@ -290,3 +290,5 @@ class KitsuManager:
             print(f"[KitsuManager] Error verificando la existencia de previews de edición: {e}")
             return False
 
+    def get_all_projects(self):
+        return gazu.project.all_open_projects()

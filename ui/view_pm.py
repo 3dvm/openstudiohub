@@ -65,6 +65,9 @@ class ViewPM(BaseDashboardView):
         # Inyectar el stack completo en el contenedor de la clase padre
         self.content_layout.addWidget(self.stacked_content, stretch=1)
 
+        #if panel_id == "btn_projects":
+        self.project_list.cargar_proyectos()
+
     def _cambiar_panel(self, panel_id: str):
         """Visual Router: Actualiza el sidebar y cambia la vista del stack."""
         self.set_active_sidebar_button(panel_id)
