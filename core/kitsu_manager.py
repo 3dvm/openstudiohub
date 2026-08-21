@@ -7,14 +7,13 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.5.0 (Database Seeder)
+# Versión del archivo: 1.6.0 (Database Seeder)
 # =========================================================================================
 
 """
-Capa de abstracción y seguridad para las transacciones con la API de Kitsu (Gazu).
-Encapsula la creación, consulta, borrado y validación de entidades para evitar
-que la lógica de red contamine el orquestador de archivos locales y los componentes de UI.
-Incluye rutinas de aprovisionamiento de datos (Seeding) para entornos locales.
+Abstraction layer to communicate with Kitsu using the gazu library.
+The only thing it doesn't do just yet is authenticate the user. Will use an
+AuthManager object in the future.
 """
 
 import gazu
@@ -25,7 +24,7 @@ from typing import Optional, Tuple
 class KitsuManager:
     def __init__(self):
         """
-        El AuthManager asume la responsabilidad de establecer el host 
+        El AuthManager asume la responsabilidad de establecer el host
         y los tokens globales de Gazu en RAM antes de instanciar esto.
         """
         pass
@@ -55,7 +54,7 @@ class KitsuManager:
 
             # 2. Generación en Base de Datos
             nuevo_proyecto = gazu.project.new_project(project_name)
-            
+
             if not nuevo_proyecto:
                 return False, "Kitsu rechazó la creación del proyecto (respuesta vacía).", {}
 
@@ -94,7 +93,7 @@ class KitsuManager:
         """
         if not image_path:
             return False
-            
+
         img_path = Path(image_path)
         if not img_path.exists() or not img_path.is_file():
             return False
@@ -107,13 +106,13 @@ class KitsuManager:
                 return True
         except Exception as e:
             print(f"[KitsuManager] Advertencia: Fallo al subir el Splash Screen a Kitsu: {e}")
-            
+
         return False
 
     def delete_project(self, project_id: str) -> Tuple[bool, str]:
         """
         Ejecuta la eliminación permanente del proyecto en la base de datos.
-        Utiliza el método nativo remove_project con force=True para saltar 
+        Utiliza el método nativo remove_project con force=True para saltar
         la restricción de estado 'Closed', garantizando una limpieza limpia.
         """
         if not project_id:
@@ -130,7 +129,7 @@ class KitsuManager:
 
             gazu.project.remove_project(project_id, force=True)
             return True, "Proyecto destruido exitosamente en Kitsu."
-            
+
         except Exception as e:
             error_msg = str(e)
             print(f"[KitsuManager] Error crítico al borrar el proyecto '{project_id}': {error_msg}")
@@ -144,12 +143,12 @@ class KitsuManager:
         """
         if not host_url or not project_id:
             return ""
-            
+
         clean_host = host_url[:-4] if host_url.endswith('/api') else host_url
-        
+
         if sub_path and not sub_path.startswith('/'):
             sub_path = '/' + sub_path
-            
+
         return f"{clean_host}/productions/{project_id}{sub_path}"
 
     def download_project_thumbnail(self, project_id: str, token: str, host_url: str) -> Optional[bytes]:
@@ -163,19 +162,19 @@ class KitsuManager:
         try:
             img_url = f"{host_url}/pictures/thumbnails/projects/{project_id}.png"
             headers = {"Authorization": f"Bearer {token}"}
-            
+
             response = requests.get(img_url, headers=headers, timeout=10)
-            
+
             if response.status_code == 200:
                 return response.content
         except Exception as e:
             print(f"[KitsuManager] Fallo de red al descargar miniatura del proyecto '{project_id}': {e}")
-            
+
         return None
 
     def seed_test_database(self, admin_email: str = "admin@example.com", admin_pwd: str = "mysecretpassword") -> Tuple[bool, str]:
         """
-        Se conecta temporalmente como administrador global para inyectar 
+        Se conecta temporalmente como administrador global para inyectar
         los usuarios dummy necesarios para las pruebas locales del Hub.
         """
         try:
@@ -214,7 +213,7 @@ class KitsuManager:
 
     def get_all_templates(self) -> list:
         """
-        Consulta la base de datos de Kitsu y devuelve una lista con 
+        Consulta la base de datos de Kitsu y devuelve una lista con
         todos los esquemas de producción (Project Templates) disponibles.
         """
         try:
@@ -230,10 +229,10 @@ class KitsuManager:
         try:
             if self.check_project_exists(project_name):
                 return False, f"El proyecto '{project_name}' ya existe.", {}
-            
+
             # 1. Buscar la plantilla por su nombre real
             template = gazu.project_template.get_project_template_by_name(template_name)
-            
+
             # 2. Forjar el proyecto
             if template:
                 print(f"[KitsuManager] Utilizando plantilla de Kitsu: {template_name}")
@@ -246,24 +245,24 @@ class KitsuManager:
                 return False, "Kitsu rechazó la creación del proyecto.", {}
 
             return True, "Project created successfully.", nuevo_proyecto
-            
+
         except Exception as e:
             return False, f"Error crítico: {str(e)}", {}
 
     def check_edit_preview_exists(self, project_id: str) -> bool:
         """
-        Verifica si existe al menos un archivo de previsualización (preview-file) 
+        Verifica si existe al menos un archivo de previsualización (preview-file)
         para la tarea de Edición en Kitsu. Retorna True si hay video, False si no.
         """
         try:
             edits = gazu.client.get(f"data/edits/with-tasks?project_id={project_id}")
             if not edits:
                 return False
-                
+
             for e in edits:
                 if e.get('canceled'):
                     continue
-                
+
                 # Buscar el Task Type de 'Edit'
                 r_task_types = gazu.client.get(f"data/edits/{e['id']}/task-types")
                 edit_task_id = None
@@ -271,24 +270,24 @@ class KitsuManager:
                     if tt['name'] == 'Edit':
                         edit_task_id = tt['id']
                         break
-                
+
                 if not edit_task_id:
                     continue
-                
+
                 # Buscar previews
                 r_previews = gazu.client.get(f"data/edits/{e['id']}/preview-files")
                 if not r_previews:
                     continue
-                    
+
                 preview_list = r_previews.get(edit_task_id, [])
                 if preview_list and len(preview_list) > 0 and preview_list[0] is not None:
                     return True
-                    
+
             return False
-            
+
         except Exception as e:
             print(f"[KitsuManager] Error verificando la existencia de previews de edición: {e}")
             return False
 
-    def get_all_projects(self):
+    def get_all_projects(self) -> dict :
         return gazu.project.all_open_projects()

@@ -11,7 +11,6 @@
 # =========================================================================================
 
 """
-Main adapter for the Kitsu API (via the Gazu library).
 Manages authentication, role resolution (RBAC), and the extraction
 of studio and user metadata. Anchored to English standard.
 """

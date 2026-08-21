@@ -17,7 +17,7 @@ y el botón de creación de nuevos proyectos.
 Integra ganchos (hooks) de auto-recarga tras operaciones destructivas.
 """
 
-from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QGridLayout, 
+from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QGridLayout,
                                QLabel, QPushButton, QScrollArea, QWidget)
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QResizeEvent
@@ -45,25 +45,24 @@ class ProjectGridWorker(QThread):
 
 
 class ProjectListWidget(QFrame):
-    def __init__(self, parent, nas_dir: Path, auth_manager, vault_manager, config_factory, 
+    def __init__(self, parent, nas_dir: Path, auth_manager, vault_manager, config_factory,
                  status_callback, on_open_wizard_callback=None, **kwargs):
         super().__init__(parent, **kwargs)
-        
+
         self.nas_dir = nas_dir
         self.auth = auth_manager
         self.vault = vault_manager
         self.config_factory = config_factory
         self.status_callback = status_callback
         self.on_open_wizard_callback = on_open_wizard_callback
-        
+
         self.user_role = self.auth.get_user_role() if hasattr(self.auth, 'get_user_role') else "user"
-        
+
         self._project_widgets = []
         self._current_cols = 0
-        
+
         self.setObjectName("ProjectListWidgetBase")
-        self.setStyleSheet("background: transparent;")
-        
+
         self._build_ui()
 
     def _build_ui(self):
@@ -76,14 +75,14 @@ class ProjectListWidget(QFrame):
         # ---------------------------------------------------------
         hero_layout = QHBoxLayout()
         hero_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         if self.user_role != "td":
             lbl_title = QLabel(self.tr("My Assigned Projects"))
             lbl_title.setObjectName("H2Title")
             hero_layout.addWidget(lbl_title)
-            
+
         hero_layout.addStretch()
-        
+
         self.btn_refrescar = QPushButton(self.tr("🔄 Refresh List"))
         self.btn_refrescar.setObjectName("SecondaryButton")
         self.btn_refrescar.setFixedSize(150, 40)
@@ -92,15 +91,15 @@ class ProjectListWidget(QFrame):
         hero_layout.addWidget(self.btn_refrescar)
 
         # breakpoint()
-        
+
         if self.user_role == "td":
-            self.btn_nuevo_proy = QPushButton(self.tr("+ Create New Project"))
-            self.btn_nuevo_proy.setObjectName("PrimaryButton") 
+            self.btn_nuevo_proy = QPushButton(self.tr("Create New Project"))
+            self.btn_nuevo_proy.setObjectName("PrimaryButton")
             self.btn_nuevo_proy.setFixedSize(220, 40)
             self.btn_nuevo_proy.setCursor(Qt.PointingHandCursor)
             self.btn_nuevo_proy.clicked.connect(self.abrir_wizard_proyecto)
             hero_layout.addWidget(self.btn_nuevo_proy)
-        
+
         content_layout.addLayout(hero_layout)
 
         # ---------------------------------------------------------
@@ -110,14 +109,14 @@ class ProjectListWidget(QFrame):
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setObjectName("InvisibleScrollArea")
         self.scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
-        
+
         self.grid_widget = QWidget()
         self.grid_widget.setObjectName("TransparentGridContainer")
         self.grid_widget.setStyleSheet("background: transparent;")
         self.grid_layout = QGridLayout(self.grid_widget)
-        self.grid_layout.setSpacing(15)  
+        self.grid_layout.setSpacing(15)
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        
+
         self.scroll_area.setWidget(self.grid_widget)
         content_layout.addWidget(self.scroll_area, stretch=1)
 
@@ -132,7 +131,7 @@ class ProjectListWidget(QFrame):
     def _rearrange_grid(self):
         if not self._project_widgets: return
         viewport_width = self.scroll_area.viewport().width()
-        card_width = 340 if self.user_role != "td" else 320 
+        card_width = 340 if self.user_role != "td" else 320
         spacing = self.grid_layout.spacing()
         cols = max(1, (viewport_width + spacing) // (card_width + spacing))
 
@@ -143,7 +142,7 @@ class ProjectListWidget(QFrame):
         for widget in self._project_widgets:
             self.grid_layout.removeWidget(widget)
             self.grid_layout.addWidget(widget, row, col)
-            
+
             col += 1
             if col >= cols:
                 col = 0
@@ -159,16 +158,16 @@ class ProjectListWidget(QFrame):
     def cargar_proyectos(self):
         self._emit_status(self.tr("Syncing projects catalog..."), "yellow")
         self.btn_refrescar.setEnabled(False)
-        
+
         for widget in self._project_widgets:
             widget.hide()
             widget.deleteLater()
         self._project_widgets.clear()
-        
+
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)
             if child.widget(): child.widget().deleteLater()
-                
+
         self.worker = ProjectGridWorker(self.auth)
         self.worker.data_ready.connect(self._renderizar_proyectos)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -179,9 +178,9 @@ class ProjectListWidget(QFrame):
         if not proyectos:
             self._emit_status(self.tr("No active projects found."), "yellow")
             return
-            
+
         self._emit_status(self.tr("🟢 Synchronized: {0} active projects.").format(len(proyectos)), "green")
-        
+
         for project_data in proyectos:
             tarjeta = ProjectCard(
                 parent=self.grid_widget,
@@ -196,8 +195,8 @@ class ProjectListWidget(QFrame):
             )
 
             self._project_widgets.append(tarjeta)
-            
-        self._current_cols = 0 
+
+        self._current_cols = 0
         self._rearrange_grid()
 
     def abrir_wizard_proyecto(self):
