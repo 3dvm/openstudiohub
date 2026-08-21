@@ -99,7 +99,7 @@ flowchart TD
 
 ---
 
-## 💻 Development & Installation
+## Development & Installation
 
 The codebase is designed following the **Separation of Concerns (MVC)** principle, making it highly maintainable for Enterprise scaling.
 
@@ -134,7 +134,7 @@ python openstudiohub.py
 
 ```
 
-## 📦 Packaging for Production
+## Packaging for Production
 
 To distribute the tool to studio artists without requiring them to install Python, the application is "frozen" into a standalone executable using PyInstaller.
 
