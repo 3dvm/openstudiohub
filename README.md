@@ -7,11 +7,11 @@
 
 **OpenStudioHub** is a standalone desktop application designed to orchestrate the production pipeline for a 3D animation studio. It acts as a seamless, deterministic bridge between artists, the version control system (SVN/NAS), and the production tracker (Kitsu).
 
-> 🎬 **[Watch the Demo Video Showcase Here](https://estudiomacuare.com/wp-content/uploads/macuare-hub-demo.mp4)**
+> **[![Watch the Demo Video Showcase Here](https://img.youtube.com/vi/k9OS4430Rp8/maxresdefault.jpg)](https://www.youtube.com/watch?v=k9OS4430Rp8)**
 
 ---
 
-## 🐘 The Elephant in the Room: Blender Studio Tools
+## The Elephant in the Room: Blender Studio Tools
 
 Any studio working with Blender has looked with envy at the Blender Foundation's official pipeline. Tools like the `asset_pipeline` (designed to enable simultaneous work on the same asset) and `blender_kitsu` (which connects the 3D interface directly with the production manager) are, on paper, a Technical Director's dream come true.
 
@@ -23,53 +23,78 @@ Here is where **OpenStudioHub** comes in. Designed under a "zero friction" philo
 
 ---
 
-## ⚠️ The Problem: Changing Blender versions.
+## The Problem: Changing Blender versions.
 In large-scale productions, updating software versions or add-ons mid-show often breaks backward compatibility. Artists waste hours dealing with Python tracebacks, missing add-ons, and manual path configurations just to open a legacy file without corrupting modern production data.
 
-## 💡 The Solution: An Ephemeral Sandbox
+## The Solution: An Ephemeral Sandbox
 OpenStudioHub solves this by reading a configuration file (`project_config.json`) of each project and **building dynamic software containers at runtime**. It bypasses global OS installations completely by injecting environment variables to isolate extensions, wheels, and preferences per project. 
 
 This guarantees **100% backward compatibility** and allows artists to run conflicting legacy tools (e.g., Blender 3.6) and modern pipelines (e.g., Blender 5.2) simultaneously with zero cross-contamination.
 
 ---
 
-## 🏗️ High-Level Studio Architecture
+## High-Level Studio Architecture
 
 ```mermaid
-flowchart LR
-    subgraph Cloud [Studio Cloud Infrastructure]
-        K[🦊 Kitsu API<br>SSO & Assignments]
-        N[☁️ NAS<br>Software Vault & Manifests]
-        S[🐘 SVN Server<br>Production Assets & Shots]
-    end
+flowchart TD
 
-    subgraph Workstation [Artist Local Machine]
-        direction TB
-        MH{⚙️ OpenStudioHub <br>Standalone Executable}
-        RAM[(🧠 In-Memory Vault<br>Volatile Credentials)]
-        SB[📦 Ephemeral Sandbox<br>./local/]
-        DCC[🎨 Blender Subprocess]
-    end
+    classDef actor fill:#ffa94d,stroke:#1e1e1e,stroke-width:2px,color:#1e1e1e
+    classDef hub fill:#a5d8ff,stroke:#1e1e1e,stroke-width:2px,color:#1e1e1e
+    classDef tracker fill:#b2f2bb,stroke:#1e1e1e,stroke-width:2px,color:#1e1e1e
+    classDef app fill:#ffc9c9,stroke:#1e1e1e,stroke-width:2px,color:#1e1e1e
+    classDef storage fill:#ffec99,stroke:#1e1e1e,stroke-width:2px,color:#1e1e1e
 
-    K <-->|Role Auth / JSON| MH
-    N -->|Downloads Add-ons .zip| MH
-    MH -->|Writes Extensions & Configs| SB
-    MH -->|Stores Passwords temporarily| RAM
+    subgraph SystemContainer
+        direction LR
+        
+        Title["<span style='font-size: 30px; font-weight: bold;'>OpenStudioHub System Diagram</span>"]:::titleStyle
+
+        %% Actors (Orange)
+        TD_User[Technical Director]:::actor
+        PM_User[Production Manager]:::actor
+        ED_User[Editor]:::actor
+        AR_User[Artist]:::actor
     
-    RAM -.->|Injects ENV variables| DCC
-    SB -.->|BLENDER_USER_RESOURCES override| DCC
-    DCC <-->|Commits/Updates Data| S
+        %% Central Hub (Blue Diamond)
+        OSH{OpenStudioHub}:::hub
+    
+        %% Tools and Services (Green, Red, Yellow)
+        Kitsu[(Kitsu / Production\ntracking DB)]:::tracker
+        WT((WatchTower)):::tracker
+        BL((Blender 3D - main DCC)):::app
+        NAS[(Nas/FileSystem)]:::storage
+        VCS[(VCS)]:::storage
 
-    classDef cloud fill:#2c3e50,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef local fill:#34495e,stroke:#fff,stroke-width:2px,color:#fff;
-    classDef hub fill:#e67e22,stroke:#fff,stroke-width:3px,color:#fff;
-    classDef security fill:#e74c3c,stroke:#fff,stroke-width:2px,color:#fff;
+        %% Invisible link to force the Title to stay at the very top of the layout
+        Title ~~~ OSH
 
-    class K,N,S cloud;
-    class SB,DCC local;
-    class MH hub;
-    class RAM security;
+        %% Connections: Users to Hub
+        TD_User -->|"Initial Conf/\nmaintenance"| OSH
+        PM_User -->|"Monitors progress/\nGenerates files"| OSH
+        ED_User -->|"Sees assigned\ntimeline / edits"| OSH
+        AR_User -->|"Sees assigned tasks/\nworks"| OSH
+    
+        %% Direct connections: Manual / Current workflows (Dashed)
+        PM_User -.->|"Manual Script Breakdown (Current)"| Kitsu
+        TD_User -.->|"Sets up Studio/\nTeam"| Kitsu
 
+        %% Connections: OpenStudioHub outwards
+        OSH <-->|"Gets and sets\nProd status and actors"| Kitsu
+        OSH -->|"Configures and Launches\nfor monitoring"| WT
+        OSH -->|"Launches appropriate\nfiles for tasks/users"| BL
+        OSH -->|"Manages topography\nCreates and deletes files"| NAS
+        OSH -->|"Sets up project repos."| VCS
+
+        %% Connections: Blender interactions
+        BL -->|"Updates task progress"| Kitsu
+        BL -->|"Saves playblasts"| NAS
+        BL -->|"Generates and Updates\n.blend working files"| VCS
+
+        %% Connections: WatchTower interactions
+        WT -->|"Gets productions"| Kitsu
+    end
+
+    style SystemContainer fill:#222222,stroke:#0c0c0c,stroke-width:3px,color:#1e1e1e,stroke-dasharray: 5 5
 ```
 
 ---
