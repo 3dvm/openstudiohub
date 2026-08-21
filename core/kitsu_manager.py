@@ -7,19 +7,26 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 1.6.0 (Database Seeder)
+# Versión del archivo: 1.7.0 (Gazu SSoT Wrappers)
 # =========================================================================================
 
 """
 Abstraction layer to communicate with Kitsu using the gazu library.
-The only thing it doesn't do just yet is authenticate the user. Will use an
-AuthManager object in the future.
+This module is the SINGLE SOURCE OF TRUTH (SSoT) for every gazu call in the
+application: no other module should import or invoke gazu directly.
+
+It wraps authentication (delegated by AuthManager), project management,
+task/shot/asset/edit queries, file mapping and metadata updates.
 """
 
 import gazu
 import requests
 from pathlib import Path
 from typing import Optional, Tuple
+
+# Re-export para que los consumidores (p. ej. AuthManager) puedan capturar el
+# error de autenticación de Gazu sin importar la librería directamente.
+AuthFailedException = gazu.exception.AuthFailedException
 
 class KitsuManager:
     def __init__(self):
@@ -291,3 +298,209 @@ class KitsuManager:
 
     def get_all_projects(self) -> dict :
         return gazu.project.all_open_projects()
+
+    # =========================================================================
+    # GAZU API WRAPPERS (SSoT)
+    # Todas las llamadas a Gazu de la aplicación DEBEN pasar por estos métodos.
+    # Las firmas replican las de la librería gazu para preservar el
+    # comportamiento exacto de los consumidores.
+    # =========================================================================
+
+    # ------------------------------------------------------------------
+    # Sesión y autenticación (consumido por AuthManager)
+    # ------------------------------------------------------------------
+
+    def set_host(self, host_url: str) -> None:
+        """Establece el host global de Gazu en RAM."""
+        gazu.client.set_host(host_url)
+
+    def log_in(self, email: str, password: str) -> dict:
+        """
+        Autentica contra Kitsu y almacena los tokens en RAM.
+        Lanza AuthFailedException si las credenciales son inválidas.
+        """
+        return gazu.log_in(email, password)
+
+    def set_tokens(self, tokens: dict) -> dict:
+        """Inyecta tokens de sesión previamente guardados en RAM."""
+        return gazu.client.set_tokens(tokens)
+
+    def get_current_user(self) -> dict:
+        """Devuelve el usuario autenticado actualmente en Gazu."""
+        return gazu.client.get_current_user()
+
+    def log_out(self) -> dict:
+        """Cierra la sesión actual de Gazu."""
+        return gazu.log_out()
+
+    def get_access_token(self) -> str:
+        """Extrae el access token vigente desde el estado global de Gazu."""
+        if hasattr(gazu.client, "tokens") and isinstance(gazu.client.tokens, dict):
+            return gazu.client.tokens.get("access_token", "")
+        return ""
+
+    def has_session_tokens(self) -> bool:
+        """True si Gazu tiene un diccionario de tokens cargado en RAM."""
+        return hasattr(gazu.client, "tokens") and isinstance(gazu.client.tokens, dict)
+
+    def get_organisation(self) -> dict:
+        """Devuelve la organización (estudio) configurada en Kitsu."""
+        return gazu.person.get_organisation()
+
+    # ------------------------------------------------------------------
+    # Proyectos
+    # ------------------------------------------------------------------
+
+    def get_project(self, project_id: str) -> dict:
+        """Devuelve un proyecto por su ID."""
+        return gazu.project.get_project(project_id)
+
+    def all_projects(self) -> list:
+        """Devuelve TODOS los proyectos registrados (incluyendo cerrados)."""
+        return gazu.project.all_projects()
+
+    # ------------------------------------------------------------------
+    # Tareas
+    # ------------------------------------------------------------------
+
+    def get_task(self, task_id: str) -> dict:
+        """Devuelve una tarea por su ID."""
+        return gazu.task.get_task(task_id)
+
+    def all_tasks_to_do(self) -> list:
+        """Devuelve todas las tareas pendientes del usuario autenticado."""
+        return gazu.user.all_tasks_to_do()
+
+    def all_tasks_for_person(self, person) -> list:
+        """Devuelve las tareas abiertas asignadas a una persona."""
+        return gazu.task.all_tasks_for_person(person)
+
+    def all_tasks_for_project(self, project_id) -> list:
+        """Devuelve todas las tareas de un proyecto."""
+        return gazu.task.all_tasks_for_project(project_id)
+
+    def all_tasks_for_edit(self, edit) -> list:
+        """Devuelve las tareas vinculadas a un Edit."""
+        return gazu.task.all_tasks_for_edit(edit)
+
+    def all_task_types(self) -> list:
+        """Devuelve todos los Task Types globales."""
+        return gazu.task.all_task_types()
+
+    def get_task_type_by_name(self, task_type_name: str, for_entity: str = None, department=None) -> dict:
+        """Busca un Task Type por su nombre (y opcionalmente entidad/departamento)."""
+        return gazu.task.get_task_type_by_name(task_type_name, for_entity=for_entity, department=department)
+
+    def create_task(self, entity, task_type, name: str = None, task_status=None) -> dict:
+        """Crea una tarea para una entidad y un Task Type dados."""
+        return gazu.task.create_task(entity, task_type, name=name, task_status=task_status)
+
+    def new_task(self, entity, task_type, name: str = "main", task_status=None,
+                 assigner=None, assignees=None) -> dict:
+        """Crea una tarea nueva (o devuelve la existente) para la entidad."""
+        return gazu.task.new_task(
+            entity, task_type,
+            name=name, task_status=task_status,
+            assigner=assigner, assignees=assignees
+        )
+
+    def get_task_by_entity(self, entity, task_type, name: str = "main") -> dict:
+        """Busca la tarea de una entidad para un Task Type y nombre dados."""
+        return gazu.task.get_task_by_entity(entity, task_type, name=name)
+
+    def update_task(self, task: dict) -> dict:
+        """Persiste los cambios (incluida la metadata) de una tarea."""
+        return gazu.task.update_task(task)
+
+    def get_default_task_status(self) -> dict:
+        """Devuelve el Task Status por defecto del estudio."""
+        return gazu.task.get_default_task_status()
+
+    def new_task_type(self, name: str, color: str = "#000000", for_entity: str = "Asset") -> dict:
+        """Crea (o devuelve) un Task Type global con el nombre dado."""
+        return gazu.task.new_task_type(name, color=color, for_entity=for_entity)
+
+    # ------------------------------------------------------------------
+    # Shots y Secuencias
+    # ------------------------------------------------------------------
+
+    def all_shots_for_project(self, project_id) -> list:
+        """Devuelve todos los Shots de un proyecto."""
+        return gazu.shot.all_shots_for_project(project_id)
+
+    def get_sequence(self, sequence_id: str) -> dict:
+        """Devuelve una secuencia por su ID."""
+        return gazu.shot.get_sequence(sequence_id)
+
+    def all_sequences_for_project(self, project_id) -> list:
+        """Devuelve todas las secuencias de un proyecto."""
+        return gazu.shot.all_sequences_for_project(project_id)
+
+    def get_sequence_by_name(self, project_id, sequence_name: str, episode=None) -> dict:
+        """Busca una secuencia por nombre dentro de un proyecto."""
+        return gazu.shot.get_sequence_by_name(project_id, sequence_name, episode=episode)
+
+    def new_sequence(self, project, name: str, episode=None) -> dict:
+        """Crea una secuencia en el proyecto (o devuelve la existente)."""
+        return gazu.shot.new_sequence(project, name=name, episode=episode)
+
+    def update_sequence_data(self, sequence, data: dict = None) -> dict:
+        """Actualiza la metadata (custom data) de una secuencia."""
+        return gazu.shot.update_sequence_data(sequence, data=data)
+
+    # ------------------------------------------------------------------
+    # Assets
+    # ------------------------------------------------------------------
+
+    def all_assets_for_project(self, project_id) -> list:
+        """Devuelve todos los Assets de un proyecto."""
+        return gazu.asset.all_assets_for_project(project_id)
+
+    def get_asset_type(self, asset_type_id: str) -> dict:
+        """Devuelve un Asset Type por su ID."""
+        return gazu.asset.get_asset_type(asset_type_id)
+
+    def all_asset_types(self) -> list:
+        """Devuelve todos los Asset Types globales."""
+        return gazu.asset.all_asset_types()
+
+    def get_asset(self, asset_id: str) -> dict:
+        """Devuelve un Asset por su ID."""
+        return gazu.asset.get_asset(asset_id)
+
+    def update_asset(self, asset: dict) -> dict:
+        """Persiste los cambios de un Asset en Kitsu."""
+        return gazu.asset.update_asset(asset)
+
+    # ------------------------------------------------------------------
+    # Entidades (metadata / custom data)
+    # ------------------------------------------------------------------
+
+    def update_entity_data(self, entity_id: str, data: dict) -> dict:
+        """Inyecta metadata (custom data) en una entidad genérica."""
+        return gazu.entity.update_entity_data(entity_id, data)
+
+    # ------------------------------------------------------------------
+    # Edits
+    # ------------------------------------------------------------------
+
+    def all_edits_for_project(self, project_id) -> list:
+        """Devuelve todos los Edits de un proyecto."""
+        return gazu.edit.all_edits_for_project(project_id)
+
+    # ------------------------------------------------------------------
+    # Files / Software
+    # ------------------------------------------------------------------
+
+    def get_software_by_name(self, software_name: str) -> dict:
+        """Busca un software registrado en Kitsu por su nombre."""
+        return gazu.files.get_software_by_name(software_name)
+
+    def new_working_file(self, task, name: str = "main", mode: str = "working",
+                         software=None, comment: str = "", person=None,
+                         revision: int = 0, sep: str = "/") -> dict:
+        """Registra un working file para una tarea."""
+        return gazu.files.new_working_file(
+            task, name=name, mode=mode, software=software,
+            comment=comment, person=person, revision=revision, sep=sep
+        )

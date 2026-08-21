@@ -35,9 +35,8 @@ class ProjectGridWorker(QThread):
         self.auth = auth_manager
 
     def run(self):
-        import gazu
         try:
-            proyectos = gazu.project.all_open_projects()
+            proyectos = self.auth.kitsu.get_all_projects()
             self.data_ready.emit(proyectos)
         except Exception as e:
             print(f"[ProjectList] Error retrieving projects: {e}")
@@ -108,11 +107,11 @@ class ProjectListWidget(QFrame):
         self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setObjectName("InvisibleScrollArea")
-        self.scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+        #self.scroll_area.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         self.grid_widget = QWidget()
         self.grid_widget.setObjectName("TransparentGridContainer")
-        self.grid_widget.setStyleSheet("background: transparent;")
+        #self.grid_widget.setStyleSheet("background: transparent;")
         self.grid_layout = QGridLayout(self.grid_widget)
         self.grid_layout.setSpacing(15)
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)

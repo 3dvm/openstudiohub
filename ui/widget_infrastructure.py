@@ -78,8 +78,7 @@ class KitsuSeederWorker(QThread):
                 # 2. Inyectamos a los usuarios Dummy consumiendo el Manager
                 kitsu_mgr = KitsuManager()
                 # Sobrescribimos temporalmente el host para apuntar al entorno de prueba local (Docker)
-                import gazu
-                gazu.set_host('http://localhost:8080/api')
+                kitsu_mgr.set_host('http://localhost:8080/api')
                 
                 success, msg = kitsu_mgr.seed_test_database(
                     admin_email="admin@example.com", 

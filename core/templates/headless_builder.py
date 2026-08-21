@@ -20,6 +20,15 @@ import importlib
 from pathlib import Path
 
 # =================================================================
+# 0. BOOTSTRAP: Hacer importable el paquete 'core' del Hub
+#    (este script se ejecuta con el Python EMBEBIDO de Blender, donde
+#    el root del repositorio no está en sys.path por defecto).
+# =================================================================
+_HUB_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_HUB_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HUB_ROOT))
+
+# =================================================================
 # 1. RESOLUCIÓN DINÁMICA DE EXTENSIONES (Paridad con bootstrap.py)
 # =================================================================
 def _get_kitsu_addon_key() -> str:
@@ -354,13 +363,14 @@ def forjar_shot():
         # 7. REGISTRAR RUTA EN EL CUSTOM FIELD DE LA TAREA EN KITSU
         # ==========================================================
         try:
-            import gazu
+            from core.kitsu_manager import KitsuManager
+            kitsu_mgr = KitsuManager()
             # EXTRAEMOS LOS IDs CRUDOS (.id) DE LOS OBJETOS DE BLENDER_KITSU
             shot_id = shot.id
             tt_id = task_type.id
             
             # Usamos los IDs en formato texto para buscar en gazu
-            task = gazu.task.get_task_by_entity(shot_id, tt_id)
+            task = kitsu_mgr.get_task_by_entity(shot_id, tt_id)
             
             if task:
                 # Calculamos la ruta relativa al VFS (Ej: pro/shots/01/010/010-layout.blend)
@@ -375,7 +385,7 @@ def forjar_shot():
                 task_data["filepath"] = rel_path
                 task["data"] = task_data
                 #gazu.task.update_task(task["id"], task_data)
-                gazu.task.update_task(task)
+                kitsu_mgr.update_task(task)
                 
                 print(f"[HeadlessBuilder] ✓ Metadata guardada en Kitsu Task ({task_type.name}): {rel_path}")
             else:
@@ -410,20 +420,21 @@ def forjar_asset():
         # ----------------------
         
         # 3. EXTRAER NOMBRES DIRECTAMENTE VÍA ID DE Kitsu/Gazu
-        import gazu
+        from core.kitsu_manager import KitsuManager
+        kitsu_mgr = KitsuManager()
         asset_type_name = ""
         asset_name = ""
         
         if asset_type_id:
             try:
-                at_data = gazu.asset.get_asset_type(asset_type_id)
+                at_data = kitsu_mgr.get_asset_type(asset_type_id)
                 asset_type_name = at_data.get("name", "") if at_data else ""
             except Exception as e:
                 print(f"[HeadlessBuilder] Error obteniendo Asset Type: {e}")
                 
         if target_id:
             try:
-                asset_data = gazu.asset.get_asset(target_id)
+                asset_data = kitsu_mgr.get_asset(target_id)
                 asset_name = asset_data.get("name", "") if asset_data else ""
             except Exception as e:
                 print(f"[HeadlessBuilder] Error obteniendo Asset: {e}")

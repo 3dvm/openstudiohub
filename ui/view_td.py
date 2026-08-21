@@ -32,12 +32,12 @@ from ui.widget_settings import SettingsWidget
 
 
 class ViewTD(BaseDashboardView):
-    def __init__(self, parent, auth_manager: AuthManager, nas_dir: Path, 
+    def __init__(self, parent, auth_manager: AuthManager, nas_dir: Path,
                  vault_manager: VaultManager, config_factory: ConfigFactory, on_logout: Callable[[], None], **kwargs):
-        
+
         # Inicializa el cascarón maestro (TopBar, Sidebar, StatusBar)
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
-        
+
         self.nas_dir = nas_dir
         self.vault = vault_manager
 
@@ -51,13 +51,13 @@ class ViewTD(BaseDashboardView):
 
         # 2. Construir el Contenido Central
         self._build_td_content()
-        
+
         # 3. Inicializar Datos
         self.vista_proyectos.cargar_proyectos()
 
     def _build_td_content(self):
         """Construye los paneles de configuración y los inyecta en el layout central."""
-        
+
         self.stacked_content = QStackedWidget()
 
         # Index 0: Project Management List
@@ -76,7 +76,7 @@ class ViewTD(BaseDashboardView):
         # placeholder_wt.setAlignment(Qt.AlignCenter)
         # placeholder_wt.setObjectName("PlaceholderText")
         # self.stacked_content.addWidget(placeholder_wt)
-        
+
         # Index 2: Infrastructure Configuration Panel
         self.vista_infra = InfrastructureWidget(
             parent=self.stacked_content,
@@ -85,7 +85,7 @@ class ViewTD(BaseDashboardView):
         )
         self.stacked_content.addWidget(self.vista_infra)
 
-        # Index 3: Global System Settings 
+        # Index 3: Global System Settings
         self.vista_configuraciones = SettingsWidget(
             parent=self.stacked_content,
             config_factory=self.config_factory,
@@ -100,6 +100,6 @@ class ViewTD(BaseDashboardView):
     def _cambiar_panel(self, panel_id: str):
         """Visual Router: Actualiza el sidebar y cambia la vista del stack."""
         self.set_active_sidebar_button(panel_id) # Método heredado
-        
+
         indices = {"proyectos": 0, "infra": 1, "settings": 2}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))

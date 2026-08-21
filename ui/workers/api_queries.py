@@ -1,8 +1,9 @@
-import gazu
 import glob
 import re
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
+
+from core.kitsu_manager import KitsuManager
 
 def sanitize_kitsu_name(raw_name: str) -> str:
     if not raw_name:
@@ -15,9 +16,13 @@ class FetchProjectsWorker(QThread):
     data_ready = Signal(list)
     error_occurred = Signal(str)
 
+    def __init__(self):
+        super().__init__()
+        self.kitsu = KitsuManager()
+
     def run(self):
         try:
-            self.data_ready.emit(gazu.project.all_projects())
+            self.data_ready.emit(self.kitsu.all_projects())
         except Exception as e:
             self.error_occurred.emit(str(e))
 
@@ -31,15 +36,15 @@ class FetchShotsWorker(QThread):
         self.project_id = project_id
         self.project_root = project_root
         self.vfs_svn = vfs_svn
+        self.kitsu = KitsuManager()
 
     def run(self):
         try:
-            import gazu
             # 1. Traemos TODOS los shots y TODAS las secuencias (para mapeo rápido)
-            shots = gazu.shot.all_shots_for_project(self.project_id)
-            sequences = gazu.shot.all_sequences_for_project(self.project_id)
-            all_tasks = gazu.task.all_tasks_for_project(self.project_id)
-            task_types = gazu.task.all_task_types()
+            shots = self.kitsu.all_shots_for_project(self.project_id)
+            sequences = self.kitsu.all_sequences_for_project(self.project_id)
+            all_tasks = self.kitsu.all_tasks_for_project(self.project_id)
+            task_types = self.kitsu.all_task_types()
             
             # Mapa ultra-rápido para no consultar Kitsu por cada shot
             seq_map = {seq["id"]: seq["name"] for seq in sequences}
@@ -155,11 +160,12 @@ class FetchSequencesWorker(QThread):
         self.project_id = project_id
         self.project_root = project_root
         self.vfs_svn = vfs_svn
+        self.kitsu = KitsuManager()
 
     def run(self):
         try:
             # 1. Traer todas las secuencias del proyecto en Kitsu
-            sequences = gazu.shot.all_sequences_for_project(self.project_id)
+            sequences = self.kitsu.all_sequences_for_project(self.project_id)
             
             result = []
             for seq in sequences:
@@ -188,15 +194,15 @@ class FetchAssetsWorker(QThread):
         self.project_id = project_id
         self.project_root = project_root
         self.vfs_svn = vfs_svn
+        self.kitsu = KitsuManager()
 
     def run(self):
         try:
-            import gazu
             # Extraer todos los assets del proyecto desde la base de datos
-            assets = gazu.asset.all_assets_for_project(self.project_id)
+            assets = self.kitsu.all_assets_for_project(self.project_id)
             
             # --- Traer todos los Asset Types de Kitsu para mapearlos ---
-            all_asset_types = gazu.asset.all_asset_types()
+            all_asset_types = self.kitsu.all_asset_types()
             asset_types_map = {at["id"]: at for at in all_asset_types}
             # ------------------------------------------------------------------
 
@@ -248,7 +254,7 @@ class FetchAssetsWorker(QThread):
                     try:
                         # Corregimos el nombre permanentemente en la base de datos de Kitsu
                         asset["name"] = clean_name
-                        gazu.asset.update_asset(asset)
+                        self.kitsu.update_asset(asset)
                         final_name = clean_name
                     except Exception as e:
                         print(f"⚠️ Error actualizando nombre en Kitsu para {raw_name}: {e}")
@@ -279,12 +285,13 @@ class FetchEditStatusWorker(QThread):
         self.project_name = project_name
         self.project_root = project_root
         self.vfs_svn = vfs_svn
+        self.kitsu = KitsuManager()
 
     def run(self):
         try:
             
             # 1. Buscar la entidad Edit en Kitsu (Usualmente Kitsu crea un 'Edit' global)
-            edits = gazu.edit.all_edits_for_project(self.project_id)
+            edits = self.kitsu.all_edits_for_project(self.project_id)
             main_edit = edits[0] if edits else None
             
             status_name = "Not Created"
@@ -292,7 +299,7 @@ class FetchEditStatusWorker(QThread):
             
             # 2. Extraer metadata de Kitsu si existe
             if main_edit:
-                tasks = gazu.task.all_tasks_for_edit(main_edit["id"])
+                tasks = self.kitsu.all_tasks_for_edit(main_edit["id"])
                 task = tasks[0] if tasks else None
 
                 #main_edit

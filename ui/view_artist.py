@@ -17,11 +17,10 @@ Fetches assigned tasks from Kitsu (Gazu API) and renders them in a responsive gr
 Validates VFS semantic topography with strict physical path checks to prevent I/O crashes.
 """
 
-import gazu
 from pathlib import Path
 from typing import Callable
 
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel, 
+from PySide6.QtWidgets import (QWidget, QVBoxLayout, QGridLayout, QLabel,
                                QScrollArea, QStackedWidget, QFrame, QPushButton,
                                QHBoxLayout, QComboBox) # <-- Añadidos QHBoxLayout y QComboBox
 from PySide6.QtCore import Qt, QThread, Signal
@@ -52,32 +51,32 @@ class FetchArtistTasksWorker(QThread):
 
     def run(self):
         try:
-            user = gazu.client.get_current_user()
-            all_tasks = gazu.task.all_tasks_for_person(user)
-            
+            user = self.auth.kitsu.get_current_user()
+            all_tasks = self.auth.kitsu.all_tasks_for_person(user)
+
             status_targets = ["Todo", "Work In Progress", "Waiting For Approval", "Retake", "Ready To Start"]
             tasks = [
-                t for t in all_tasks 
-                if (t.get("task_status_name") in status_targets or 
+                t for t in all_tasks
+                if (t.get("task_status_name") in status_targets or
                     t.get("task_status", {}).get("name") in status_targets)
             ]
-            
+
             # --- NUEVO: ENRIQUECIMIENTO DEL TASK DATA ---
             for t in tasks:
                 entity_type = t.get("entity_type_name", t.get("entity_type", "")).lower()
-                
+
                 # Si la tarea pertenece a un Asset, Kitsu no nos da la subcategoría nativamente,
                 # así que debemos consultarla y empaquetarla nosotros.
                 if entity_type == "asset":
                     try:
                         # 1. Consultar el Asset real usando el entity_id
-                        asset_completo = gazu.asset.get_asset(t["entity_id"])
+                        asset_completo = self.auth.kitsu.get_asset(t["entity_id"])
                         if asset_completo:
                             # En Kitsu, el ID del 'Asset Type' se guarda como 'entity_type_id' dentro del Asset
                             t["asset_type_id"] = asset_completo.get("entity_type_id", "")
-                            
+
                             # 2. Opcional pero vital para tu PathResolver: Traer también el nombre del tipo
-                            asset_type = gazu.asset.get_asset_type(t["asset_type_id"])
+                            asset_type = self.auth.kitsu.get_asset_type(t["asset_type_id"])
                             if asset_type:
                                 t["asset_type_name"] = asset_type.get("name", "")
                     except Exception as inner_e:
@@ -104,19 +103,19 @@ class InstallProjectWorker(QThread):
     def run(self):
         try:
             installer = LocalInstaller(self.project_root.parent, self.config_factory)
-            
+
             vcs_user = self.auth.user_data.get("email", "artist") if self.auth.user_data else "artist"
-            vcs_pwd = self.auth.get_current_token() 
-            
+            vcs_pwd = self.auth.get_current_token()
+
             total_steps = 7
             current_step = 0
-            
+
             def interceptor_progreso(mensaje: str, color: str):
                 nonlocal current_step
                 trigger_words = ["Reading structural", "Synchronizing", "Extracting", "Injecting", "Deploying", "Configuring", "Generating"]
                 if any(word in mensaje for word in trigger_words):
                     current_step += 1
-                
+
                 pct = int((current_step / total_steps) * 100)
                 if pct > 100: pct = 100
                 self.progress_updated.emit(f"⏳ {pct}% - {mensaje}", "yellow")
@@ -129,19 +128,19 @@ class InstallProjectWorker(QThread):
                 user_role="artist",
                 task_metadata=self.task_data
             )
-            
+
             self.finished_install.emit(success, msg)
         except Exception as e:
             self.finished_install.emit(False, str(e))
-            
+
 class LaunchTaskWorker(QThread):
     """Hilo secundario para ejecutar Blender sin congelar la interfaz gráfica."""
     finished_launch = Signal(bool, str)
-    
+
     def __init__(self, kwargs_dict):
         super().__init__()
         self.kwargs = kwargs_dict
-        
+
     def run(self):
         try:
             from core.env_launcher import lanzar_blender
@@ -151,14 +150,14 @@ class LaunchTaskWorker(QThread):
             self.finished_launch.emit(False, f"Error lanzando DCC: {str(e)}")
 
 class ViewArtist(BaseDashboardView):
-    def __init__(self, parent: QWidget, auth_manager: AuthManager, nas_dir: Path, 
+    def __init__(self, parent: QWidget, auth_manager: AuthManager, nas_dir: Path,
                  vault_manager: VaultManager, config_factory: ConfigFactory, on_logout: Callable[[], None], **kwargs):
-        
+
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
-        
+
         self.nas_dir = nas_dir
         self.vault = vault_manager
-        
+
         self._task_widgets = []
         self._all_fetched_tasks = []
         self._current_cols = 0
@@ -184,10 +183,10 @@ class ViewArtist(BaseDashboardView):
         # NUEVO: Header con Título y Selector de Proyecto
         # =======================================================
         header_layout = QHBoxLayout()
-        
+
         lbl_title = QLabel(self.tr("My Assigned Tasks"))
         lbl_title.setObjectName("PageTitle")
-        
+
         self.combo_projects = QComboBox()
         self.combo_projects.setObjectName("StandardComboBox")
         self.combo_projects.setFixedSize(250, 35)
@@ -205,13 +204,13 @@ class ViewArtist(BaseDashboardView):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setObjectName("InvisibleScrollArea")
-        
+
         self.grid_widget = QWidget()
         self.grid_widget.setObjectName("TransparentGridContainer")
         self.grid_layout = QGridLayout(self.grid_widget)
         self.grid_layout.setSpacing(15)
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        
+
         self.scroll_area.setWidget(self.grid_widget)
         layout_tareas.addWidget(self.scroll_area, stretch=1)
 
@@ -232,9 +231,9 @@ class ViewArtist(BaseDashboardView):
         if not self._task_widgets: return
 
         viewport_width = self.scroll_area.viewport().width()
-        card_width = 280  
+        card_width = 280
         spacing = self.grid_layout.spacing()
-        
+
         cols = max(1, (viewport_width + spacing) // (card_width + spacing))
 
         if getattr(self, '_current_cols', 0) == cols: return
@@ -245,33 +244,33 @@ class ViewArtist(BaseDashboardView):
         for widget in self._task_widgets:
             self.grid_layout.removeWidget(widget)
             self.grid_layout.addWidget(widget, row, col)
-            
+
             col += 1
             if col >= cols:
                 col = 0
                 row += 1
 
     def _cambiar_panel(self, panel_id: str):
-        self.set_active_sidebar_button(panel_id) 
+        self.set_active_sidebar_button(panel_id)
         indices = {"mis_tareas": 0, "watchtower": 1}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
 
     def cargar_tareas(self):
         self.actualizar_status(self.tr("Fetching your assigned tasks from Kitsu..."), "yellow")
-        
+
         self.combo_projects.clear()
         self._all_fetched_tasks = []
-        
+
         for widget in self._task_widgets:
             widget.hide()
             widget.deleteLater()
         self._task_widgets.clear()
-        
+
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
-                
+
         self.worker = FetchArtistTasksWorker(self.auth)
         self.worker.data_ready.connect(self._procesar_nuevas_tareas)
         self.worker.error_occurred.connect(lambda e: self.actualizar_status(f"Network error: {e}", "red"))
@@ -283,42 +282,42 @@ class ViewArtist(BaseDashboardView):
         if not tasks:
             self.actualizar_status(self.tr("You have no pending tasks. Enjoy your coffee! ☕"), "white")
             return
-            
+
         self.actualizar_status(self.tr("🟢 Synchronized: {0} active tasks found.").format(len(tasks)), "green")
-        
+
         # 1. Guardar en memoria local
         self._all_fetched_tasks = tasks
-        
+
         # 2. Extraer dinámicamente los proyectos que existen dentro de esas tareas
         self.combo_projects.blockSignals(True)
         self.combo_projects.clear()
         self.combo_projects.addItem(self.tr("All Projects"), "ALL")
-        
+
         proyectos_unicos = {}
         for t in tasks:
             p_name = t.get('project_name') or (t.get('project') or {}).get('name', 'Unknown')
             p_id = t.get('project_id')
             if p_name and p_id and p_id not in proyectos_unicos:
                 proyectos_unicos[p_id] = p_name
-                
+
         # Insertar ordenados alfabéticamente
         for p_id, p_name in sorted(proyectos_unicos.items(), key=lambda item: item[1]):
             self.combo_projects.addItem(p_name, p_id)
-            
+
         self.combo_projects.blockSignals(False)
-        
+
         # 3. Disparar el primer renderizado (por defecto mostrará "All Projects")
         self._aplicar_filtro_proyecto()
 
     def _aplicar_filtro_proyecto(self, index=0):
         """Filtra la lista de tareas en caché y dibuja el Grid."""
-        
+
         # 1. Limpiar Grid Actual
         for widget in self._task_widgets:
             widget.hide()
             widget.deleteLater()
         self._task_widgets.clear()
-        
+
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)
             if child.widget():
@@ -326,7 +325,7 @@ class ViewArtist(BaseDashboardView):
 
         # 2. Obtener el ID del proyecto a filtrar
         selected_project_id = self.combo_projects.currentData()
-        
+
         if selected_project_id == "ALL":
             filtered_tasks = self._all_fetched_tasks
         else:
@@ -334,13 +333,13 @@ class ViewArtist(BaseDashboardView):
 
         vfs_pipeline = self.config_factory.get_vfs_pipeline_name()
         nas_root = self.config_factory.get_workspace_root()
-        
+
         # 3. Renderizar Tarjetas
         for task_data in filtered_tasks:
             if TaskCard:
                 # 1. Extracción directa respaldada por nuestro dump forense
                 p_name = task_data.get('project_name') or (task_data.get('project') or {}).get('name', 'Unknown')
-                
+
                 # 2. Normalización de carpeta según la convención del ProjectBuilder
                 folder_name = p_name.strip().lower().replace(" ", "-")
                 temp_root = nas_root / folder_name
@@ -363,7 +362,7 @@ class ViewArtist(BaseDashboardView):
                 is_installed = False
                 can_work = True
                 blocked_reason = ""
-                
+
                 if project_root:
                     try:
                         is_installed = LocalInstaller(project_root.parent, self.config_factory).verificar_instalacion(project_root)
@@ -383,13 +382,13 @@ class ViewArtist(BaseDashboardView):
                 # 2. DELEGACIÓN AL ORQUESTADOR DCC (Env Launcher)
                 def launch_cb(p_root: Path, conf_path: Path, t_data: dict):
                     #from core.env_launcher import lanzar_blender
-                    
+
                     self.actualizar_status(self.tr("🚀 Delegando al Orquestador DCC..."), "yellow")
-                    
+
                     if not conf_path.exists():
                         self.actualizar_status(self.tr("Config file missing. Reinstall workspace."), "red")
                         return
-                        
+
                     # Extraer credenciales base (El env_launcher aplicará el bypass de admin en localhost)
                     #import os
                     vcs_user = "admin"
@@ -404,13 +403,13 @@ class ViewArtist(BaseDashboardView):
                         return
 
                     kitsu_host = self.config_factory.get_kitsu_api_url()
-                    
+
                     # Delegar todo el trabajo pesado, sandboxing y variables de entorno al motor central
                     # 1. BLOQUEAR EL CIERRE DEL HUB
                     main_window = self.window()
                     if hasattr(main_window, 'registrar_instancia'):
-                        main_window.registrar_instancia(True) 
-                        
+                        main_window.registrar_instancia(True)
+
                     # 2. PREPARAR ARGUMENTOS PARA EL WORKER
                     kwargs = {
                         "project_root": p_root,
@@ -426,16 +425,16 @@ class ViewArtist(BaseDashboardView):
                         "status_callback": self.actualizar_status,
                         "config_factory": self.config_factory
                     }
-                    
+
                     # 3. LANZAR EN HILO SECUNDARIO
                     self.launch_worker = LaunchTaskWorker(kwargs)
-                    
+
                     def on_launch_finished(success, msg):
                         # 4. LIBERAR EL CIERRE DEL HUB
                         if hasattr(main_window, 'registrar_instancia'):
                             main_window.registrar_instancia(False)
                         self.actualizar_status(msg, "green" if success else "red")
-                        
+
                     self.launch_worker.finished_launch.connect(on_launch_finished)
                     self.launch_worker.start()
 
@@ -465,15 +464,15 @@ class ViewArtist(BaseDashboardView):
             # ¡Añadimos la tarjeta a la cuadrícula!
             self._task_widgets.append(tarjeta)
             # =========================================================
-            
-        self._current_cols = 0 
+
+        self._current_cols = 0
         self._rearrange_grid()
 
     def iniciar_instalacion_fisica(self, project_root: Path, task_data: dict):
         if not project_root:
             self.actualizar_status(self.tr("Cannot install: Project folder is missing on NAS."), "red")
             return
-            
+
         if self._install_worker and self._install_worker.isRunning():
             self.actualizar_status(self.tr("Please wait, an installation is already running..."), "red")
             return

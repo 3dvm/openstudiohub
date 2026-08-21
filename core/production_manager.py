@@ -20,12 +20,14 @@ the VCS repository via Semantic Topography. Anchored to English standard.
 import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
-import gazu
+from core.kitsu_manager import KitsuManager
 
 class ProductionManager:
     def __init__(self, auth_manager, config_factory):
         self.auth_manager = auth_manager
         self.config_factory = config_factory
+        # Todas las llamadas a Gazu se delegan al KitsuManager (SSoT).
+        self.kitsu = KitsuManager()
         
         try:
             self.vault_root = self.config_factory.get_workspace_root() / "openstudio_vault"
@@ -45,11 +47,11 @@ class ProductionManager:
             # Ampliamos el espectro para atrapar las tomas recién creadas por el Editor
             valid_statuses = ["Todo", "Ready To Start"]
             
-            shots = gazu.shot.all_shots_for_project(project_id)
+            shots = self.kitsu.all_shots_for_project(project_id)
             for shot in shots:
                 status = shot.get("status", "Todo") # Fallback a Todo si es nueva
                 if status in valid_statuses:
-                    seq = gazu.shot.get_sequence(shot.get("sequence_id"))
+                    seq = self.kitsu.get_sequence(shot.get("sequence_id"))
                     pending_list.append({
                         "id": shot["id"],
                         "name": shot["name"],
@@ -60,14 +62,14 @@ class ProductionManager:
                         "raw_data": shot
                     })
                     
-            assets = gazu.asset.all_assets_for_project(project_id)
+            assets = self.kitsu.all_assets_for_project(project_id)
             for asset in assets:
                 status = asset.get("status", "Todo")
                 if status == "Todo":
                     
                     asset_type_id = asset.get("entity_type_id", "")
 
-                    asset_type = gazu.asset.get_asset_type(asset.get("entity_type_id"))
+                    asset_type = self.kitsu.get_asset_type(asset.get("entity_type_id"))
                     
                     pending_list.append({
                         "id": asset["id"],
@@ -96,7 +98,7 @@ class ProductionManager:
                 entity_data = {}
                 
             entity_data["blend_file_path"] = relative_path
-            gazu.entity.update_entity_data(entity_dict["id"], entity_data)
+            self.kitsu.update_entity_data(entity_dict["id"], entity_data)
             return True
         except Exception as e:
             print(f"[PRODUCTION MANAGER] Error maping file to Kitsu: {e}")
@@ -150,9 +152,9 @@ class ProductionManager:
                 for task_name in task_types:
                     # Spawn in API (Silent fail if already exists)
                     try:
-                        gazu_task_type = gazu.task.get_task_type_by_name(task_name)
+                        gazu_task_type = self.kitsu.get_task_type_by_name(task_name)
                         if gazu_task_type:
-                            gazu.task.create_task(e_id, gazu_task_type)
+                            self.kitsu.create_task(e_id, gazu_task_type)
                     except Exception as api_e:
                         print(f"[PRODUCTION MANAGER] Task {task_name} already exists or API error: {api_e}")
 
@@ -183,12 +185,12 @@ class ProductionManager:
         Gracias a la plantilla del TD, este ya existe en el proyecto.
         """
         # 1. Buscar a nivel global
-        task_types = gazu.task.all_task_types()
+        task_types = self.kitsu.all_task_types()
         storyboard_tt = next((tt for tt in task_types if tt["name"].lower() == "storyboard" and tt["for_entity"].lower() == "sequence"), None)
         
         # 2. Fallback de seguridad (solo lo crea en memoria global si alguien lo borró)
         if not storyboard_tt:
-            storyboard_tt = gazu.task.new_task_type(
+            storyboard_tt = self.kitsu.new_task_type(
                 name="StoryboardSeq", 
                 color="#F97316",
                 for_entity="Sequence"
@@ -200,15 +202,15 @@ class ProductionManager:
     def create_sequence_with_task(self, project_id: str, sequence_name: str, task_type_id: str) -> dict:
         """Crea la entidad Sequence y le adjunta la tarea de Storyboard."""
         # Kitsu requiere el nombre del proyecto como objeto o dict para crear la secuencia
-        project = gazu.project.get_project(project_id)
+        project = self.kitsu.get_project(project_id)
         
         # Crear la secuencia en Kitsu
-        sequence = gazu.shot.new_sequence(project, name=sequence_name)
+        sequence = self.kitsu.new_sequence(project, name=sequence_name)
         
         # Crear la tarea inicial de Storyboard
         # El estado inicial suele ser 'todo' o el por defecto del estudio
-        default_status = gazu.task.get_default_task_status()
-        gazu.task.new_task(
+        default_status = self.kitsu.get_default_task_status()
+        self.kitsu.new_task(
             entity=sequence, 
             task_type=task_type_id, 
             name="main", 

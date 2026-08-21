@@ -1,10 +1,11 @@
-import gazu
 import subprocess
 import os
 import glob
 import platform
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
+
+from core.kitsu_manager import KitsuManager
 
 
 class BatchCreationWorker(QThread):
@@ -259,6 +260,7 @@ class StoryboardBatchWorker(QThread):
         self.project_id = project_id
         self.project_name = project_name
         self.sequence_names = sequence_names
+        self.kitsu = KitsuManager()
 
     def run(self):
         try:
@@ -293,7 +295,7 @@ class StoryboardBatchWorker(QThread):
                 self.progress_updated.emit(base_progress, self.tr(f"Processing Sequence: {seq_name} ({idx+1}/{total_seqs})"))
                 
                 self.log_stream.emit(f"\n[{seq_name}] Registering Entity and Task in Kitsu API...")
-                existing_seq = gazu.shot.get_sequence_by_name(self.project_id, seq_name)
+                existing_seq = self.kitsu.get_sequence_by_name(self.project_id, seq_name)
                 
                 if not existing_seq:
                     existing_seq = self.pm_core.create_sequence_with_task(self.project_id, seq_name, tt_id)
@@ -305,12 +307,12 @@ class StoryboardBatchWorker(QThread):
                 
                 try:
                     storyboard_tt = self.pm_core.get_or_create_storyboard_task_type(self.project_id)
-                    task = gazu.task.get_task_by_entity(existing_seq, storyboard_tt)
+                    task = self.kitsu.get_task_by_entity(existing_seq, storyboard_tt)
                     
                     if task is None:
                         self.log_stream.emit(f"[{seq_name}] Tarea no encontrada. Creando nueva tarea 'main'...")
-                        default_status = gazu.task.get_default_task_status()
-                        task = gazu.task.new_task(existing_seq, storyboard_tt, name="main", task_status=default_status)
+                        default_status = self.kitsu.get_default_task_status()
+                        task = self.kitsu.new_task(existing_seq, storyboard_tt, name="main", task_status=default_status)
                     
                     rel_path = f"{vfs_svn}/edit/storyboards/{seq_name.lower()}-storyboard.blend"
                     
@@ -319,12 +321,12 @@ class StoryboardBatchWorker(QThread):
                         seq_data = {}
 
                     seq_data["blend_file_path"] = rel_path
-                    gazu.shot.update_sequence_data(existing_seq["id"], seq_data)
+                    self.kitsu.update_sequence_data(existing_seq["id"], seq_data)
                     self.log_stream.emit(f"[{seq_name}] ✓ File path saved in Sequence metadata: {rel_path}")
                     
-                    software = gazu.files.get_software_by_name("Blender")
+                    software = self.kitsu.get_software_by_name("Blender")
                     if software and task:
-                        gazu.files.new_working_file(task, software, name=rel_path)
+                        self.kitsu.new_working_file(task, software, name=rel_path)
                         
                     self.log_stream.emit(f"[{seq_name}] ✓ File path mapped to Kitsu Task.")
                 except Exception as e:

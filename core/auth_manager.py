@@ -16,9 +16,10 @@ of studio and user metadata. Anchored to English standard.
 """
 
 import json
-import gazu
 from pathlib import Path
 from typing import Tuple, Dict, List, Optional
+
+from core.kitsu_manager import KitsuManager, AuthFailedException
 
 OPENSTUDIO_CONFIG_DIR = Path.home() / ".openstudio"
 SESSION_FILE = OPENSTUDIO_CONFIG_DIR / "session.json"
@@ -27,7 +28,9 @@ class AuthManager:
     def __init__(self):
         self.kitsu_host = None
         self.user_data = None
-        
+        # Todas las llamadas a Gazu se delegan al KitsuManager (SSoT).
+        self.kitsu = KitsuManager()
+
         if not OPENSTUDIO_CONFIG_DIR.exists():
             OPENSTUDIO_CONFIG_DIR.mkdir(parents=True)
 
@@ -35,16 +38,16 @@ class AuthManager:
         if not host_url.endswith("/api"):
             host_url = f"{host_url.rstrip('/')}/api"
         self.kitsu_host = host_url
-        gazu.client.set_host(self.kitsu_host)
+        self.kitsu.set_host(self.kitsu_host)
 
     def login_with_credentials(self, email: str, password: str, host_url: str) -> Tuple[bool, str]:
         try:
             self.set_host(host_url)
-            tokens = gazu.log_in(email, password)
-            self.user_data = gazu.client.get_current_user()
+            tokens = self.kitsu.log_in(email, password)
+            self.user_data = self.kitsu.get_current_user()
             self._save_session(tokens)
             return True, "Login successful."
-        except gazu.exception.AuthFailedException:
+        except AuthFailedException:
             return False, "Invalid credentials."
         except Exception as e:
             return False, f"Connection error: {str(e)}"
@@ -56,8 +59,8 @@ class AuthManager:
             with open(SESSION_FILE, 'r') as f:
                 data = json.load(f)
             self.set_host(data["host"])
-            gazu.client.set_tokens(data["tokens"])
-            self.user_data = gazu.client.get_current_user()
+            self.kitsu.set_tokens(data["tokens"])
+            self.user_data = self.kitsu.get_current_user()
             return True
         except Exception:
             if SESSION_FILE.exists():
@@ -65,7 +68,7 @@ class AuthManager:
             return False
 
     def logout(self) -> None:
-        gazu.log_out()
+        self.kitsu.log_out()
         self.user_data = None
         if SESSION_FILE.exists():
             SESSION_FILE.unlink()
@@ -75,7 +78,7 @@ class AuthManager:
             return "guest"
         kitsu_role = self.user_data.get("role", "").lower()
         kitsu_position = self.user_data.get("position", "").lower()
-        
+
         if kitsu_role == "admin": return "td"
         elif kitsu_role == "supervisor": return "supervisor"
         elif kitsu_role == "manager": return "manager"
@@ -91,9 +94,9 @@ class AuthManager:
         return self.user_data.get("position", "").lower()
 
     def get_current_token(self) -> str:
-        if hasattr(gazu.client, "tokens") and isinstance(gazu.client.tokens, dict):
-            return gazu.client.tokens.get("access_token", "")
-            
+        if self.kitsu.has_session_tokens():
+            return self.kitsu.get_access_token()
+
         if SESSION_FILE.exists():
             try:
                 with open(SESSION_FILE, 'r') as f:
@@ -119,18 +122,18 @@ class AuthManager:
         """
         identity = {}
         try:
-            org = gazu.person.get_organisation()
+            org = self.kitsu.get_organisation()
             if isinstance(org, dict) and "name" in org:
                 identity["name"] = org["name"]
         except Exception as e:
             print(f"[AuthManager] Info: Failed to fetch Organisation from server ({e})")
-            
+
         return identity
 
     def obtener_proyectos_activos(self) -> Dict[str, str]:
         proyectos = {}
         try:
-            for p in gazu.project.all_open_projects():
+            for p in self.kitsu.get_all_projects():
                 proyectos[p["name"].lower()] = p["id"]
         except Exception as e:
             print(f"[AuthManager] Error fetching active projects: {e}")
@@ -138,13 +141,13 @@ class AuthManager:
 
     def get_task_metadata(self, task_id: str) -> Optional[Dict[str, str]]:
         try:
-            return gazu.task.get_task(task_id)
+            return self.kitsu.get_task(task_id)
         except Exception:
             return None
 
     def get_assigned_tasks(self) -> List[dict]:
         try:
-            return gazu.user.all_tasks_to_do()
+            return self.kitsu.all_tasks_to_do()
         except Exception as e:
             print(f"[AuthManager] Error fetching assigned tasks: {e}")
             return []
