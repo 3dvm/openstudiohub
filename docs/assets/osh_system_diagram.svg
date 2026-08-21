@@ -1,0 +1,1780 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Created with Inkscape (http://www.inkscape.org/) -->
+
+<svg
+   width="297mm"
+   height="210mm"
+   viewBox="0 0 297 210"
+   version="1.1"
+   id="svg1"
+   inkscape:version="1.4.2 (ebf0e94, 2025-05-08)"
+   sodipodi:docname="osh_system_diagram.svg"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <sodipodi:namedview
+     id="namedview1"
+     pagecolor="#ffffff"
+     bordercolor="#000000"
+     borderopacity="0.25"
+     inkscape:showpageshadow="2"
+     inkscape:pageopacity="0.0"
+     inkscape:pagecheckerboard="0"
+     inkscape:deskcolor="#d1d1d1"
+     inkscape:document-units="mm"
+     inkscape:zoom="0.7500982"
+     inkscape:cx="587.25644"
+     inkscape:cy="453.27398"
+     inkscape:window-width="1920"
+     inkscape:window-height="1022"
+     inkscape:window-x="0"
+     inkscape:window-y="30"
+     inkscape:window-maximized="1"
+     inkscape:current-layer="g5" />
+  <defs
+     id="defs1">
+    <style
+       class="style-fonts"
+       id="style1">
+      @font-face { font-family: Lilita One; src: url(data:font/woff2;base64,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); }</style>
+  </defs>
+  <g
+     inkscape:label="Capa 1"
+     inkscape:groupmode="layer"
+     id="layer1">
+    <!-- svg-source:excalidraw -->
+    <rect
+       x="0.60255104"
+       y="8.6454821"
+       width="296.0528"
+       height="192.21114"
+       fill="#ffffff"
+       id="rect1"
+       style="stroke-width:0.085872" />
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,161.38062,50.881764)"
+       id="g2">
+      <path
+         d="m 112.19,9.18 c 15.26,-6.02 36.39,-7.16 54.9,-7.97 18.51,-0.81 38.23,0.14 56.17,3.12 17.94,2.98 36,8.02 51.47,14.77 15.46,6.75 29.57,15.86 41.33,25.73 11.76,9.87 22.45,21.86 29.23,33.5 6.78,11.65 10.37,24.07 11.45,36.38 1.08,12.32 -0.4,25.1 -4.98,37.53 -4.58,12.42 -12.55,26.2 -22.49,37.03 -9.94,10.82 -23.16,19.91 -37.14,27.92 -13.97,8.01 -29.77,15.37 -46.72,20.12 -16.94,4.75 -36.53,7.62 -54.97,8.39 -18.43,0.77 -37.94,-0.77 -55.65,-3.76 C 117.09,238.96 99.92,234.5 84.2,227.79 68.48,221.07 52.27,211.44 40.48,201.66 28.68,191.88 20.02,180.87 13.42,169.1 6.83,157.34 2.31,143.89 0.9,131.07 -0.5,118.25 0.42,104.54 4.98,92.2 9.54,79.85 18.36,67.68 28.25,56.98 38.15,46.28 49.52,36.34 64.33,27.99 79.14,19.64 107.44,10 117.1,6.87 c 9.66,-3.13 4.1,0.21 5.21,2.33 m 71.79,-9.79 c 17.79,-0.74 38.53,5.93 55.61,11.24 17.09,5.32 32.94,12.15 46.91,20.63 13.97,8.48 27.44,19.41 36.9,30.26 9.46,10.86 16.01,22.55 19.86,34.86 3.85,12.31 4.94,26.45 3.23,39.02 -1.72,12.57 -6.26,24.73 -13.51,36.4 -7.24,11.67 -17.96,24.12 -29.97,33.62 -12.01,9.51 -26.03,17.11 -42.08,23.39 -16.06,6.28 -35.98,11.76 -54.24,14.29 -18.26,2.53 -36.94,2.33 -55.33,0.89 -18.38,-1.44 -38.41,-4.94 -54.98,-9.52 C 89.93,229.92 75.41,224.68 62.05,216.56 48.69,208.45 36.01,196.92 26.34,185.78 16.67,174.64 8.3,162.3 4.02,149.73 -0.25,137.16 -1.06,123.09 0.69,110.36 2.44,97.64 6.96,84.7 14.53,73.37 22.09,62.05 33.96,51.91 46.09,42.42 58.22,32.94 71.55,23.19 87.31,16.48 103.07,9.77 122.48,5.04 140.64,2.14 c 18.16,-2.9 46.74,-3.11 55.63,-3.07 8.89,0.05 -1.91,1.19 -2.29,3.35"
+         stroke="none"
+         stroke-width="0"
+         fill="#b2f2bb"
+         id="path1" />
+      <path
+         d="m 230.8,5.05 c 17.44,1.63 35.13,9.48 50.44,17 15.32,7.52 30.16,17.98 41.44,28.12 11.28,10.13 20.45,20.93 26.23,32.68 5.78,11.74 8.31,24.92 8.44,37.79 0.13,12.87 -2.18,27.11 -7.66,39.42 -5.47,12.32 -14.49,24.27 -25.2,34.48 -10.71,10.21 -24.24,19.15 -39.05,26.79 -14.8,7.65 -32.49,15.08 -49.78,19.08 -17.29,4 -35.61,4.99 -53.96,4.9 -18.36,-0.1 -38.64,-1.71 -56.18,-5.47 C 107.97,236.07 91.51,230.01 76.41,222.73 61.31,215.44 46.19,206.25 34.9,196.12 23.61,186 14.39,173.94 8.69,162 3,150.05 0.95,137.12 0.73,124.44 0.52,111.76 2.05,98.08 7.4,85.91 12.75,73.74 22.16,61.61 32.84,51.42 43.52,41.23 56.84,32.21 71.49,24.75 86.15,17.3 103.37,10.93 120.75,6.68 c 17.39,-4.25 35.46,-7.57 55.04,-7.43 19.58,0.14 51.38,6.22 62.46,8.27 11.09,2.04 5.27,2.12 4.06,4.01 M 122.26,5.47 c 15.8,-5.83 37.85,-5.73 56.45,-5.78 18.59,-0.04 37.77,1.67 55.12,5.51 17.36,3.84 34.08,9.95 49.01,17.53 14.93,7.57 29.71,17.41 40.56,27.94 10.86,10.52 18.98,23.38 24.59,35.2 5.61,11.82 9.05,23.28 9.09,35.7 0.05,12.41 -3.16,26.68 -8.82,38.78 -5.66,12.11 -14.6,23.33 -25.13,33.86 -10.52,10.52 -23.16,21.66 -38.02,29.3 -14.86,7.63 -33.34,12.79 -51.13,16.52 -17.78,3.72 -37.29,5.96 -55.58,5.82 -18.28,-0.14 -36.9,-3.03 -54.15,-6.66 C 107.01,235.57 89.86,231.29 74.93,224.1 60.01,216.92 45.7,206.67 34.72,196.09 23.75,185.5 15.01,172.54 9.1,160.58 3.18,148.63 -0.68,137.14 -0.77,124.35 -0.86,111.56 2.68,96.32 8.57,83.82 14.47,71.32 23.9,59.23 34.61,49.35 45.32,39.48 57.96,31.69 72.81,24.57 87.66,17.46 115,9.56 123.69,6.66 c 8.68,-2.9 0.13,-1.09 1.23,0.51"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path2" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,168.3848,55.659914)"
+       id="g4">
+      <text
+         x="89.541664"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text2">Kitsu / </text>
+      <text
+         x="89.541664"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text3">Production</text>
+      <text
+         x="89.541664"
+         y="116.154"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text4">tracking DB</text>
+    </g>
+    <g
+       transform="matrix(0.07842276,0,0,0.07842276,17.778229,37.917921)"
+       id="g5">
+      <text
+         x="12.721761"
+         y="-80.298477"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="105.565px"
+         fill="#1e1e1e"
+         text-anchor="start"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text5"><tspan
+           sodipodi:role="line"
+           id="tspan1"
+           x="12.721761"
+           y="-80.298477">OpenStudioHub</tspan><tspan
+           sodipodi:role="line"
+           id="tspan2"
+           x="12.721761"
+           y="53.254433">System Diagram</tspan></text>
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,22.084077,85.723565)"
+       id="g6">
+      <path
+         d="m 32,0 c 52.99,0.85 103.58,1.24 152.67,0 23.8,-0.19 32.67,12.39 32,32 -0.93,17.13 2,41.37 0,69.33 1.84,20.42 -10.17,31.88 -32,32 -41.86,-2.37 -81.73,-0.73 -152.67,0 C 8.35,133.8 2.52,125.61 0,101.33 -0.8,82.53 2.76,68.59 0,32 1.87,10.82 8.45,0.34 32,0"
+         stroke="none"
+         stroke-width="0"
+         fill="#ffa94d"
+         id="path5" />
+      <path
+         d="M 32,0 C 64.38,2.25 95.61,1.95 184.67,0 M 32,0 c 34.91,0.43 71.29,0.42 152.67,0 m 0,0 c 19.68,-1.14 33.39,9.5 32,32 m -32,-32 c 20.47,1.36 31.51,11.44 32,32 m 0,0 c 1.5,25.71 -0.94,56.21 0,69.33 m 0,-69.33 c -1.07,19.83 0.21,39.59 0,69.33 m 0,0 c 0.97,23.17 -9.52,30.95 -32,32 m 32,-32 c -0.02,22.08 -12.27,30.32 -32,32 m 0,0 c -33.29,-0.64 -69.34,0.19 -152.67,0 m 152.67,0 c -37.66,-0.95 -72.77,-1 -152.67,0 m 0,0 c -20.91,-0.52 -32.33,-11.1 -32,-32 m 32,32 c -23.17,1.04 -32.72,-8.62 -32,-32 m 0,0 C -0.29,88 -0.51,74.59 0,32 m 0,69.33 C 1.32,85.6 1.04,71.4 0,32 m 0,0 C 1.34,10.32 10.08,-1.46 32,0 M 0,32 C 0.21,8.82 10.81,-2.2 32,0"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path6" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,25.052378,87.705047)"
+       id="g7">
+      <text
+         x="70.48333"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text6">Technical</text>
+      <text
+         x="70.48333"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text7">Director</text>
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,14.764621,113.28046)"
+       id="g8">
+      <path
+         d="m 32,0 c 33.93,4.05 70.75,-1.95 152.67,0 23.08,0.25 33.05,13.7 32,32 1.73,30.76 0.33,57.67 0,78.22 0.89,17.79 -10.32,30.87 -32,32 -46.61,2.31 -93.98,1.76 -152.67,0 C 8.14,143.03 -2.53,128.34 0,110.22 2.53,84.89 0.88,65.38 0,32 -1.08,10.37 11.14,-1.16 32,0"
+         stroke="none"
+         stroke-width="0"
+         fill="#ffa94d"
+         id="path7" />
+      <path
+         d="m 32,0 c 45.88,-1.28 88.76,-0.8 152.67,0 M 32,0 c 39.83,0.62 77.85,-0.46 152.67,0 m 0,0 c 19.35,-0.62 31.52,12.02 32,32 m -32,-32 c 23.33,1.19 32.09,9.25 32,32 m 0,0 c 0.35,24.73 -1.71,47.43 0,78.22 m 0,-78.22 c 1.55,27.85 1.34,54.24 0,78.22 m 0,0 c 1.95,19.5 -12.43,32.5 -32,32 m 32,-32 c -0.76,20.31 -9.24,32.51 -32,32 m 0,0 c -42.74,-1.88 -86.78,1.11 -152.67,0 m 152.67,0 c -40.7,-0.01 -80.91,0.46 -152.67,0 m 0,0 c -20.38,-1.5 -31.18,-11.14 -32,-32 m 32,32 C 12.15,141.38 0.92,129.73 0,110.22 m 0,0 C -0.33,90.88 0.71,68.86 0,32 m 0,78.22 C 0.37,82.02 -0.23,54.83 0,32 m 0,0 C 0.2,10.31 10.84,-0.83 32,0 M 0,32 C 0.99,11.92 11.85,0.53 32,0"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path8" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,16.602325,115.61048)"
+       id="g9">
+      <text
+         x="84.900002"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text8">Production</text>
+      <text
+         x="84.900002"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text9">Manager</text>
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,14.098649,146.59457)"
+       id="g10">
+      <path
+         d="m 27.5,0 c 53.59,0.66 99.14,-0.51 161.67,0 16.79,-3.35 24.27,12.56 27.5,27.5 3.68,14.8 -0.22,32.48 0,55 0.94,18.81 -9.99,24.19 -27.5,27.5 C 125.6,108.42 65.24,106.7 27.5,110 6.97,109.94 3.28,101.57 0,82.5 0.07,68.08 -2.81,57.25 0,27.5 2.6,9.23 9.43,2.27 27.5,0"
+         stroke="none"
+         stroke-width="0"
+         fill="#ffa94d"
+         id="path9" />
+      <path
+         d="m 27.5,0 c 43.17,-0.22 84.37,-1.08 161.67,0 M 27.5,0 c 63.58,0.5 128.39,1.04 161.67,0 m 0,0 c 18.11,-0.46 29.26,10.86 27.5,27.5 M 189.17,0 c 16.11,-0.05 25.6,9.11 27.5,27.5 m 0,0 c 0.95,15.75 1.87,28.66 0,55 m 0,-55 c -1.09,12.02 0.16,25.66 0,55 m 0,0 c -1.97,19.92 -9.54,27.44 -27.5,27.5 m 27.5,-27.5 c -1.09,18.4 -7.41,25.98 -27.5,27.5 m 0,0 c -55.81,2.41 -112.87,3.13 -161.67,0 m 161.67,0 c -40.37,-1.28 -81.58,-1.02 -161.67,0 m 0,0 C 8,108.58 -0.69,101.34 0,82.5 M 27.5,110 C 11.25,110.83 1.17,99.93 0,82.5 m 0,0 C -0.45,71.01 -1.78,58.97 0,27.5 m 0,55 C 0.92,68.99 1,56.73 0,27.5 m 0,0 C 1.52,7.3 8.04,1.46 27.5,0 M 0,27.5 C -0.26,9 7.1,0.76 27.5,0"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path10" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,18.913152,149.28446)"
+       id="g11">
+      <text
+         x="46.941666"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text10">Editor</text>
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,19.703385,179.41386)"
+       id="g12">
+      <path
+         d="m 25.83,0 c 52.91,-1.53 104.13,0.73 165,0 16.11,3.25 22.81,5.65 25.84,25.83 -1.25,15.54 -1.66,40.38 0,51.67 -1.29,20.74 -5.21,23.59 -25.84,25.83 -49.65,-4.38 -99.64,-2.94 -165,0 C 7.78,100.59 3.05,93.26 0,77.5 -3.02,63.77 -2.74,42.73 0,25.83 2.81,6.24 9.59,-0.76 25.83,0"
+         stroke="none"
+         stroke-width="0"
+         fill="#ffa94d"
+         id="path11" />
+      <path
+         d="m 25.83,0 c 52.42,-1.61 102.5,-1.62 165,0 m -165,0 c 57.42,1.48 114.81,0.76 165,0 m 0,0 c 16.62,0.29 24.92,10.35 25.84,25.83 M 190.83,0 c 15.38,0.86 23.61,8.77 25.84,25.83 m 0,0 c 1.11,13.3 0.84,22.33 0,51.67 m 0,-51.67 c 0.44,14.49 0.12,30.49 0,51.67 m 0,0 c 0.6,17.93 -9.47,26.27 -25.84,25.83 M 216.67,77.5 c -0.36,19.47 -10.14,27.06 -25.84,25.83 m 0,0 c -65.32,-1.21 -128.52,1.48 -165,0 m 165,0 c -55.03,-1.13 -109.73,-0.5 -165,0 m 0,0 C 7.21,104.85 1.73,92.98 0,77.5 m 25.83,25.83 C 7.8,103.92 1.52,96.09 0,77.5 m 0,0 C -1.37,58.5 -2.08,43.33 0,25.83 M 0,77.5 C 0.12,64.4 -0.37,51.54 0,25.83 m 0,0 C -0.63,10.24 7.28,-0.56 25.83,0 M 0,25.83 C -0.53,7.86 7.97,-0.54 25.83,0"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path12" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,24.65578,181.84236)"
+       id="g13">
+      <text
+         x="45.183334"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text12">Artist</text>
+    </g>
+    <g
+       stroke-opacity="0.8"
+       fill-opacity="0.8"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,188.74549,131.96938)"
+       id="g14">
+      <path
+         d="m 195.52,-0.02 c 17.42,-3.94 38.3,1.77 55.91,6.3 17.61,4.52 34.16,11.71 49.74,20.84 15.59,9.12 30.76,20.79 43.76,33.92 13.01,13.13 25.19,28.76 34.27,44.85 9.07,16.08 15.97,33.85 20.2,51.68 4.22,17.82 5.75,36.84 5.16,55.29 -0.59,18.44 -3.12,37.72 -8.72,55.38 -5.59,17.66 -14.67,35.09 -24.85,50.56 -10.18,15.47 -22.6,30.09 -36.24,42.26 -13.64,12.17 -29.1,22.78 -45.6,30.77 -16.5,8 -35.51,14.11 -53.4,17.19 -17.89,3.09 -36.05,3.5 -53.93,1.33 -17.87,-2.17 -36.17,-7.48 -53.32,-14.34 C 111.35,389.16 93.62,380.44 78.93,369.23 64.23,358.03 51.11,343.43 40.36,328.79 29.6,314.15 20.92,298.51 14.38,281.39 7.84,264.26 2.92,244.55 1.11,226.03 -0.71,207.52 0.4,188.54 3.49,170.31 6.58,152.08 12.01,133.28 19.65,116.66 27.3,100.04 37.22,84.53 49.37,70.6 61.53,56.66 77.14,43.38 92.58,33.04 108.02,22.7 122.77,14.12 142,8.57 c 19.23,-5.55 53.08,-8.18 65.98,-8.81 12.9,-0.64 11.41,1.51 11.41,5.01 M 161.73,4.05 c 16.22,-6.4 35.07,-3.79 53.22,-2.29 18.16,1.49 38.54,5.38 55.72,11.25 17.19,5.86 32.86,13.66 47.41,23.94 14.55,10.27 28.1,23.2 39.88,37.69 11.79,14.48 23.53,32.16 30.85,49.21 7.33,17.05 10.68,34.77 13.09,53.09 2.41,18.31 3.74,38.37 1.36,56.8 -2.37,18.44 -8.46,36.93 -15.61,53.82 -7.15,16.89 -16.02,33.05 -27.3,47.52 -11.28,14.47 -25.51,28.52 -40.39,39.31 -14.88,10.79 -31.54,19.19 -48.88,25.45 -17.35,6.25 -36.8,11.04 -55.17,12.08 -18.36,1.05 -37.57,-1.91 -55.03,-5.81 -17.47,-3.9 -33.8,-9.17 -49.77,-17.59 C 95.14,380.09 78.57,368.23 65.04,355.58 51.52,342.92 39.53,328.15 29.94,312.58 20.35,297.01 12.4,280.14 7.49,262.16 c -4.9,-17.99 -7,-38.9 -7,-57.47 0.01,-18.58 2.16,-36.58 7.04,-54 4.89,-17.42 13.03,-34.57 22.28,-50.53 C 39.06,84.21 49.6,67.96 63.02,54.94 76.44,41.92 94.27,30.35 110.33,22.05 126.38,13.76 150.72,7.68 159.37,5.17 c 8.64,-2.51 1.65,-1.27 2.83,1.85"
+         stroke="none"
+         stroke-width="0"
+         fill="#ffc9c9"
+         id="path13" />
+      <path
+         d="m 130.95,12.48 c 14.96,-9.15 35.95,-9.87 54.08,-11.44 18.13,-1.57 36.87,-1.41 54.69,2.03 17.82,3.44 35.84,10.51 52.23,18.61 16.4,8.1 32.69,17.9 46.14,29.98 13.45,12.07 24.75,26.86 34.58,42.47 9.83,15.6 19.16,33.31 24.41,51.17 5.25,17.85 6.8,37.37 7.11,55.95 0.31,18.58 -0.69,37.69 -5.25,55.53 -4.57,17.83 -13.03,35.53 -22.16,51.49 -9.14,15.97 -19.64,31.38 -32.66,44.3 -13.02,12.92 -29.38,24.29 -45.48,33.23 -16.11,8.94 -33.63,16.23 -51.14,20.41 -17.5,4.18 -35.59,5.63 -53.9,4.67 -18.3,-0.96 -38.39,-4.57 -55.91,-10.45 C 120.18,394.55 103.31,386.04 88.52,375.58 73.72,365.13 60.67,351.76 48.95,337.68 37.22,323.6 26.01,307.78 18.17,291.1 10.32,274.43 4.81,256.03 1.87,237.64 -1.07,219.26 -1.79,199.06 0.53,180.79 2.84,162.51 8.73,144.97 15.76,128 22.8,111.03 31.59,93.66 42.75,78.97 53.92,64.28 63.97,52 82.76,39.88 101.55,27.75 139.3,12 155.48,6.22 171.66,0.44 179.22,1.83 179.86,5.18 m 8.85,-4.72 c 16.88,-4.17 37.4,1.28 55.23,4.98 17.83,3.69 35.67,8.91 51.74,17.2 16.07,8.29 31.48,19.91 44.68,32.54 13.21,12.62 24.98,27.46 34.57,43.22 9.59,15.75 18.05,33.29 22.96,51.3 4.9,18.01 6.78,38.21 6.47,56.74 -0.31,18.53 -3.6,36.65 -8.31,54.42 -4.71,17.78 -10.76,36.2 -19.93,52.22 -9.18,16.03 -21.79,31.56 -35.13,43.93 -13.34,12.38 -28.81,22.09 -44.9,30.32 -16.08,8.22 -33.51,15.26 -51.62,19.03 -18.11,3.76 -38.64,4.6 -57.05,3.55 -18.4,-1.06 -36.6,-3.85 -53.39,-9.88 C 117.25,393.99 101.59,384.46 86.72,373.69 71.84,362.92 56.4,349.56 44.78,335.38 33.16,321.2 24.25,305.61 16.98,288.6 9.71,271.6 3.5,251.71 1.15,233.35 -1.19,215 0.53,196.69 2.9,178.47 5.26,160.26 8.49,141.01 15.34,124.05 22.19,107.09 32.1,91.06 43.98,76.73 55.85,62.41 71.55,49.05 86.6,38.12 101.66,27.18 117.48,17.4 134.31,11.11 151.13,4.83 178.17,1.56 187.54,0.42 c 9.36,-1.14 2.32,0.48 2.95,3.86"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path14" />
+    </g>
+    <g
+       stroke-opacity="0.8"
+       fill-opacity="0.8"
+       transform="matrix(0.07842276,0,0,0.07842276,199.88238,146.47693)"
+       id="g15">
+      <text
+         x="60.299999"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text14">Blender</text>
+    </g>
+    <g
+       stroke-opacity="0.9"
+       fill-opacity="0.9"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,74.362177,111.48296)"
+       id="g16">
+      <path
+         d="m 400,65.75 c 48.42,34.97 93.66,79.01 158,131.5 79.89,67 82.04,63.94 0,131.5 -60.67,53.17 -125.01,105.98 -158,131.5 -82.65,65.87 -79.46,68.07 -160,0 C 197.84,426.01 153.13,392.36 80,328.75 -1.8,261.61 1.83,265.96 80,197.25 132.52,154.46 182.66,116.7 240,65.75 c 78.38,-63.19 77.25,-62.77 160,0"
+         stroke="none"
+         stroke-width="0"
+         fill="#a5d8ff"
+         id="path15" />
+      <path
+         d="m 400,65.75 c 33.57,25.75 66.09,55.04 158,131.5 M 400,65.75 c 54.63,45.32 109.49,91.66 158,131.5 m 0,0 c 80.44,66.88 78.84,67.64 0,131.5 m 0,-131.5 c 78.66,64.67 82.09,66.25 0,131.5 m 0,0 c -52.33,43.2 -103.17,87.12 -158,131.5 m 158,-131.5 c -33.36,28.93 -68.07,56.04 -158,131.5 m 0,0 c -78.13,64.15 -81.97,66.78 -160,0 m 160,0 c -79.2,63.61 -77.82,64.84 -160,0 m 0,0 C 180.54,411.09 120.17,361.49 80,328.75 m 160,131.5 C 189.57,418.6 139.68,376.89 80,328.75 m 0,0 C 0.45,261.38 -1.85,262.17 80,197.25 m 0,131.5 C 0.76,263.64 -1.44,262.56 80,197.25 m 0,0 c 43.26,-34.95 84.8,-67.1 160,-131.5 M 80,197.25 c 31.67,-29.19 65.47,-55.22 160,-131.5 m 0,0 c 81.94,-64.5 78.94,-65.41 160,0 m -160,0 c 82.06,-67.07 80.14,-66.55 160,0"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path16" />
+    </g>
+    <g
+       stroke-opacity="0.9"
+       fill-opacity="0.9"
+       transform="matrix(0.07842276,0,0,0.07842276,89.794471,130.48479)"
+       id="g17">
+      <text
+         x="122.21667"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text16">OpenStudioHub</text>
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,251.14013,88.661348)"
+       id="g18">
+      <path
+         d="m 152.98,3.38 c 17.57,-4.42 41.14,-4.18 61.11,-3.58 19.97,0.59 40.13,3.25 58.71,7.13 18.57,3.89 37.05,9.57 52.75,16.18 15.71,6.61 29.89,14.63 41.49,23.49 11.6,8.85 21.64,19.4 28.11,29.64 6.47,10.24 10.23,20.87 10.7,31.8 0.48,10.93 -2.2,23.46 -7.84,33.78 -5.64,10.32 -15.04,19.1 -26.01,28.14 -10.97,9.04 -24.36,19.15 -39.79,26.09 -15.43,6.93 -34.26,11.44 -52.79,15.53 -18.53,4.09 -38.69,7.9 -58.38,9 -19.7,1.1 -40.47,-0.16 -59.78,-2.4 -19.32,-2.24 -38.69,-6.06 -56.11,-11.06 C 87.74,202.11 70.76,195.94 56.78,188.15 42.8,180.37 30.22,170.17 21.26,160.43 12.3,150.69 6.22,140.35 3.01,129.74 -0.2,119.13 -0.53,107.51 1.99,96.76 4.51,86.01 9.81,75.33 18.12,65.23 26.44,55.13 38.74,44.37 51.87,36.16 65,27.95 78.8,21.7 96.89,15.97 114.98,10.25 148.53,3.79 160.42,1.82 c 11.9,-1.98 7.08,0.28 7.85,2.3 m 129.27,7.57 c 18.31,3.09 35.09,12.5 49.2,20.57 14.11,8.07 26.43,18.27 35.46,27.87 9.03,9.6 15.11,19.41 18.73,29.72 3.63,10.31 5.16,21.24 3.02,32.15 -2.13,10.91 -7.8,23.36 -15.83,33.31 -8.02,9.95 -19.2,18.04 -32.32,26.4 -13.12,8.36 -29.57,17.84 -46.41,23.76 -16.85,5.92 -35.67,9.01 -54.67,11.78 -19,2.76 -39.54,5.48 -59.35,4.84 -19.81,-0.64 -40.59,-5.14 -59.5,-8.69 -18.92,-3.55 -38.09,-6.19 -54,-12.59 C 65.95,194.4 52.19,183.88 40.36,174.94 28.53,166.01 17.47,157.29 10.89,147.19 4.31,137.09 1.35,125 0.88,114.32 0.4,103.64 3.2,93.34 8.06,83.11 12.92,72.88 19.56,62.56 30.06,52.94 40.57,43.32 55.8,32.91 71.09,25.38 86.38,17.86 103.43,11.7 121.79,7.79 c 18.36,-3.9 39.75,-4.83 59.44,-5.83 19.69,-1 39.57,-1.85 58.7,-0.15 19.13,1.71 46.58,8.35 56.07,10.4 9.49,2.05 2.42,0.04 0.86,1.91"
+         stroke="none"
+         stroke-width="0"
+         fill="#ffec99"
+         id="path17" />
+      <path
+         d="m 258.67,3.72 c 19.24,1.21 38.01,8.18 54.72,14.11 16.7,5.92 32.87,13.02 45.5,21.45 12.64,8.42 22.79,19.16 30.28,29.09 7.49,9.94 12.7,19.8 14.67,30.53 1.98,10.74 1.16,23.24 -2.83,33.89 -3.99,10.66 -11.52,20.61 -21.13,30.03 -9.6,9.42 -22.27,18.82 -36.51,26.47 -14.24,7.65 -31.1,14.57 -48.93,19.44 -17.83,4.88 -38.48,8.01 -58.03,9.81 -19.55,1.8 -39.73,2.33 -59.3,1 -19.56,-1.33 -39.79,-4.53 -58.08,-8.98 C 100.73,206.1 82.16,199.85 67.33,192.81 52.5,185.76 40.24,177.41 30.04,168.3 19.85,159.18 11.18,148.72 6.15,138.11 1.13,127.5 -1.26,115.69 -0.1,104.64 1.06,93.59 6.14,82.05 13.13,71.81 20.12,61.57 29.9,51.79 41.85,43.2 53.8,34.62 68.73,26.39 84.83,20.3 c 16.1,-6.09 34.83,-10.28 53.61,-13.64 18.79,-3.35 37.43,-6.22 59.12,-6.48 21.69,-0.25 58.02,3.3 71.03,4.95 13.02,1.66 8.12,3.24 7.06,5 m -51.4,-9.92 c 19.19,-0.97 40.12,3.18 58.38,7.6 18.26,4.42 35.9,11.54 51.17,18.89 15.27,7.36 29.92,15.95 40.46,25.24 10.53,9.3 17.71,20.33 22.76,30.53 5.06,10.21 7.95,20.3 7.59,30.73 -0.37,10.42 -3.1,21.19 -9.76,31.83 -6.67,10.64 -18.15,23.09 -30.22,31.99 -12.06,8.9 -26.54,15.28 -42.17,21.42 -15.62,6.14 -32.79,11.8 -51.56,15.42 -18.77,3.63 -41.2,5.87 -61.04,6.34 -19.83,0.46 -38.88,-1.13 -57.96,-3.56 -19.09,-2.44 -39.33,-5.7 -56.57,-11.07 C 78.09,200.2 61.39,192.78 48.48,184.39 35.57,176 25.53,165.53 17.86,155.24 10.19,144.96 4.91,133.33 2.47,122.68 0.03,112.02 -0.28,101.69 3.21,91.31 6.7,80.92 14.36,70.03 23.4,60.37 32.44,50.71 43.57,41.31 57.45,33.33 71.33,25.35 88.72,17.61 106.68,12.49 c 17.97,-5.13 38.99,-7.75 58.58,-9.93 19.6,-2.17 49.38,-3.14 58.98,-3.11 9.59,0.03 -1.18,1.26 -1.43,3.3"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path18" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,257.33312,95.693266)"
+       id="g19">
+      <text
+         x="123.34167"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text18">Nas/FileSystem</text>
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,254.06792,177.98486)"
+       id="g20">
+      <path
+         d="m 199.67,2.68 c 17.35,0.4 35.61,4.55 50.97,9.23 15.37,4.67 29.68,11.35 41.2,18.84 11.52,7.48 21.27,17.25 27.93,26.09 6.65,8.85 10.83,17.43 12.01,26.98 1.17,9.55 0,20.96 -4.96,30.33 -4.95,9.37 -14.15,17.86 -24.76,25.9 -10.6,8.04 -24.3,16.41 -38.87,22.32 -14.58,5.91 -31.62,10.5 -48.58,13.14 -16.96,2.63 -35.3,3.22 -53.18,2.64 -17.88,-0.57 -37.26,-2.83 -54.11,-6.07 C 90.46,168.84 74.09,164.78 60.3,158.7 46.5,152.61 33.89,143.88 24.56,135.56 15.24,127.25 8.12,118.16 4.36,108.79 0.6,99.41 0.06,88.91 2.01,79.3 3.96,69.69 8.44,59.75 16.08,51.13 23.72,42.51 35.21,34.53 47.83,27.6 60.45,20.67 75.66,13.88 91.79,9.56 c 16.14,-4.32 32.66,-6.75 52.82,-7.89 20.17,-1.13 54.53,-0.01 68.18,1.08 13.64,1.1 14.25,3.89 13.69,5.48 M 120.26,2.83 c 15.78,-3.78 35.76,-2.62 53.98,-2.18 18.23,0.44 38.8,1.54 55.36,4.82 16.57,3.28 30.84,8.43 44.04,14.87 13.2,6.45 25.76,15.12 35.17,23.8 9.4,8.67 17.37,18.73 21.27,28.24 3.9,9.5 4.85,19.49 2.15,28.8 -2.71,9.3 -9.88,18.27 -18.36,27.01 -8.48,8.74 -19.78,18.6 -32.52,25.45 -12.75,6.85 -27.83,11.7 -43.97,15.65 -16.13,3.96 -35.2,6.9 -52.85,8.1 -17.64,1.2 -35.33,1.12 -53.01,-0.9 -17.69,-2.02 -37.5,-6.15 -53.1,-11.22 C 62.83,160.21 49.08,153.71 37.93,146.1 26.79,138.49 18.05,128.77 11.57,119.61 5.08,110.44 -0.34,100.71 -0.98,91.1 -1.63,81.49 2.12,71.14 7.7,61.92 13.27,52.71 21.82,43.43 32.45,35.78 43.08,28.13 56.64,21.49 71.47,16.04 86.3,10.59 112.96,4.8 121.45,3.09 c 8.49,-1.71 0.17,0.99 0.96,2.71"
+         stroke="none"
+         stroke-width="0"
+         fill="#ffec99"
+         id="path19" />
+      <path
+         d="M 110.92,5.43 C 126.19,1.22 146.73,0.72 164.62,0.66 182.51,0.61 201,2 218.27,5.09 c 17.28,3.1 35.71,8.29 49.98,14.16 14.28,5.87 25.94,13.13 35.66,21.07 9.72,7.95 17.91,17.34 22.67,26.59 4.77,9.26 7.1,19.24 5.9,28.92 -1.21,9.68 -5.88,20.41 -13.12,29.15 -7.24,8.74 -18.04,16.37 -30.31,23.29 -12.27,6.92 -27.48,13.58 -43.33,18.23 -15.85,4.66 -34.26,8.06 -51.76,9.73 -17.5,1.66 -35.43,1.71 -53.22,0.28 -17.79,-1.43 -37.49,-4.39 -53.53,-8.87 C 71.18,163.17 56.79,156.8 44.54,149.67 32.28,142.54 20.87,133.46 13.68,124.85 6.48,116.25 2.95,107.36 1.35,98.03 -0.24,88.71 -0.1,78.54 4.1,68.9 8.31,59.26 16.6,48.36 26.59,40.21 36.58,32.07 48.44,26 64.04,20.03 79.64,14.06 109.28,7.16 120.19,4.38 131.1,1.6 128.67,2.16 129.48,3.35 m 109.94,4.5 c 16.73,2.66 32.87,10.54 45.28,17.71 12.41,7.18 21.27,16.64 29.16,25.34 7.9,8.69 15.66,17.52 18.2,26.84 2.54,9.32 0.63,19.58 -2.96,29.06 -3.6,9.49 -9.47,19.37 -18.62,27.83 -9.14,8.46 -22.25,16.58 -36.26,22.93 -14,6.35 -30.87,11.59 -47.76,15.17 -16.89,3.57 -35.68,5.93 -53.59,6.27 -17.9,0.34 -36.79,-1.34 -53.86,-4.22 C 101.94,171.9 85.28,167.13 70.47,161.74 55.65,156.35 40.63,150.26 30.11,142.46 19.58,134.65 12.27,124.5 7.33,114.89 2.39,105.29 -0.37,94.45 0.46,84.83 1.29,75.22 5.89,66.28 12.29,57.22 18.7,48.15 27.68,38.03 38.87,30.44 50.07,22.86 63.99,16.4 79.45,11.72 94.92,7.04 113.77,4.11 131.68,2.39 c 17.9,-1.72 37.56,-2.07 55.22,-1.01 17.66,1.06 42.57,5.78 50.74,7.36 8.18,1.58 -0.84,0.85 -1.69,2.13"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path20" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,264.62638,183.35235)"
+       id="g21">
+      <text
+         x="31.558332"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text20">VCS</text>
+    </g>
+    <g
+       mask="url(#mask-c_8dK2iXN9HFhmEBSxzg5)"
+       stroke-linecap="round"
+       id="g24"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(334.49206,939.93917)"
+         id="g22">
+        <path
+           d="m 0.49,-1.16 c 53.1,35.89 236,136.99 318.28,216.65 82.28,79.66 146.17,217.95 175.39,261.32 M -0.71,0.84 c 53.03,35.54 236.72,133.37 319.13,212.93 82.42,79.55 145.97,220.66 175.34,264.41"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path21" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(334.49206,939.93917)"
+         id="g23">
+        <path
+           d="m 494.52,476.65 -11.58,-6.8 11.28,-8.34 1.21,14.69"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path22" />
+        <path
+           d="m 493.76,478.18 c -5.34,-1.23 -6.81,-4.52 -12.27,-8.63 m 12.27,8.63 c -3.25,-2.12 -7.02,-5.55 -12.27,-8.63 m 0,0 c 3.46,-2.25 4.74,-3.97 10.99,-6.31 m -10.99,6.31 c 3.73,-2.67 7.25,-4.27 10.99,-6.31 m 0,0 c 0.03,6.6 2.17,10.99 1.28,14.94 m -1.28,-14.94 c 0.1,3.73 1.14,8.42 1.28,14.94 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path23" />
+      </g>
+    </g>
+    <mask
+       id="mask-c_8dK2iXN9HFhmEBSxzg5"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="927.948624610947"
+       height="1516.658555680201">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="927.94861"
+         height="1516.6586"
+         id="rect24" />
+      <rect
+         x="552.32776"
+         y="1113.274"
+         fill="#000000"
+         width="199.56667"
+         height="82.800003"
+         opacity="1"
+         id="rect25" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,56.629484,104.53731)"
+       id="g26">
+      <text
+         x="99.783333"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text25">Initial Conf/</text>
+      <text
+         x="99.783333"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text26">mantainance</text>
+    </g>
+    <g
+       mask="url(#mask-eOBmO_zYl77JKHZKIoUK4)"
+       stroke-linecap="round"
+       id="g29"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(232.11111,1311.3408)"
+         id="g27">
+        <path
+           d="m -0.93,-0.26 c 43.94,9.44 169.54,31.19 264.56,57.49 95.03,26.31 254.75,83.71 305.62,100.32 M 0.79,-1.44 c 43.81,9.04 167.36,30.13 262.06,56.85 94.69,26.72 255.02,86.44 306.11,103.48"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path26" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(232.11111,1311.3408)"
+         id="g28">
+        <path
+           d="m 570.73,160.29 -16.19,0.34 1.91,-11.95 11.07,8.64"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path27" />
+        <path
+           d="m 568.96,158.89 c -4.79,0.71 -8.22,1.91 -14.93,1.48 m 14.93,-1.48 c -4.9,0.14 -9.59,0.8 -14.93,1.48 m 0,0 c 1.87,-3.47 3.85,-8.2 4.2,-11.96 m -4.2,11.96 c 1.02,-3.89 3.33,-7.47 4.2,-11.96 m 0,0 c 1.47,0.66 5.74,5.41 10.73,10.48 m -10.73,-10.48 c 2.95,2.53 4.68,5.41 10.73,10.48 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path28" />
+      </g>
+    </g>
+    <mask
+       id="mask-eOBmO_zYl77JKHZKIoUK4"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="900.4444444444446"
+       height="1568.8407590759084">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="900.44446"
+         height="1568.8407"
+         id="rect29" />
+      <rect
+         x="380.14444"
+         y="1305.9075"
+         fill="#000000"
+         width="230.60001"
+         height="124.2"
+         opacity="1"
+         id="rect30" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,43.126391,119.64415)"
+       id="g32">
+      <text
+         x="115.3"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text30">Monitors</text>
+      <text
+         x="115.3"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text31">progress/</text>
+      <text
+         x="115.3"
+         y="116.154"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text32">Generates files</text>
+    </g>
+    <g
+       mask="url(#mask-oZ9bbikFJaqo-a4wIWyH6)"
+       stroke-linecap="round"
+       id="g35"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(232.66667,1703.8501)"
+         id="g33">
+        <path
+           d="M -0.78,0.1 C 43.96,-5.23 171.98,2.82 268.3,-31.83 364.63,-66.47 525.7,-178.61 577.17,-207.76 M 1.02,-0.89 c 45.1,-5.69 173.46,1.55 269.39,-32.7 95.94,-34.25 255.04,-143.63 306.23,-172.8"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path32" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(232.66667,1703.8501)"
+         id="g34">
+        <path
+           d="m 576.2,-206.73 -8.82,14.01 -3.77,-10.99 11.37,-3.68"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path33" />
+        <path
+           d="m 576.64,-206.39 c -2.23,2.14 -3.87,7.73 -8.22,12.55 m 8.22,-12.55 c -2.44,3.88 -5.37,8.01 -8.22,12.55 m 0,0 c -3.13,-2.96 -3.96,-6.43 -6.68,-10.78 m 6.68,10.78 c -2.39,-3.72 -4.04,-6.37 -6.68,-10.78 m 0,0 c 4.14,0.24 7.38,-1.88 14.9,-1.77 m -14.9,1.77 c 4.53,-0.46 10.38,-1.24 14.9,-1.77 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path34" />
+      </g>
+    </g>
+    <mask
+       id="mask-oZ9bbikFJaqo-a4wIWyH6"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="909.399887770688"
+       height="2011.7021929064567">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="909.3999"
+         height="2011.7021"
+         id="rect35" />
+      <rect
+         x="383.51111"
+         y="1629.9408"
+         fill="#000000"
+         width="237.2"
+         height="82.800003"
+         opacity="1"
+         id="rect36" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,43.390418,145.05573)"
+       id="g37">
+      <text
+         x="118.6"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text36">Sees assigned</text>
+      <text
+         x="118.6"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text37">timeline / edits</text>
+    </g>
+    <g
+       mask="url(#mask-S9v65En93KMRW9F2r4Fi4)"
+       stroke-linecap="round"
+       id="g40"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(288.77778,2121.3408)"
+         id="g38">
+        <path
+           d="m -1.09,-0.67 c 53.41,-33.3 229.68,-96.36 320.63,-198.56 90.95,-102.2 187.7,-345.81 225.06,-414.63 M 0.53,1.59 c 53.31,-33.69 227.28,-100.11 317.82,-202.53 90.53,-102.43 187.9,-343.12 225.4,-412"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path37" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(288.77778,2121.3408)"
+         id="g39">
+        <path
+           d="m 544.29,-611.71 -1.17,12.74 -10.35,-3.49 9.95,-11.93"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path38" />
+        <path
+           d="m 543.75,-612.94 c -0.8,2.71 0.96,6.39 -0.18,15 m 0.18,-15 c -0.89,4 0.14,6.72 -0.18,15 m 0,0 c -3,-2.34 -6.85,-3.79 -11.42,-5.5 m 11.42,5.5 c -4.17,-1.34 -6.69,-4.16 -11.42,-5.5 m 0,0 c 4.89,-3.06 6.94,-6.5 11.6,-9.5 m -11.6,9.5 c 3.28,-2.49 5.44,-4.23 11.6,-9.5 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path39" />
+      </g>
+    </g>
+    <mask
+       id="mask-S9v65En93KMRW9F2r4Fi4"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="933.5236245628955"
+       height="2834.4423956378923">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="933.52362"
+         height="2834.4424"
+         id="rect40" />
+      <rect
+         x="454.75278"
+         y="1879.9408"
+         fill="#000000"
+         width="308.04999"
+         height="82.800003"
+         opacity="1"
+         id="rect41" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,48.977385,164.66141)"
+       id="g42">
+      <text
+         x="154.02499"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text41">Sees asigned tasks/</text>
+      <text
+         x="154.02499"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text42">works</text>
+    </g>
+    <g
+       mask="url(#mask-DYRJchrpFAf2xBsB50ZpF)"
+       stroke-linecap="round"
+       id="g47"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1352.4939,1404.5354)"
+         id="g43">
+        <path
+           d="m -1.2,-0.63 c 30.66,-78.08 94.73,-332.66 184.59,-468.51 89.86,-135.85 295.77,-289.07 354.58,-346.6 M 0.37,1.66 C 30.89,-76.71 92.71,-334.85 182.24,-470.89 271.77,-606.92 478.6,-757 537.56,-814.55"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path42" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1352.4939,1404.5354)"
+         id="g44">
+        <path
+           d="M -0.03,-0.15 -2,-15.05 10.04,-10.9 -1.62,-0.19"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path43" />
+        <path
+           d="m -1.2,-0.63 c -1.1,-4.29 0.18,-6.76 -1.57,-14.91 M -1.2,-0.63 C -1.56,-5.1 -2.65,-8.37 -2.77,-15.54 m 0,0 c 4.32,1.26 8.36,2.42 11.99,4.12 m -11.99,-4.12 c 3.8,1.23 6.09,2.42 11.99,4.12 m 0,0 C 5.65,-8.21 0.94,-4.06 -1.2,-0.63 M 9.22,-11.42 C 5.35,-8.41 2.43,-4.63 -1.2,-0.63 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path44" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1352.4939,1404.5354)"
+         id="g46">
+        <path
+           d="m 538.73,-814.08 -6.57,13.7 -8.22,-9.59 13.2,-4.15"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path45" />
+        <path
+           d="m 537.56,-814.55 c -2.42,2.92 -2.31,7.73 -6.17,13.67 m 6.17,-13.67 c -1.9,3.54 -4.26,8.24 -6.17,13.67 m 0,0 c -3.46,-3.95 -7.21,-8.06 -8.27,-9.61 m 8.27,9.61 c -1.79,-2.53 -5.11,-5.14 -8.27,-9.61 m 0,0 c 4.59,-1.72 8.07,-2.47 14.44,-4.06 m -14.44,4.06 c 4.2,-1.7 9.46,-2.8 14.44,-4.06 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path46" />
+      </g>
+    </g>
+    <mask
+       id="mask-DYRJchrpFAf2xBsB50ZpF"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="1989.794411667803"
+       height="2320.016348413063">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="1989.7944"
+         height="2320.0164"
+         id="rect47" />
+      <rect
+         x="1363.3778"
+         y="893.27411"
+         fill="#000000"
+         width="345.79999"
+         height="82.800003"
+         opacity="1"
+         id="rect48" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,120.23426,87.284303)"
+       id="g49">
+      <text
+         x="172.89999"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text48">Gets and sets</text>
+      <text
+         x="172.89999"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text49">Prod status and actors</text>
+    </g>
+    <g
+       mask="url(#mask-fWaXBX4SRb__v_eHb1hwh)"
+       stroke-linecap="round"
+       id="g52"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1379.4073,1427.7544)"
+         id="g50">
+        <path
+           d="m -1.16,-1.15 c 109.28,-53.82 381.17,-254.83 655.72,-322.28 274.55,-67.44 826.28,-68.56 991.57,-82.39 M 0.44,0.87 c 109.31,-54.14 379.04,-258.61 653.71,-326.17 274.67,-67.55 828.99,-65.79 994.3,-79.16"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path49" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1379.4073,1427.7544)"
+         id="g51">
+        <path
+           d="m 1649.57,-403.09 -15.58,7.54 -0.64,-15.2 16.13,7.66"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path50" />
+        <path
+           d="m 1648.45,-404.46 c -4.21,2.59 -4.93,1.39 -13.3,6.93 m 13.3,-6.93 c -4.14,2.36 -8.32,4.16 -13.3,6.93 m 0,0 c 0.79,-2.92 -0.55,-7.12 -0.55,-12.67 m 0.55,12.67 c 0.17,-4.59 -0.72,-8.08 -0.55,-12.67 m 0,0 c 4.77,0.54 8.21,3.11 13.85,5.74 m -13.85,-5.74 c 3.95,1.86 7.49,3.34 13.85,5.74 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path51" />
+      </g>
+    </g>
+    <mask
+       id="mask-fWaXBX4SRb__v_eHb1hwh"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="3126.6131636552236"
+       height="1933.6511177278226">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="3126.6133"
+         height="1933.6511"
+         id="rect52" />
+      <rect
+         x="1845.1862"
+         y="1062.4408"
+         fill="#000000"
+         width="375.51666"
+         height="82.800003"
+         opacity="1"
+         id="rect53" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,158.01899,100.55082)"
+       id="g54">
+      <text
+         x="187.75833"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text53">Manages topography</text>
+      <text
+         x="187.75833"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text54">Creates and deletes files</text>
+    </g>
+    <g
+       mask="url(#mask-cj-AKdNIlKrhX4RSgvDRB)"
+       stroke-linecap="round"
+       id="g57"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1383.1056,1488.7866)"
+         id="g55">
+        <path
+           d="M -1.14,-0.82 C 96,96.07 299.3,474.41 581.91,582.09 c 282.61,107.69 927.47,52.71 1112.62,63.2 M 0.47,1.36 c 97.02,96.99 297.95,474.49 580.27,582.03 282.31,107.54 928.29,52.78 1113.61,63.2"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path54" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1383.1056,1488.7866)"
+         id="g56">
+        <path
+           d="m 1695.57,646.87 -13.26,5.35 -1.46,-11.07 13.76,6.46"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path55" />
+        <path
+           d="m 1694.35,646.59 c -4.02,0.78 -6.6,4.16 -13.55,6.45 m 13.55,-6.45 c -3.37,1.51 -7.51,3.52 -13.55,6.45 m 0,0 c -0.51,-3.65 1.09,-10.8 -0.1,-12.68 m 0.1,12.68 c 0.41,-4.62 -0.55,-8.38 -0.1,-12.68 m 0,0 c 4.67,2.1 8.64,3.29 13.65,6.23 m -13.65,-6.23 c 2.41,1.71 6.51,3.4 13.65,6.23 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path56" />
+      </g>
+    </g>
+    <mask
+       id="mask-cj-AKdNIlKrhX4RSgvDRB"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="3176.5123456790125"
+       height="2234.0959984616356">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="3176.5125"
+         height="2234.0959"
+         id="rect57" />
+      <rect
+         x="1796.1278"
+         y="2050.6409"
+         fill="#000000"
+         width="338.63333"
+         height="41.400002"
+         opacity="1"
+         id="rect58" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,154.17171,178.04819)"
+       id="g58">
+      <text
+         x="169.31667"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text58">Sets up proyect repos.</text>
+    </g>
+    <g
+       mask="url(#mask-jFDOEW8byUsofUgjeEM98)"
+       stroke-linecap="round"
+       id="g61"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1402.4444,1464.8762)"
+         id="g59">
+        <path
+           d="m -1.01,-1.1 c 60.39,-0.08 226.14,-33.18 364.25,0.69 138.11,33.87 386.88,168.89 464.4,202.52 M 0.67,0.93 C 60.83,0.51 224.18,-35.43 362.41,-2.2 500.65,31.02 752.37,166.14 830.06,200.27"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path58" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1402.4444,1464.8762)"
+         id="g60">
+        <path
+           d="m 828.63,202.06 -13.07,-1.42 5.81,-11.91 6.89,10.54"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path59" />
+        <path
+           d="m 830.06,200.27 c -7.03,0.11 -10.52,-1.41 -15,-0.18 m 15,0.18 c -5.45,-0.61 -11.36,-0.45 -15,-0.18 m 0,0 c 1.48,-3.07 4.09,-6.48 5.49,-11.42 m -5.49,11.42 c 1.03,-2.38 2.36,-5.53 5.49,-11.42 m 0,0 c 4.83,5.55 7.21,9.98 9.51,11.6 m -9.51,-11.6 c 3.13,3.68 7.56,9.32 9.51,11.6 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path60" />
+      </g>
+    </g>
+    <mask
+       id="mask-jFDOEW8byUsofUgjeEM98"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="2331.0073113091075"
+       height="1767.0564393975997">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="2331.0073"
+         height="1767.0564"
+         id="rect61" />
+      <rect
+         x="1599.3445"
+         y="1422.4408"
+         fill="#000000"
+         width="332.20001"
+         height="82.800003"
+         opacity="1"
+         id="rect62" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,138.73942,128.78302)"
+       id="g63">
+      <text
+         x="166.10001"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text62">Launches appropriate</text>
+      <text
+         x="166.10001"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text63">files for tasks/users</text>
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       stroke-linecap="round"
+       transform="matrix(0.07842276,0,0,0.07842276,159.15025,18.015511)"
+       id="g64">
+      <path
+         d="m 173.43,0.32 c 17.91,-2.41 38.06,-0.28 56.27,2.58 18.21,2.85 36.93,8.54 52.97,14.53 16.04,5.99 31.16,13.11 43.29,21.43 12.14,8.32 22.79,18.14 29.54,28.5 6.75,10.35 9.86,22.79 10.98,33.65 1.12,10.85 0.35,21.01 -4.25,31.49 -4.6,10.48 -12.96,21.91 -23.36,31.38 -10.4,9.48 -24.26,18.45 -39.04,25.45 -14.77,6.99 -32.13,12.41 -49.61,16.52 -17.48,4.11 -36.38,7.37 -55.25,8.13 -18.88,0.76 -39.69,-0.65 -58.01,-3.58 -18.32,-2.93 -36.09,-7.98 -51.91,-14 C 69.24,190.39 54.1,182.75 42.07,174.32 30.04,165.9 19.81,155.87 12.89,145.85 5.96,135.84 1.6,125.14 0.55,114.25 -0.5,103.37 1.77,91.31 6.58,80.52 11.39,69.74 19.35,58.93 29.42,49.52 39.5,40.12 52.65,31.15 67.03,24.09 81.41,17.04 96.1,11.23 115.69,7.2 c 19.58,-4.03 55.42,-6.36 68.86,-7.27 13.43,-0.91 11.96,0.14 11.73,1.81 m 1.74,-1.98 c 18.41,-0.51 39.09,5.44 56.79,9.72 17.7,4.28 35.05,9.01 49.41,15.95 14.36,6.93 27.15,16.18 36.74,25.65 9.6,9.48 16.57,20.67 20.83,31.21 4.26,10.54 6.21,20.9 4.74,32.03 -1.47,11.12 -6.39,24.6 -13.56,34.72 -7.17,10.12 -17.25,17.71 -29.45,26.02 -12.2,8.3 -27.47,17.99 -43.75,23.82 -16.28,5.82 -35.4,8.94 -53.92,11.14 -18.53,2.19 -38.23,2.77 -57.22,2.04 -18.99,-0.73 -39.03,-2.63 -56.7,-6.43 C 94.25,201.82 76.64,196.33 62.58,189.24 48.51,182.14 37.12,172.5 27.55,163.07 17.98,153.64 9.69,143.59 5.16,132.65 0.62,121.72 -0.98,108.49 0.34,97.46 1.67,86.43 5.64,76.43 13.12,66.45 20.6,56.48 32.6,45.94 45.21,37.61 57.82,29.28 72.58,22.45 88.8,16.45 105.02,10.46 124.4,4.28 142.51,1.63 c 18.11,-2.65 45.83,-1.36 54.95,-1.08 9.13,0.28 0.09,1.26 -0.18,2.78"
+         stroke="none"
+         stroke-width="0"
+         fill="#b2f2bb"
+         id="path63" />
+      <path
+         d="m 260.57,10.72 c 17.51,2.84 34.57,10.41 48.69,17.85 14.11,7.45 27.01,17.06 36,26.8 8.99,9.75 14.41,21.03 17.95,31.66 3.54,10.64 5.49,21.33 3.3,32.16 -2.19,10.82 -8.51,22.85 -16.43,32.77 -7.93,9.93 -18.23,18.63 -31.14,26.77 -12.9,8.14 -29.72,16.49 -46.29,22.08 -16.57,5.58 -34.48,9.5 -53.13,11.42 -18.65,1.92 -39.93,1.42 -58.76,0.11 -18.83,-1.32 -37.09,-3.58 -54.23,-8.01 C 89.4,199.89 71.86,193.33 57.96,185.72 44.07,178.12 32.26,168.6 23.16,158.71 14.05,148.82 7.02,137.35 3.32,126.39 -0.38,115.44 -1.2,103.72 0.97,92.98 3.14,82.24 8.19,71.75 16.33,61.94 24.48,52.12 36.75,42.12 49.85,34.08 62.95,26.05 78.43,18.93 94.92,13.73 c 16.49,-5.2 35.43,-8.8 53.84,-10.86 18.42,-2.06 35.21,-3.43 56.65,-1.5 21.44,1.93 57.53,9.68 71.99,13.09 14.46,3.41 16.41,5.89 14.78,7.38 M 185.2,1.32 c 17.9,-1.25 39.09,2.13 57.04,5.49 17.94,3.35 35.41,8.07 50.61,14.64 15.2,6.56 29.47,15.97 40.58,24.76 11.1,8.79 20.5,17.9 26.05,27.98 5.55,10.07 7.5,21.13 7.26,32.47 -0.24,11.34 -2.92,25.19 -8.71,35.59 -5.79,10.39 -14.64,18.37 -26.02,26.79 -11.39,8.43 -26.62,17.26 -42.29,23.75 -15.66,6.49 -33.54,11.67 -51.69,15.21 -18.15,3.54 -38.41,6.19 -57.2,6.03 -18.79,-0.16 -37.56,-3.46 -55.56,-6.97 -18,-3.51 -37.31,-7.44 -52.46,-14.08 C 57.66,186.33 44.92,176.14 34.36,167.19 23.8,158.24 15.43,149.38 9.46,139.3 3.49,129.22 -1.45,117.72 -1.48,106.71 -1.52,95.69 2.96,83.75 9.25,73.21 15.53,62.68 25,52.26 36.24,43.5 47.48,34.74 61.35,27.29 76.71,20.68 92.07,14.07 110.41,7.17 128.4,3.85 c 18,-3.33 46.86,-2.63 56.26,-3.13 9.41,-0.51 0.07,-1.49 0.18,0.11"
+         stroke="#1e1e1e"
+         stroke-width="2"
+         fill="none"
+         id="path64" />
+    </g>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,166.00393,24.765247)"
+       id="g65">
+      <text
+         x="96.425003"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text64">WatchTower</text>
+    </g>
+    <g
+       mask="url(#mask-_bP8pjktYA3iNkJigvwrn)"
+       stroke-linecap="round"
+       id="g68"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1331.0996,1386.8363)"
+         id="g66">
+        <path
+           d="m 0.33,-0.66 c -2.98,-186.95 -114.51,-900.87 -18.53,-1122.02 95.98,-221.16 495.22,-170.55 594.41,-204.91 M -0.95,1.61 c -3.04,-186.71 -113.85,-901.19 -17.78,-1123.03 96.07,-221.84 494.81,-173.61 594.2,-208.02"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path65" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(1331.0996,1386.8363)"
+         id="g67">
+        <path
+           d="m 574.22,-1329.89 -9.69,9.68 -1.94,-13.86 12.37,5.38"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path66" />
+        <path
+           d="m 575.47,-1329.44 c -4.39,3.19 -7.72,4.44 -12.76,7.89 m 12.76,-7.89 c -4.53,2.26 -10.33,5.58 -12.76,7.89 m 0,0 c -1.22,-3.7 -0.92,-7.05 -1.48,-12.59 m 1.48,12.59 c -1,-4.94 -1.55,-8.92 -1.48,-12.59 m 0,0 c 3.14,1.11 8.47,3.92 14.24,4.7 m -14.24,-4.7 c 5.1,1.59 9.48,2.67 14.24,4.7 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path67" />
+      </g>
+    </g>
+    <mask
+       id="mask-_bP8pjktYA3iNkJigvwrn"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="2026.238500110994"
+       height="2815.3569466055046">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="2026.2385"
+         height="2815.3569"
+         id="rect68" />
+      <rect
+         x="1121.6278"
+         y="223.27409"
+         fill="#000000"
+         width="380.96667"
+         height="82.800003"
+         opacity="1"
+         id="rect69" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,101.27556,34.741054)"
+       id="g70">
+      <text
+         x="190.48334"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text69">Configures and Launches</text>
+      <text
+         x="190.48334"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text70">for monitoring</text>
+    </g>
+    <g
+       mask="url(#mask-FwUg-4AQMB8O6fpRJwwfn)"
+       stroke-linecap="round"
+       id="g73"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2631.2778,1718.0074)"
+         id="g71">
+        <path
+           d="m -0.55,-1.11 c 51.35,19.35 220.82,59.1 307.7,116.97 86.88,57.87 177.68,192.05 213.59,230.28 M 1.37,0.93 c 51.31,19.57 218.13,58.7 305.09,116.48 86.96,57.78 180.54,192.1 216.69,230.2"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path70" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2631.2778,1718.0074)"
+         id="g72">
+        <path
+           d="m 521.96,345.73 -14.23,-4.01 12.69,-9.57 2.45,17.41"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path71" />
+        <path
+           d="m 523.15,347.61 c -4.41,-0.88 -6.03,-4.08 -13.57,-6.39 m 13.57,6.39 c -4.67,-2.15 -9.44,-4.94 -13.57,-6.39 m 0,0 c 1.67,-2.12 4.94,-3.15 9.74,-8.11 m -9.74,8.11 c 3.89,-3.43 6.76,-5.99 9.74,-8.11 m 0,0 c 2.79,5.44 3.16,10.89 3.83,14.5 m -3.83,-14.5 c 0.51,5.14 2.4,9.54 3.83,14.5 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path72" />
+      </g>
+    </g>
+    <mask
+       id="mask-FwUg-4AQMB8O6fpRJwwfn"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="3252.944444444445"
+       height="2163.840759075908">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="3252.9443"
+         height="2163.8408"
+         id="rect73" />
+      <rect
+         x="2759.0444"
+         y="1792.4408"
+         fill="#000000"
+         width="357.79999"
+         height="82.800003"
+         opacity="1"
+         id="rect74" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,229.68628,157.79943)"
+       id="g75">
+      <text
+         x="178.89999"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text74">Generates and Updates</text>
+      <text
+         x="178.89999"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text75">.blend working files</text>
+    </g>
+    <g
+       mask="url(#mask-SBWl6LWFVc0YUSg29F0PD)"
+       stroke-linecap="round"
+       id="g78"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2591.2778,1538.0074)"
+         id="g76">
+        <path
+           d="m -1.04,-0.31 c 65.16,-10.26 288.92,5.23 391.25,-61.76 102.32,-66.98 185.76,-283.57 222.7,-340.16 M 0.61,-1.52 c 65.17,-10.04 287.18,7.41 389.19,-59.22 102.02,-66.63 185.83,-283.91 222.89,-340.54"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path75" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2591.2778,1538.0074)"
+         id="g77">
+        <path
+           d="m 614.39,-401.45 -3.14,17.03 -11.95,-5.89 12.79,-11.93"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path76" />
+        <path
+           d="m 612.69,-401.28 c -0.63,4.8 -0.91,8.29 -0.72,14.98 m 0.72,-14.98 c 0.13,3.24 -0.45,7.27 -0.72,14.98 m 0,0 c -4.73,-1.41 -6.93,-3.22 -11.22,-5.9 m 11.22,5.9 c -2.05,-1.04 -4.86,-3.07 -11.22,-5.9 m 0,0 c 4.13,-4.88 9.33,-6.14 11.94,-9.08 m -11.94,9.08 c 1.78,-1.98 5.62,-3.6 11.94,-9.08 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path77" />
+      </g>
+    </g>
+    <mask
+       id="mask-SBWl6LWFVc0YUSg29F0PD"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="3303.167024264179"
+       height="2039.542176591995">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="3303.167"
+         height="2039.5422"
+         id="rect78" />
+      <rect
+         x="2851.7112"
+         y="1455.6407"
+         fill="#000000"
+         width="257.46667"
+         height="41.400002"
+         opacity="1"
+         id="rect79" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,236.95346,131.38665)"
+       id="g79">
+      <text
+         x="128.73334"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text79">Saves playblasts</text>
+    </g>
+    <g
+       mask="url(#mask-o-U7u9wpVjTKj2W1FBB4r)"
+       stroke-linecap="round"
+       id="g82"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2438.5583,1457.0735)"
+         id="g80">
+        <path
+           d="m -0.51,-0.7 c -15.36,-95.36 -60.29,-426.28 -92.27,-572.17 -31.98,-145.88 -83.1,-252.45 -99.62,-303.15 M 1.42,1.55 c -15.44,-95.67 -63.08,-429.76 -94.98,-576.35 -31.9,-146.59 -80.04,-252.97 -96.42,-303.18"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path79" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2438.5583,1457.0735)"
+         id="g81">
+        <path
+           d="m -188.65,-879.68 9.92,11.64 -13.49,5.36 1.88,-14.51"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path80" />
+        <path
+           d="m -189.98,-877.98 c 1.71,3.08 5.68,4.15 10.64,10.57 m -10.64,-10.57 c 4.44,4.27 8.22,7.41 10.64,10.57 m 0,0 c -3.39,2.23 -7.6,3.42 -11.9,4.38 m 11.9,-4.38 c -3.75,1.96 -8.59,2.77 -11.9,4.38 m 0,0 c -0.53,-4.97 -0.59,-8.08 1.26,-14.95 m -1.26,14.95 c 0.57,-4.04 0.36,-6.93 1.26,-14.95 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path81" />
+      </g>
+    </g>
+    <mask
+       id="mask-o-U7u9wpVjTKj2W1FBB4r"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="2730.043635393358"
+       height="2433.815551284281">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="2730.0437"
+         height="2433.8154"
+         id="rect82" />
+      <rect
+         x="2173.1304"
+         y="863.14075"
+         fill="#000000"
+         width="344.62814"
+         height="41.400002"
+         opacity="1"
+         id="rect83" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,183.73729,84.921163)"
+       id="g83">
+      <text
+         x="172.31407"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text83">Updates task progress</text>
+    </g>
+    <g
+       mask="url(#mask-Ib0mXwKS-1VonziNTcUVP)"
+       stroke-linecap="round"
+       id="g86"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2044.0819,229.51404)"
+         id="g84">
+        <path
+           d="M -0.7,-0.08 C 3.35,32.28 19.41,161.48 23.11,193.94 M 1.13,-1.17 c 4.08,32 18.36,160.83 21.58,193.18"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path83" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(2044.0819,229.51404)"
+         id="g85">
+        <path
+           d="m 22.22,191.85 -5.74,-11.73 12.63,-1.31 -7.24,12.08"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path84" />
+        <path
+           d="m 22.71,192.01 c -1.63,-1.32 -2.63,-5.91 -7.74,-12.85 m 7.74,12.85 c -3.7,-5.73 -5.86,-10 -7.74,-12.85 m 0,0 c 4.93,0.29 6.98,-0.58 12.6,-1.34 m -12.6,1.34 c 4.84,-0.84 9.12,-1.36 12.6,-1.34 m 0,0 c -1.04,4.33 -3.66,10.34 -4.86,14.19 m 4.86,-14.19 c -1.32,4.31 -3.03,9.67 -4.86,14.19 m 0,0 c 0,0 0,0 0,0 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2"
+           fill="none"
+           id="path85" />
+      </g>
+    </g>
+    <mask
+       id="mask-Ib0mXwKS-1VonziNTcUVP"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="2166.153316284057"
+       height="523.0915532767917">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="2166.1533"
+         height="523.09155"
+         id="rect86" />
+      <rect
+         x="1924.351"
+         y="305.60278"
+         fill="#000000"
+         width="261.53333"
+         height="41.400002"
+         opacity="1"
+         id="rect87" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,164.22731,41.197499)"
+       id="g87">
+      <text
+         x="130.76666"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text87">Gets productions</text>
+    </g>
+    <g
+       mask="url(#mask-U5mVAVNO5JPuVjCwAwwO5)"
+       stroke-linecap="round"
+       id="g90"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(218.77778,1231.3408)"
+         id="g88">
+        <path
+           d="m -0.48,-0.3 c 120.22,-63.19 441.79,-262.51 720.92,-379.8 279.12,-117.28 795,-270.05 953.83,-323.92"
+           stroke="#1e1e1e"
+           stroke-width="2.5"
+           fill="none"
+           stroke-dasharray="8, 10"
+           id="path87" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(218.77778,1231.3408)"
+         id="g89">
+        <path
+           d="m 1675.9,-705.75 -11.38,13.04 -4.72,-12.71 15.27,0.77"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path88" />
+        <path
+           d="m 1674.27,-704.02 c -2.93,2.79 -5.15,5.71 -11.01,10.19 m 0,0 c -1.09,-2.87 -0.95,-7.1 -3.87,-12.08 m 0,0 c 3.84,1.67 10.6,0.27 14.88,1.89 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2.5"
+           fill="none"
+           id="path89" />
+      </g>
+    </g>
+    <mask
+       id="mask-U5mVAVNO5JPuVjCwAwwO5"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="1992.1111111111106"
+       height="2034.6740924092433">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="1992.1111"
+         height="2034.6741"
+         id="rect90" />
+      <rect
+         x="660.16943"
+         y="830.64075"
+         fill="#000000"
+         width="557.21667"
+         height="41.400002"
+         opacity="1"
+         id="rect91" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,65.086727,82.372424)"
+       id="g91">
+      <text
+         x="278.60834"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text91">Manual Script Breakdown (Current)</text>
+    </g>
+    <g
+       mask="url(#mask-beqOeMuo6s5_79fP2pju3)"
+       stroke-linecap="round"
+       id="g94"
+       transform="matrix(0.07842276,0,0,0.07842276,13.314417,17.231288)">
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(312.11111,894.67409)"
+         id="g92">
+        <path
+           d="m -0.83,-0.31 c 112.1,-61.67 404.09,-303.98 673.58,-370.79 269.5,-66.8 786.24,-25.15 943.4,-30.04"
+           stroke="#1e1e1e"
+           stroke-width="2.5"
+           fill="none"
+           stroke-dasharray="8, 10"
+           id="path91" />
+      </g>
+      <g
+         stroke-opacity="0.6"
+         fill-opacity="0.6"
+         transform="translate(312.11111,894.67409)"
+         id="g93">
+        <path
+           d="m 1618.12,-400.73 -14.8,7.16 -0.86,-12.35 15.57,3.33"
+           stroke="none"
+           stroke-width="0"
+           fill="#ffffff"
+           fill-rule="evenodd"
+           id="path92" />
+        <path
+           d="m 1616.15,-401.14 c -4.69,1.07 -9.93,3.04 -13.71,6.09 m 0,0 c -0.36,-3.24 -0.3,-4.54 0.23,-12.67 m 0,0 c 3.4,3.5 8.98,4.3 13.48,6.58 m 0,0 c 0,0 0,0 0,0"
+           stroke="#1e1e1e"
+           stroke-width="2.5"
+           fill="none"
+           id="path93" />
+      </g>
+    </g>
+    <mask
+       id="mask-beqOeMuo6s5_79fP2pju3"
+       maskUnits="userSpaceOnUse"
+       x="0"
+       y="0"
+       width="2028.7777777777776"
+       height="1394.6740924092433">
+      <rect
+         x="0"
+         y="0"
+         fill="#ffffff"
+         width="2028.7778"
+         height="1394.6741"
+         id="rect94" />
+      <rect
+         x="865.25281"
+         y="483.27408"
+         fill="#000000"
+         width="240.38333"
+         height="82.800003"
+         opacity="1"
+         id="rect95" />
+    </mask>
+    <g
+       stroke-opacity="0.6"
+       fill-opacity="0.6"
+       transform="matrix(0.07842276,0,0,0.07842276,81.169923,55.130969)"
+       id="g96">
+      <text
+         x="120.19167"
+         y="33.354"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text95">Sets up Studio/</text>
+      <text
+         x="120.19167"
+         y="74.753998"
+         font-family="'Lilita One', sans-serif, 'Segoe UI Emoji'"
+         font-size="36px"
+         fill="#1e1e1e"
+         text-anchor="middle"
+         style="white-space:pre"
+         direction="ltr"
+         dominant-baseline="alphabetic"
+         id="text96">Team</text>
+    </g>
+  </g>
+</svg>
