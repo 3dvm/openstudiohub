@@ -14,10 +14,10 @@ from PySide6.QtCore import Qt
 
 from pathlib import Path
 
-from ui import view_pm
-from core.config_factory import ConfigFactory
-from core.vault_manager import VaultManager
-from core.auth_manager import AuthManager
+from src.interfaces.qt import view_pm
+from src.infrastructure.config_factory import ConfigFactory
+from src.application.vault_manager import VaultManager
+from src.application.auth_manager import AuthManager
 
 def test_pm_asset_creation(qtbot):
 

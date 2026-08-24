@@ -26,23 +26,23 @@ import urllib.parse
 
 # --- PySide6 (Motor Gráfico) ---
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget
-from ui.web_context_view import WebContextView
+from src.interfaces.qt.web_context_view import WebContextView
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
 
 # --- CORE (Motores) ---
 #from core import vault_manager
-from core.auth_manager import AuthManager
-from core.vault_manager import VaultManager
-from core.config_factory import ConfigFactory
-from core.watchtower_launcher import WatchtowerLauncher
-from core.kitsu_manager import KitsuManager
+from src.application.auth_manager import AuthManager
+from src.application.vault_manager import VaultManager
+from src.infrastructure.config_factory import ConfigFactory
+from src.infrastructure.watchtower_launcher import WatchtowerLauncher
+from src.infrastructure.kitsu_manager import KitsuManager
 
 # --- UI (Vistas) ---
-from ui.view_login import ViewLogin
-from ui.view_artist import ViewArtist
-from ui.view_td import ViewTD
-from ui.view_pm import ViewPM
+from src.interfaces.qt.view_login import ViewLogin
+from src.interfaces.qt.view_artist import ViewArtist
+from src.interfaces.qt.view_td import ViewTD
+from src.interfaces.qt.view_pm import ViewPM
 
 if getattr(sys, 'frozen', False):
     os.chdir(sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable))
