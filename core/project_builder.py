@@ -22,6 +22,7 @@ from pathlib import Path
 
 from core.vcs_router import VCSRouter
 from core.kitsu_manager import KitsuManager
+from core.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
 class ProjectBuilder:
     def __init__(self, config_factory):
@@ -83,10 +84,10 @@ class ProjectBuilder:
             # Solo carpetas estructurales, el PM generará el resto a demanda
             base_folders = [
                 vfs_local, vfs_shared, vfs_pipe,
-                f"{vfs_svn}/pro", f"{vfs_svn}/tools"
-                f"{vfs_svn}/pro/assets", 
-                f"{vfs_svn}/pro/shots", 
-                f"{vfs_svn}/pro/edit", 
+                f"{vfs_svn}/pro", f"{vfs_svn}/tools",
+                f"{vfs_svn}/pro/assets",
+                f"{vfs_svn}/pro/shots",
+                f"{vfs_svn}/pro/edit",
                 f"{vfs_svn}/pro/strips"
             ] + custom_dirs
 
@@ -132,7 +133,7 @@ class ProjectBuilder:
                 adapter = router.get_adapter()
                 
                 if "localhost" in base_repo_url and not vcs_user:
-                    vcs_user, vcs_pwd = "admin", "admin123"
+                    vcs_user, vcs_pwd = DEV_SVN_USER, DEV_SVN_PASSWORD
                     
                 adapter.create_server_repository(project_name, vfs_svn)
                 

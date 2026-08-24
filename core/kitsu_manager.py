@@ -21,8 +21,15 @@ task/shot/asset/edit queries, file mapping and metadata updates.
 
 import gazu
 import requests
+import traceback
 from pathlib import Path
 from typing import Optional, Tuple
+
+from core.dev_defaults import (
+    DEV_KITSU_ADMIN_EMAIL,
+    DEV_KITSU_ADMIN_PASSWORD,
+    DEV_KITSU_DUMMY_PASSWORD,
+)
 
 # Re-export para que los consumidores (p. ej. AuthManager) puedan capturar el
 # error de autenticación de Gazu sin importar la librería directamente.
@@ -179,7 +186,7 @@ class KitsuManager:
 
         return None
 
-    def seed_test_database(self, admin_email: str = "admin@example.com", admin_pwd: str = "mysecretpassword") -> Tuple[bool, str]:
+    def seed_test_database(self, admin_email: str = DEV_KITSU_ADMIN_EMAIL, admin_pwd: str = DEV_KITSU_ADMIN_PASSWORD) -> Tuple[bool, str]:
         """
         Se conecta temporalmente como administrador global para inyectar
         los usuarios dummy necesarios para las pruebas locales del Hub.
@@ -206,7 +213,7 @@ class KitsuManager:
                         last_name=user["last"],
                         email=user["email"],
                         role=user["role"],
-                        password="entrar123"
+                        password=DEV_KITSU_DUMMY_PASSWORD
                     )
                     print(f"[KitsuManager] -> Usuario creado: {user['email']}")
                     creados += 1

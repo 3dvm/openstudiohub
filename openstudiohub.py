@@ -237,8 +237,6 @@ class OpenStudioHub(QMainWindow):
         kitsu_user = getattr(self.vault, '_transient_email', "")
         kitsu_pwd = getattr(self.vault, '_transient_password', "")
 
-        #breakpoint()
-
         # Instanciamos el launcher
         self.wt_launcher = WatchtowerLauncher(
             project_root_path,

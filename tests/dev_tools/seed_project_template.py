@@ -11,7 +11,7 @@ def get_credentials():
     """Obtiene las credenciales del entorno o usa los valores por defecto de desarrollo."""
     host = os.environ.get("KITSU_HOST", "http://localhost:8080/api")
     email = os.environ.get("KITSU_USER", "admin@example.com")
-    pwd = os.environ.get("KITSU_PWD", "entrando1")
+    pwd = os.environ.get("KITSU_PWD", "")  # required via env; never hardcode
     return host, email, pwd
 
 def main():

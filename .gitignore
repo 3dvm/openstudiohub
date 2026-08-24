@@ -1,12 +1,52 @@
-.venv/
+# === Python ===
 __pycache__/
-.macuare/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# === Virtual environments ===
+.venv/
+venv/
+env/
+
+# === Build / packaging / docs artifacts ===
 build/
 dist/
+site/
 *.bin
+*.spec
+
+# === OS / editor ===
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# === Existing project ignores ===
+.macuare/
 tools/
 prompt_context.txt
-tests/dev_tools/kitsu_test_env.json
-tests/dev_tools/svn_ssh_env.json
 tests/dev_tools/
 opencode.json
+
+# === OpenStudio Hub runtime artifacts ===
+# Studio seed files (bundled studio configuration)
+*.seed
+# Local infra provisioning (Docker env/compose generated at runtime)
+.openstudio_infra/
+# Generated context dump from tools/context_dumper.py
+prompt_context.txt
+# Local production workspace mounted on disk
+openstudio_projects/
+# OpenStudio Hub per-user session/config cache
+.openstudio/
+
+# === Dev-tool credential caches (NEVER commit these) ===
+tests/dev_tools/*_env.json
+tests/dev_tools/kitsu_test_env.json
+tests/dev_tools/svn_ssh_env.json

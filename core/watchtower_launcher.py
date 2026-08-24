@@ -74,7 +74,6 @@ class WatchtowerLauncher(QObject):
                 f"KITSU_DATA_SOURCE_USER_PASSWORD={self.kitsu_pwd}\n"
         )
 
-        #breakpoint()
         # 3. Ejecutar el compilador (watchtower_pipeline.kitsu -b)
         try:
             with open(env_file_path, "w", encoding="utf-8") as f:

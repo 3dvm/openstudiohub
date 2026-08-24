@@ -26,6 +26,13 @@ from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
 from PySide6.QtCore import QThread, Signal
 
 from core.kitsu_manager import KitsuManager
+from core.dev_defaults import (
+    DEV_KITSU_ADMIN_EMAIL,
+    DEV_KITSU_ADMIN_PASSWORD,
+    DEV_KITSU_DB_PASSWORD,
+    DEV_KITSU_INDEXER_KEY,
+    DEV_KITSU_SECRET_KEY,
+)
 
 class DockerWorker(QThread):
     """Hilo secundario para no congelar la UI mientras Docker descarga y levanta contenedores."""
@@ -66,13 +73,13 @@ class KitsuSeederWorker(QThread):
             if self.action == "admin":
                 # 1. Creamos al admin vía CLI de Zou en Docker para bypassear la falta inicial de sesión
                 # La contraseña debe tener al menos 8 caracteres para no fallar la validación interna
-                pwd = "entrando1"
+                pwd = DEV_KITSU_ADMIN_PASSWORD
                 cmd = [
                     "docker", "exec", "kitsu_local-zou-app", "zou", 
-                    "create-admin", "admin@example.com", "--password", pwd
+                    "create-admin", DEV_KITSU_ADMIN_EMAIL, "--password", pwd
                 ]
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
-                self.finished_signal.emit(True, "Admin Creado: admin@example.com / entrando1")
+                self.finished_signal.emit(True, f"Admin Creado: {DEV_KITSU_ADMIN_EMAIL} / {DEV_KITSU_ADMIN_PASSWORD}")
 
             elif self.action == "dummy":
                 # 2. Inyectamos a los usuarios Dummy consumiendo el Manager
@@ -81,8 +88,8 @@ class KitsuSeederWorker(QThread):
                 kitsu_mgr.set_host('http://localhost:8080/api')
                 
                 success, msg = kitsu_mgr.seed_test_database(
-                    admin_email="admin@example.com", 
-                    admin_pwd="entrando1"
+                    admin_email=DEV_KITSU_ADMIN_EMAIL,
+                    admin_pwd=DEV_KITSU_ADMIN_PASSWORD
                 )
                 self.finished_signal.emit(success, msg)
                 
@@ -290,7 +297,7 @@ class InfrastructureWidget(QFrame):
             pg_ctl.write_text("# Autogenerado por la Infraestructura de Open Studio Hub\n")
 
         # 2. Generar archivo 'env'
-        env_content = """COMPOSE_PROJECT_NAME=kitsu_local
+        env_content = f"""COMPOSE_PROJECT_NAME=kitsu_local
 ENV_FILE=env
 KITSU_VERSION=latest
 ZOU_VERSION=latest
@@ -299,7 +306,7 @@ KV_PORT=6379
 DB_HOST=db
 DB_VERSION=18
 DB_USERNAME=postgres
-DB_PASSWORD=Un53cur3Pa55w0rd
+DB_PASSWORD={DEV_KITSU_DB_PASSWORD}
 DB_DATABASE=zoudb
 DB_DATA_PATH=/var/lib/data
 ENABLE_JOB_QUEUE=True
@@ -308,11 +315,11 @@ TMP_DIR=/tmp/zou
 EVENT_STREAM_HOST=zou-event
 PORT=80
 INDEXER_VERSION=v1.31
-INDEXER_KEY=Un53cur3Ma55t3rK3y
+INDEXER_KEY={DEV_KITSU_INDEXER_KEY}
 INDEXER_HOST=indexer
 INDEXER_PORT=7700
 USER_LIMIT=200
-SECRET_KEY=Op3nStud1oHubZ0uS3cr3tK3y2026V3ryS3cur3
+SECRET_KEY={DEV_KITSU_SECRET_KEY}
 """
         with open(self.infra_dir / "env", "w") as f:
             f.write(env_content)

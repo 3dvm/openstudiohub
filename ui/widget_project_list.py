@@ -89,8 +89,6 @@ class ProjectListWidget(QFrame):
         self.btn_refrescar.clicked.connect(self.cargar_proyectos)
         hero_layout.addWidget(self.btn_refrescar)
 
-        # breakpoint()
-
         if self.user_role == "td":
             self.btn_nuevo_proy = QPushButton(self.tr("Create New Project"))
             self.btn_nuevo_proy.setObjectName("PrimaryButton")

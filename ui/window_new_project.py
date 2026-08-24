@@ -26,6 +26,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from core.project_builder import ProjectBuilder
 from core.vault_manager import VaultManager
 from core.kitsu_manager import KitsuManager
+from core.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
 class FetchKitsuTemplatesWorker(QThread):
     data_ready = Signal(list)
@@ -276,8 +277,8 @@ class NewProjectWindow(QDialog):
 
         # RESOLUCIÓN DESDE EL JSON (Sin interfaz gráfica que estorbe)
         vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
-        user_vcs = vcs_config.get("vcs_username", "admin")
-        pwd_vcs = vcs_config.get("vcs_password", "admin123")
+        user_vcs = vcs_config.get("vcs_username", DEV_SVN_USER)
+        pwd_vcs = vcs_config.get("vcs_password", DEV_SVN_PASSWORD)
 
         self.btn_crear.setEnabled(False)
         self.btn_crear.setText(self.tr("Creating..."))

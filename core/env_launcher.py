@@ -156,7 +156,6 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
         env["OPENSTUDIO_SVN_USER"] = svn_user
         env["OPENSTUDIO_SVN_PASSWORD"] = svn_pwd
 
-        #breakpoint()
         # 3. Preparar el script bootstrap
         bootstrap_src = Path(__file__).parent / "templates" / "bootstrap.py"
         bootstrap_dst = project_root / vfs_local / "bootstrap.py"

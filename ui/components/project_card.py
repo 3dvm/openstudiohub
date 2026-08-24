@@ -33,6 +33,7 @@ from PySide6.QtGui import QPixmap, QImage, QCursor, QAction, QDesktopServices, Q
 from core.kitsu_manager import KitsuManager
 from core.nas_manager import NasManager
 from core.local_installer import LocalInstaller
+from core.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
 class ProjectThumbnailWorker(QThread):
     """QThread dedicado a la descarga HTTP asíncrona de los avatares de proyectos."""
@@ -469,8 +470,8 @@ class ProjectCard(QFrame):
         vcs_user, vcs_pwd = "", ""
         if self.vault:
             vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
-            vcs_user = vcs_config.get("vcs_username", "admin")
-            vcs_pwd = vcs_config.get("vcs_password", "admin123")
+            vcs_user = vcs_config.get("vcs_username", DEV_SVN_USER)
+            vcs_pwd = vcs_config.get("vcs_password", DEV_SVN_PASSWORD)
 
         self.install_worker = ProjectInstallWorker(installer, project_path, vcs_user, vcs_pwd, self.user_role)
         if self.status_callback:

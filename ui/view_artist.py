@@ -32,6 +32,7 @@ from core.config_factory import ConfigFactory
 
 from ui.base_dashboard import BaseDashboardView
 from core.local_installer import LocalInstaller
+from core.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
 # Intenta importar el componente nativo de Tarjeta de Tarea, si existe.
 try:
@@ -391,8 +392,8 @@ class ViewArtist(BaseDashboardView):
 
                     # Extraer credenciales base (El env_launcher aplicará el bypass de admin en localhost)
                     #import os
-                    vcs_user = "admin"
-                    vcs_pwd = "admin123"
+                    vcs_user = DEV_SVN_USER
+                    vcs_pwd = DEV_SVN_PASSWORD
 
                     kitsu_user = self.vault._transient_email
                     kitsu_pwd = self.vault._transient_password

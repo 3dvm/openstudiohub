@@ -112,7 +112,7 @@ class TabVCS(QWidget):
     #         # Auto-completar el formulario para el usuario
     #         self.entry_repo_url.setText("svn://localhost")
     #         self.entry_vcs_user.setText("admin")
-    #         self.entry_vcs_pwd.setText("admin123")
+    #         self.entry_vcs_pwd.setText("")  # dev password moved to core.dev_defaults
     #         self._on_field_modified()
     #
     #     except FileNotFoundError:

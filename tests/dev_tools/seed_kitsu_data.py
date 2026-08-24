@@ -1,5 +1,6 @@
 import gazu
 import getpass
+import os
 import sys
 import json
 from pathlib import Path
@@ -103,7 +104,8 @@ def main():
             print(f"    -> Shot '{shot_name}' ya existe.")
 
     # 5. Creación de Usuarios Dummy (RBAC)
-    print("\n[+] Configurando Usuarios Dummy (Contraseña por defecto: openstudio123)...")
+    dummy_pwd = os.environ.get("KITSU_DUMMY_PWD", "openstudio123")
+    print(f"\n[+] Configurando Usuarios Dummy (Contraseña por defecto: {dummy_pwd})...")
     dummy_users = [
         {"first_name": "Test", "last_name": "Vendor", "email": "vendor@dummy.com", "role": "user", "title": "Vendor"},
         {"first_name": "Test", "last_name": "Artist", "email": "artist@dummy.com", "role": "user", "title": "Artist"},
@@ -119,7 +121,7 @@ def main():
                     last_name=du["last_name"],
                     email=du["email"],
                     role=du["role"],
-                    password="openstudio123"
+                    password=dummy_pwd
                 )
                 print(f"    -> Usuario '{du['email']}' ({du['title']}) creado.")
             except Exception as e:

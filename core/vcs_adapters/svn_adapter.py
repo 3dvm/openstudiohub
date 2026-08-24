@@ -20,6 +20,7 @@ import subprocess
 from typing import List, Dict, Optional
 from pathlib import Path
 from .abstract_vcs import AbstractVCS
+from core.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
 class SVNAdapter(AbstractVCS):
     """Concrete adapter for Subversion (SVN) operations via CLI."""
@@ -32,9 +33,9 @@ class SVNAdapter(AbstractVCS):
         # BYPASS TEMPORAL: Forzar credenciales Dummy en Localhost
         # =========================================================
         if "localhost" in self.repo_url:
-            username = "admin"
-            password = "admin123"
-            print("[SVNAdapter] BYPASS: Inyectando credenciales locales de SVN (admin)...")
+            username = DEV_SVN_USER
+            password = DEV_SVN_PASSWORD
+            print(f"[SVNAdapter] BYPASS: Inyectando credenciales locales de SVN ({DEV_SVN_USER})...")
         # =========================================================
 
         if username and password:
@@ -210,7 +211,7 @@ class SVNAdapter(AbstractVCS):
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", conf_cmd], check=True, capture_output=True)
             
             # Creación del usuario admin default para localhost
-            pwd_cmd = f"echo '[users]' > /home/svn/{project_name}/conf/passwd && echo 'admin = admin123' >> /home/svn/{project_name}/conf/passwd"
+            pwd_cmd = f"echo '[users]' > /home/svn/{project_name}/conf/passwd && echo '{DEV_SVN_USER} = {DEV_SVN_PASSWORD}' >> /home/svn/{project_name}/conf/passwd"
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", pwd_cmd], check=True, capture_output=True)
             
             # Inyección de la topología VFS base
