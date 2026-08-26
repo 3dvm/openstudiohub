@@ -1,13 +1,13 @@
-# OpenStudio Hub: Pipeline Management System
+# OpenStudioHub: Pipeline Management System
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue?logo=python&logoColor=white)
 ![Blender](https://img.shields.io/badge/Blender-3.6_|_4.2_|_5.1-orange?logo=blender&logoColor=white)
 ![Kitsu](https://img.shields.io/badge/Kitsu_SSO-Gazu-success?logo=cgwire&logoColor=white)
 ![Architecture](https://img.shields.io/badge/Architecture-MVC-purple)
 
-**OpenStudio Hub** is a standalone desktop application designed to orchestrate the production pipeline for a 3D animation studio. It acts as a seamless, deterministic bridge between artists, the version control system (SVN/NAS), and the production tracker (Kitsu).
+**OpenStudioHub** is a standalone desktop application designed to orchestrate the production pipeline for a 3D animation studio. It acts as a seamless, deterministic bridge between artists, the version control system (SVN/NAS), and the production tracker (Kitsu).
 
-> 🎬 **[Watch the Demo Video Showcase Here](https://estudiomacuare.com/wp-content/uploads/openstudio-hub-demo.mp4)**
+> 🎬 **[Watch the Demo Video Showcase Here](https://estudiomacuare.com/wp-content/uploads/macuare-hub-demo.mp4)**
 
 ---
 
@@ -19,24 +19,24 @@ However, there is an "elephant in the room" that few talk about: **these tools a
 
 Implementing the Blender Studio Tools ecosystem outside the Foundation's walls requires overcoming a brutal technical learning curve. If your studio doesn't replicate their exact network infrastructure, use their strict SVN configuration, or if you have artists working remotely on Windows instead of Linux, integration usually ends in broken scripts, lost paths, and hours of frustration for the IT team.
 
-Here is where **OpenStudio Hub** comes in. Designed under a "zero friction" philosophy, it doesn't seek to reinvent the wheel, but to tame it. It works as a smart Sandbox environment that packages, pre-configures, and standardizes these powerful core tools, making them accessible to any studio—from an indie team to a mid-sized production company—with just a couple of clicks.
+Here is where **OpenStudioHub** comes in. Designed under a "zero friction" philosophy, it doesn't seek to reinvent the wheel, but to tame it. It works as a smart Sandbox environment that packages, pre-configures, and standardizes these powerful core tools, making them accessible to any studio—from an indie team to a mid-sized production company—with just a couple of clicks.
 
 ---
 
 ## ⚠️ The Problem: Changing Blender versions.
 In large-scale productions, updating software versions or add-ons mid-show often breaks backward compatibility. Artists waste hours dealing with Python tracebacks, missing add-ons, and manual path configurations just to open a legacy file without corrupting modern production data.
 
-## 💡 The Solution: A "rez-like" Ephemeral Sandbox
-OpenStudio Hub solves this by reading the "DNA" (`project_config.json`) of each project and **building dynamic software containers at runtime**. It bypasses global OS installations completely by injecting environment variables (`BLENDER_USER_RESOURCES`, `BLENDER_USER_SCRIPTS`) to isolate extensions, wheels, and preferences per project. 
+## 💡 The Solution: An Ephemeral Sandbox
+OpenStudioHub solves this by reading a configuration file (`project_config.json`) of each project and **building dynamic software containers at runtime**. It bypasses global OS installations completely by injecting environment variables to isolate extensions, wheels, and preferences per project. 
 
-This guarantees **100% backward compatibility** and allows artists to run conflicting legacy tools (e.g., Blender 3.6) and modern pipelines (e.g., Blender 5.1) simultaneously with zero cross-contamination.
+This guarantees **100% backward compatibility** and allows artists to run conflicting legacy tools (e.g., Blender 3.6) and modern pipelines (e.g., Blender 5.2) simultaneously with zero cross-contamination.
 
 ---
 
 ## 🏗️ High-Level Studio Architecture
 
 ```mermaid
-flowchart TD
+flowchart LR
     subgraph Cloud [Studio Cloud Infrastructure]
         K[🦊 Kitsu API<br>SSO & Assignments]
         N[☁️ NAS<br>Software Vault & Manifests]
@@ -45,9 +45,9 @@ flowchart TD
 
     subgraph Workstation [Artist Local Machine]
         direction TB
-        MH{⚙️ OpenStudio Hub<br>Standalone Executable}
+        MH{⚙️ OpenStudioHub <br>Standalone Executable}
         RAM[(🧠 In-Memory Vault<br>Volatile Credentials)]
-        SB[📦 Ephemeral Sandbox<br>./06_conf_LOCAL/]
+        SB[📦 Ephemeral Sandbox<br>./local/]
         DCC[🎨 Blender Subprocess]
     end
 
@@ -74,41 +74,6 @@ flowchart TD
 
 ---
 
-## 🔒 Security: Just-In-Time (JIT) Credential Interception
-
-Traditional pipelines often rely on saving plain-text network credentials on local disks, creating significant security vulnerabilities. OpenStudio Hub utilizes an **In-Memory Vault**. SVN and Kitsu passwords are asked once via a CustomTkinter modal, kept strictly in volatile RAM, injected into the DCC as OS environment variables during the subprocess launch, and wiped entirely upon logout.
-
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Artist
-    participant UI as OpenStudio Hub GUI
-    participant Vault as RAM Vault (Volatile)
-    participant Core as Env Launcher
-    participant DCC as Blender Subprocess
-
-    Artist->>UI: Clicks "Launch Project"
-    UI->>Vault: Check SVN/Kitsu Credentials
-    
-    alt Vault is Empty
-        Vault-->>UI: Missing Credentials
-        UI->>Artist: Prompt JIT Login Modal
-        Artist->>UI: Enters Passwords
-        UI->>Vault: Store in RAM (No Disk IO)
-    end
-    
-    UI->>Core: Trigger Thread (project_config.json)
-    Core->>Vault: Retrieve Credentials
-    Core->>Core: Inject Kitsu/SVN ENV variables
-    Core->>Core: Override DCC User Paths
-    Core->>DCC: subprocess.Popen()
-    
-    Note over DCC: DCC boots 100% isolated.<br/>Init scripts read ENVs<br/>and auto-authenticate.
-
-```
-
----
-
 ## 💻 Development & Installation
 
 The codebase is designed following the **Separation of Concerns (MVC)** principle, making it highly maintainable for Enterprise scaling.
@@ -116,8 +81,8 @@ The codebase is designed following the **Separation of Concerns (MVC)** principl
 1. Clone the repository:
 
 ```bash
-git clone [https://github.com/tu-usuario/openstudio-hub.git](https://github.com/tu-usuario/openstudio-hub.git)
-cd openstudio-hub
+git clone [https://github.com/tu-usuario/openstudio-hub.git](https://github.com/tu-usuario/openstudiohub.git)
+cd openstudiohub
 
 ```
 
@@ -140,7 +105,7 @@ pip install -r requirements.txt
 4. Run the Hub:
 
 ```bash
-python openstudio_hub.py
+python openstudiohub.py
 
 ```
 
@@ -149,7 +114,7 @@ python openstudio_hub.py
 To distribute the tool to studio artists without requiring them to install Python, the application is "frozen" into a standalone executable using PyInstaller.
 
 ```bash
-pyinstaller --noconsole --onefile --name "OpenStudio Hub" openstudio_hub.py
+pyinstaller --noconsole --onefile --name "OpenStudioHub" openstudiohub.py
 
 ```
 
