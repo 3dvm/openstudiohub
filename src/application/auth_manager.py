@@ -1,159 +1,100 @@
 # =========================================================================================
 # OPENSTUDIOHUB
-# Módulo: core/auth_manager.py
-# Rol Arquitectónico: Adapter / API Gateway (Gazu/Kitsu)
+# Module: src/application/auth_manager.py
+# Architectural role: Backward-compatible facade (Identity)
 # =========================================================================================
-# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
-# Licencia: GNU General Public License v3.0 (GPLv3)
-#
-# Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.7.0
+# Copyright (c) 2026 Ernesto Del Valle Macuare. All rights reserved.
+# License: GNU General Public License v3.0 (GPLv3)
 # =========================================================================================
 
 """
-Manages authentication, role resolution (RBAC), and the extraction
-of studio and user metadata. Anchored to English standard.
+Backward-compatible facade over the identity services.
+
+The RBAC mapping, session persistence, and Kitsu query logic have been moved out
+into the domain (``Role``/``User``) and the application services
+(``AuthService`` / ``ProductionService``). This class only *delegates*, so the
+existing UI consumers keep working while they are migrated to depend on the
+services directly.
 """
 
-import json
-from pathlib import Path
-from typing import Tuple, Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
-from src.infrastructure.kitsu_manager import KitsuManager, AuthFailedException
+from src.application.ports import SessionRepository
+from src.application.services.auth_service import AuthService
+from src.application.services.production_service import ProductionService
+from src.infrastructure.kitsu_manager import KitsuManager
+from src.infrastructure.session_repository import FileSessionRepository
 
-OPENSTUDIO_CONFIG_DIR = Path.home() / ".openstudio"
-SESSION_FILE = OPENSTUDIO_CONFIG_DIR / "session.json"
 
 class AuthManager:
-    def __init__(self):
-        self.kitsu_host = None
-        self.user_data = None
-        # Todas las llamadas a Gazu se delegan al KitsuManager (SSoT).
-        self.kitsu = KitsuManager()
+    """Thin facade: auth -> AuthService, production queries -> ProductionService."""
 
-        if not OPENSTUDIO_CONFIG_DIR.exists():
-            OPENSTUDIO_CONFIG_DIR.mkdir(parents=True)
+    def __init__(
+        self,
+        auth_service: Optional[AuthService] = None,
+        production_service: Optional[ProductionService] = None,
+    ) -> None:
+        if auth_service is None or production_service is None:
+            kitsu = KitsuManager()
+            auth_service = auth_service or AuthService(kitsu, FileSessionRepository())
+            production_service = production_service or ProductionService(kitsu)
+        self.auth_service = auth_service
+        self.production_service = production_service
+        self.kitsu = auth_service.kitsu
 
+    # ------------------------------------------------------------------
+    # Legacy passthrough state (read by the UI)
+    # ------------------------------------------------------------------
+    @property
+    def user_data(self) -> Optional[dict]:
+        return self.auth_service.raw_user_data
+
+    @property
+    def kitsu_host(self) -> str:
+        return self.auth_service.host
+
+    # ------------------------------------------------------------------
+    # Authentication
+    # ------------------------------------------------------------------
     def set_host(self, host_url: str) -> None:
-        if not host_url.endswith("/api"):
-            host_url = f"{host_url.rstrip('/')}/api"
-        self.kitsu_host = host_url
-        self.kitsu.set_host(self.kitsu_host)
+        self.auth_service.set_host(host_url)
 
     def login_with_credentials(self, email: str, password: str, host_url: str) -> Tuple[bool, str]:
-        try:
-            self.set_host(host_url)
-            tokens = self.kitsu.log_in(email, password)
-            self.user_data = self.kitsu.get_current_user()
-            self._save_session(tokens)
-            return True, "Login successful."
-        except AuthFailedException:
-            return False, "Invalid credentials."
-        except Exception as e:
-            return False, f"Connection error: {str(e)}"
+        return self.auth_service.login(email, password, host_url)
 
     def login_with_saved_session(self) -> bool:
-        if not SESSION_FILE.exists():
-            return False
-        try:
-            with open(SESSION_FILE, 'r') as f:
-                data = json.load(f)
-            self.set_host(data["host"])
-            self.kitsu.set_tokens(data["tokens"])
-            self.user_data = self.kitsu.get_current_user()
-            return True
-        except Exception:
-            if SESSION_FILE.exists():
-                SESSION_FILE.unlink()
-            return False
+        return self.auth_service.restore_session()
 
     def logout(self) -> None:
-        self.kitsu.log_out()
-        self.user_data = None
-        if SESSION_FILE.exists():
-            SESSION_FILE.unlink()
+        self.auth_service.logout()
 
     def get_user_role(self) -> str:
-        if not self.user_data:
-            return "guest"
-        kitsu_role = self.user_data.get("role", "").lower()
-        kitsu_position = self.user_data.get("position", "").lower()
-
-        if kitsu_role == "admin": return "td"
-        elif kitsu_role == "supervisor": return "supervisor"
-        elif kitsu_role == "manager": return "manager"
-        elif kitsu_role == "vendor": return "vendor"
-        elif kitsu_role == "client": return "client"
-        elif kitsu_role == "user":
-            if kitsu_position == "lead": return "lead"
-            return "artist"
-        return "artist"
+        return self.auth_service.current_role().value
 
     def get_user_position(self) -> str:
-        if not self.user_data: return ""
-        return self.user_data.get("position", "").lower()
+        user = self.auth_service.current_user
+        return user.position if user else ""
 
     def get_current_token(self) -> str:
-        if self.kitsu.has_session_tokens():
-            return self.kitsu.get_access_token()
+        return self.auth_service.access_token()
 
-        if SESSION_FILE.exists():
-            try:
-                with open(SESSION_FILE, 'r') as f:
-                    data = json.load(f)
-                return data.get("tokens", {}).get("access_token", "")
-            except Exception:
-                pass
-        return ""
-
-    def _save_session(self, tokens) -> None:
-        data = {"host": self.kitsu_host, "tokens": tokens}
-        with open(SESSION_FILE, 'w') as f:
-            json.dump(data, f)
-
-    # =========================================================================
-    # KITSU API ENDPOINTS (SSoT)
-    # =========================================================================
-
+    # ------------------------------------------------------------------
+    # Production queries (delegated; Phase 3 moves these behind a repository)
+    # ------------------------------------------------------------------
     def sync_studio_identity(self) -> dict:
-        """
-        Dynamically downloads the main studio identity from Kitsu.
-        Designed to be explicitly triggered by the TD via the Settings Panel.
-        """
-        identity = {}
-        try:
-            org = self.kitsu.get_organisation()
-            if isinstance(org, dict) and "name" in org:
-                identity["name"] = org["name"]
-        except Exception as e:
-            print(f"[AuthManager] Info: Failed to fetch Organisation from server ({e})")
-
-        return identity
+        return self.production_service.sync_studio_identity()
 
     def obtener_proyectos_activos(self) -> Dict[str, str]:
-        proyectos = {}
-        try:
-            for p in self.kitsu.get_all_projects():
-                proyectos[p["name"].lower()] = p["id"]
-        except Exception as e:
-            print(f"[AuthManager] Error fetching active projects: {e}")
-        return proyectos
+        return self.production_service.obtener_proyectos_activos()
 
     def get_task_metadata(self, task_id: str) -> Optional[Dict[str, str]]:
-        try:
-            return self.kitsu.get_task(task_id)
-        except Exception:
-            return None
+        return self.production_service.get_task_metadata(task_id)
 
     def get_assigned_tasks(self) -> List[dict]:
-        try:
-            return self.kitsu.all_tasks_to_do()
-        except Exception as e:
-            print(f"[AuthManager] Error fetching assigned tasks: {e}")
-            return []
+        return self.production_service.get_assigned_tasks()
 
-    def get_recent_activity(self, limit: int=15) -> List[dict]:
-        return []
+    def get_recent_activity(self, limit: int = 15) -> List[dict]:
+        return self.production_service.get_recent_activity(limit)
 
     def acknowledge_activity(self, task_id: str, comment_id: str) -> bool:
-        return True
+        return self.production_service.acknowledge_activity(task_id, comment_id)

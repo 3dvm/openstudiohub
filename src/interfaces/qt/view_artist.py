@@ -27,7 +27,7 @@ from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QResizeEvent
 
 from src.application.auth_manager import AuthManager
-from src.application.vault_manager import VaultManager
+from src.application.credential_vault import CredentialVault
 from src.infrastructure.config_factory import ConfigFactory
 
 from src.interfaces.qt.base_dashboard import BaseDashboardView
@@ -152,12 +152,12 @@ class LaunchTaskWorker(QThread):
 
 class ViewArtist(BaseDashboardView):
     def __init__(self, parent: QWidget, auth_manager: AuthManager, nas_dir: Path,
-                 vault_manager: VaultManager, config_factory: ConfigFactory, on_logout: Callable[[], None], **kwargs):
+                 credential_vault: CredentialVault, config_factory: ConfigFactory, on_logout: Callable[[], None], **kwargs):
 
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
 
         self.nas_dir = nas_dir
-        self.vault = vault_manager
+        self.credential_vault = credential_vault
 
         self._task_widgets = []
         self._all_fetched_tasks = []
@@ -395,8 +395,7 @@ class ViewArtist(BaseDashboardView):
                     vcs_user = DEV_SVN_USER
                     vcs_pwd = DEV_SVN_PASSWORD
 
-                    kitsu_user = self.vault._transient_email
-                    kitsu_pwd = self.vault._transient_password
+                    kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
 
                     if not kitsu_pwd:
                         # Fallback (si la bóveda está vacía, pedimos que re-inicie sesión)

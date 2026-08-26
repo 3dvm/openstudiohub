@@ -127,11 +127,11 @@ class LoginWorker(QThread):
 
 
 class ViewLogin(QWidget):
-    def __init__(self, parent, auth_manager, vault_manager, config_factory, on_login_success):
+    def __init__(self, parent, auth_manager, credential_vault, config_factory, on_login_success):
         super().__init__(parent)
         
         self.auth_manager = auth_manager
-        self.vault_manager = vault_manager
+        self.credential_vault = credential_vault
         self.config_factory = config_factory
         self.on_login_success = on_login_success
         
@@ -440,7 +440,7 @@ class ViewLogin(QWidget):
         self.worker.start()
 
     def _on_login_success(self):
-        self.vault_manager.save_kitsu_credentials(self._temp_email, self._temp_password)
+        self.credential_vault.save_kitsu_credentials(self._temp_email, self._temp_password)
         self.on_login_success()
 
     def _on_login_error(self, mensaje):

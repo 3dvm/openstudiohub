@@ -34,6 +34,7 @@ from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
 #from core import vault_manager
 from src.application.auth_manager import AuthManager
 from src.application.vault_manager import VaultManager
+from src.application.credential_vault import CredentialVault
 from src.infrastructure.config_factory import ConfigFactory
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
 from src.infrastructure.kitsu_manager import KitsuManager
@@ -66,6 +67,7 @@ class OpenStudioHub(QMainWindow):
         settings_path = Path("settings.json")
         self.config_factory = ConfigFactory(settings_path)
         self.vault = VaultManager(self.config_factory)
+        self.credential_vault = CredentialVault()
         
 
         # 2. Enrutador Inicial (State Machine MVC)
@@ -96,7 +98,7 @@ class OpenStudioHub(QMainWindow):
         else:
             if self.auth.get_current_token():
                 self.auth.logout()
-            self.vault.clear()
+            self.credential_vault.clear()
             event.accept()
 
     def mostrar_login(self):
@@ -106,7 +108,7 @@ class OpenStudioHub(QMainWindow):
         vista_login = ViewLogin(
             parent=self, 
             auth_manager=self.auth, 
-            vault_manager=self.vault, 
+            credential_vault=self.credential_vault, 
             config_factory=self.config_factory,
             on_login_success=self.mostrar_dashboard
         )
@@ -146,7 +148,7 @@ class OpenStudioHub(QMainWindow):
                     self,
                     self.auth,
                     nas_dir,
-                    self.vault,
+                    self.credential_vault,
                     self.config_factory,
                     self.ejecutar_logout)
             else:
@@ -155,7 +157,7 @@ class OpenStudioHub(QMainWindow):
                     parent=self,
                     auth_manager=self.auth,
                     config_factory=self.config_factory,
-                    vault_manager=self.vault,
+                    credential_vault=self.credential_vault,
                     on_logout=self.ejecutar_logout
                 )
         else:
@@ -163,7 +165,7 @@ class OpenStudioHub(QMainWindow):
                 parent=self, 
                 auth_manager=self.auth, 
                 nas_dir=nas_dir,
-                vault_manager=self.vault,
+                credential_vault=self.credential_vault,
                 config_factory=self.config_factory,
                 on_logout=self.ejecutar_logout
             )
@@ -234,8 +236,7 @@ class OpenStudioHub(QMainWindow):
 
         # Extraemos las credenciales guardadas en la bóveda
         kitsu_url = self.config_factory.get_kitsu_api_url()
-        kitsu_user = getattr(self.vault, '_transient_email', "")
-        kitsu_pwd = getattr(self.vault, '_transient_password', "")
+        kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
 
         # Instanciamos el launcher
         self.wt_launcher = WatchtowerLauncher(
@@ -264,7 +265,7 @@ class OpenStudioHub(QMainWindow):
             return
             
         self.auth.logout()
-        self.vault.clear()  
+        self.credential_vault.clear()  
         self.mostrar_login()
 
 if __name__ == "__main__":

@@ -19,12 +19,12 @@ from src.interfaces.qt.workers.api_queries import FetchProjectsWorker, FetchEnti
 from src.interfaces.qt.workers.blender_spawners import BatchCreationWorker, MasterSpawningWorker, StoryboardBatchWorker
 
 class WidgetBlendBuilder(QFrame):
-    def __init__(self, parent, auth_manager, config_factory, status_callback, vault_manager=None, **kwargs):
+    def __init__(self, parent, auth_manager, config_factory, status_callback, credential_vault=None, **kwargs):
         super().__init__(parent, **kwargs)
         self.auth = auth_manager
         self.config_factory = config_factory
         self.status_callback = status_callback
-        self.vault_manager = vault_manager
+        self.credential_vault = credential_vault
         
         self.pm_core = ProductionManager(self.auth, self.config_factory)
         self.current_project_id = None
@@ -38,11 +38,11 @@ class WidgetBlendBuilder(QFrame):
 
     def _inyectar_credenciales_ram(self):
         """Extrae la contraseña de la RAM y la expone efímeramente para el subproceso Headless."""
-        if self.vault_manager:
+        if self.credential_vault:
             import os
-            #v_data = self.vault_manager.obtener_datos_locales()
-            os.environ["OPENSTUDIO_KITSU_USER"] = self.vault_manager._transient_email
-            os.environ["OPENSTUDIO_KITSU_PWD"] = self.vault_manager._transient_password
+            kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
+            os.environ["OPENSTUDIO_KITSU_USER"] = kitsu_user or ""
+            os.environ["OPENSTUDIO_KITSU_PWD"] = kitsu_pwd or ""
 
     def _build_ui(self):
         main_layout = QVBoxLayout(self)

@@ -21,8 +21,8 @@ from src.interfaces.qt.widget_blend_builder import WidgetBlendBuilder
 from src.interfaces.qt.widget_project_list import ProjectListWidget
 
 class ViewPM(BaseDashboardView):
-    def __init__(self, parent, auth_manager, config_factory, on_logout, vault_manager=None, **kwargs):
-        self.vault_manager = vault_manager
+    def __init__(self, parent, auth_manager, config_factory, on_logout, credential_vault=None, **kwargs):
+        self.credential_vault = credential_vault
         super().__init__(parent, auth_manager, config_factory, on_logout, **kwargs)
 
         self.setObjectName("ViewPMBase")
@@ -58,7 +58,7 @@ class ViewPM(BaseDashboardView):
             auth_manager=self.auth,
             config_factory=self.config_factory,
             status_callback=self.actualizar_status,
-            vault_manager=self.vault_manager
+            credential_vault=self.credential_vault
         )
         self.stacked_content.addWidget(self.widget_builder)
 
