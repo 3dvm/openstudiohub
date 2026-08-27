@@ -21,17 +21,11 @@ import os
 import json
 import subprocess
 import shutil
-import platform
 from pathlib import Path
 from typing import Optional
 
 from src.domain.path_resolver import PathResolver
-
-def _get_os_info() -> str:
-    system = platform.system().lower()
-    if system == "linux": return "linux"
-    elif system == "windows": return "windows"
-    else: return "macos"
+from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
 def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd: str, 
                    kitsu_user: str, kitsu_pwd: str, kitsu_host: str, user_role: str, 
@@ -60,25 +54,10 @@ def lanzar_blender(project_root: Path, config_path: Path, svn_user: str, svn_pwd
         status_callback(f"Buscando Blender {version} en Sandbox Local...", "yellow")
 
         # 1. Búsqueda Estricta de Binario (Exclusivo en Sandbox VFS)
-        os_name = _get_os_info()
-        archive_folder = f"blender-{version}-{os_name}-x64"
-        
-        base_blender_dir = project_root / vfs_local / "blender-build" / archive_folder
-        
-        if os_name == "windows":
-            blender_bin = base_blender_dir / "blender.exe"
-        elif os_name == "macos":
-            # En macOS, el ejecutable real vive dentro del paquete .app
-            blender_bin = base_blender_dir / "Blender.app" / "Contents" / "MacOS" / "Blender"
-            if not blender_bin.exists():
-                blender_bin = base_blender_dir / "Blender" # Fallback de seguridad
-        else:
-            blender_bin = base_blender_dir / "blender"
+        base_blender_dir = project_root / vfs_local / "blender-build"
+        blender_bin = BlenderLocator.resolve(base_blender_dir, version=version)
 
-        if not blender_bin.exists():
-            raise FileNotFoundError(f"Fallo de Sandboxing: No se encontró el ejecutable en {blender_bin}")
-
-        status_callback(f"Ejecutable aislado encontrado en: {archive_folder}", "green")
+        status_callback(f"Ejecutable aislado encontrado en: {BlenderLocator.archive_folder_name(version)}", "green")
         status_callback("Preparando Sandboxing y Variables de Entorno...", "yellow")
 
         # 2. Configurar Sandbox Dirs (Aislamiento absoluto VFS)

@@ -1,11 +1,10 @@
 import subprocess
 import os
-import glob
-import platform
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
 from src.infrastructure.kitsu_manager import KitsuManager
+from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
 
 class BatchCreationWorker(QThread):
@@ -34,18 +33,7 @@ class BatchCreationWorker(QThread):
             folder_name = self.project_name.strip().lower().replace(" ", "-")
             project_root = nas_root / folder_name
             base_blender_dir = project_root / vfs_local / "blender-build"
-            
-            import platform, glob, os, subprocess
-            os_name = platform.system().lower()
-            if os_name == "windows":
-                exe_list = glob.glob(str(base_blender_dir / "**" / "blender.exe"), recursive=True)
-            elif os_name == "darwin":
-                exe_list = glob.glob(str(base_blender_dir / "**" / "MacOS" / "Blender"), recursive=True)
-            else:
-                exe_list = glob.glob(str(base_blender_dir / "**" / "blender"), recursive=True)
-                
-            if not exe_list:
-                raise FileNotFoundError("Blender binary not found in sandbox.")
+            blender_bin = BlenderLocator.resolve(base_blender_dir)
 
             vfs_svn = self.config.get_vfs_svn_name()
 
@@ -99,7 +87,7 @@ class BatchCreationWorker(QThread):
                     env["OPENSTUDIO_KITSU_PWD"] = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
                     
                     script_path = Path(__file__).resolve().parent.parent.parent.parent / "infrastructure" / "templates" / "headless_builder.py"
-                    cmd = [exe_list[0], "-b", "--python", str(script_path)]
+                    cmd = [str(blender_bin), "-b", "--python", str(script_path)]
                     
                     proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                     for line in proceso.stdout:
@@ -153,7 +141,7 @@ class BatchCreationWorker(QThread):
                 # print("="*60 + "\n")
                 # # -------------------------------------------
                 # script_path = Path(__file__).resolve().parent.parent.parent.parent / "infrastructure" / "templates" / "headless_builder.py"
-                # cmd = [exe_list[0], "-b", "--python", str(script_path)]
+                # cmd = [str(blender_bin), "-b", "--python", str(script_path)]
                 #
                 # proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 # for line in proceso.stdout:
@@ -192,17 +180,7 @@ class MasterSpawningWorker(QThread):
             project_root = nas_root / folder_name
             
             base_blender_dir = project_root / vfs_local / "blender-build"
-            os_name = platform.system().lower()
-            if os_name == "windows":
-                exe_list = glob.glob(str(base_blender_dir / "**" / "blender.exe"), recursive=True)
-            elif os_name == "darwin":
-                exe_list = glob.glob(str(base_blender_dir / "**" / "MacOS" / "Blender"), recursive=True)
-            else:
-                exe_list = glob.glob(str(base_blender_dir / "**" / "blender"), recursive=True)
-                
-            if not exe_list:
-                raise FileNotFoundError("Blender binary not found in sandbox.")
-            blender_bin = exe_list[0]
+            blender_bin = BlenderLocator.resolve(base_blender_dir)
 
             self.progress_updated.emit(20, self.tr("Preparing environment variables..."))
             env = os.environ.copy()
@@ -278,17 +256,7 @@ class StoryboardBatchWorker(QThread):
             folder_name = self.project_name.strip().lower().replace(" ", "-")
             project_root = nas_root / folder_name
             base_blender_dir = project_root / vfs_local / "blender-build"
-            
-            os_name = platform.system().lower()
-            if os_name == "windows":
-                exe_list = glob.glob(str(base_blender_dir / "**" / "blender.exe"), recursive=True)
-            elif os_name == "darwin":
-                exe_list = glob.glob(str(base_blender_dir / "**" / "MacOS" / "Blender"), recursive=True)
-            else:
-                exe_list = glob.glob(str(base_blender_dir / "**" / "blender"), recursive=True)
-                
-            if not exe_list:
-                raise FileNotFoundError("Blender binary not found in sandbox.")
+            blender_bin = BlenderLocator.resolve(base_blender_dir)
 
             for idx, seq_name in enumerate(self.sequence_names):
                 base_progress = 10 + int((idx / total_seqs) * 90)
@@ -351,7 +319,7 @@ class StoryboardBatchWorker(QThread):
                 # ----------------------------------------
                 
                 script_path = Path(__file__).resolve().parent.parent.parent.parent / "infrastructure" / "templates" / "headless_builder.py"
-                cmd = [exe_list[0], "-b", "--python", str(script_path)]
+                cmd = [str(blender_bin), "-b", "--python", str(script_path)]
                 
                 proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 for line in proceso.stdout:

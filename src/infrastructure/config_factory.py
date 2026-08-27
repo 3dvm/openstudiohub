@@ -23,6 +23,8 @@ import base64
 import zlib
 from pathlib import Path
 
+from src.domain.workspace.topography import WorkspaceTopography
+
 class ConfigFactory:
     def __init__(self, config_path: Path):
         self.config_path = config_path
@@ -266,20 +268,24 @@ class ConfigFactory:
 
     # --- TOPOGRAPHY ENGINE ---
 
+    def get_topography(self) -> WorkspaceTopography:
+        """Return the semantic VFS topography as a domain value object."""
+        return WorkspaceTopography.from_dict(self._config.get("project_topography", {}))
+
     def get_vfs_svn_name(self) -> str:
-        return self._config.get("project_topography", {}).get("vfs_svn", "svn")
+        return self.get_topography().vfs_svn
 
     def get_vfs_shared_name(self) -> str:
-        return self._config.get("project_topography", {}).get("vfs_shared", "shared")
+        return self.get_topography().vfs_shared
 
     def get_vfs_local_name(self) -> str:
-        return self._config.get("project_topography", {}).get("vfs_local", "local")
+        return self.get_topography().vfs_local
 
     def get_vfs_pipeline_name(self) -> str:
-        return self._config.get("project_topography", {}).get("vfs_pipeline", "pipeline")
+        return self.get_topography().vfs_pipeline
 
     def get_custom_dirs(self) -> list:
-        return self._config.get("project_topography", {}).get("custom_dirs", [])
+        return list(self.get_topography().custom_dirs)
 
     def get_production_folder_name(self) -> str:
         """DEPRECATED ALIAS: Routes to get_vfs_svn_name() to prevent breaking legacy components."""
