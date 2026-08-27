@@ -21,6 +21,10 @@ import os
 import importlib
 import addon_utils
 from pathlib import Path
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from env_contract import SandboxEnvironment
+_ENV = SandboxEnvironment.from_os_environ()
 
 # =================================================================
 # 1. RESOLUCIÓN DINÁMICA DE EXTENSIONES
@@ -54,9 +58,9 @@ def _apply_persistent_overrides(dummy=None):
     Garantiza que el Monkey Patch y el RBAC nunca desaparezcan.
     """
     # 1. Extraer variables de entorno vitales
-    project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
-    prod_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "02_archivos_de_produccion")
-    user_role = os.environ.get("OPENSTUDIO_USER_ROLE", "artist").lower()
+    project_root = (_ENV.project_root or "")
+    prod_folder = (_ENV.production_folder or "02_archivos_de_produccion")
+    user_role = (_ENV.user_role or "artist").lower()
     
     kitsu_mod = _get_kitsu_module()
     
@@ -105,15 +109,15 @@ def _startup_sequence():
         print("\n" + "="*50)
         print("[OPENSTUDIO HUB] Iniciando Secuencia de Arranque...")
 
-        target_file = os.environ.get("OPENSTUDIO_TARGET_FILE", "")
-        task_type = os.environ.get("OPENSTUDIO_TASK_TYPE", "generic").lower()
+        target_file = (_ENV.target_file or "")
+        task_type = (_ENV.task_type or "generic").lower()
         
-        kitsu_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
-        kitsu_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
-        kitsu_host = os.environ.get("OPENSTUDIO_KITSU_HOST", "")
-        project_id = os.environ.get("OPENSTUDIO_KITSU_PROJECT_ID", "")
-        project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
-        prod_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "02_archivos_de_produccion")
+        kitsu_user = (_ENV.kitsu_user or "")
+        kitsu_pwd = (_ENV.kitsu_pwd or "")
+        kitsu_host = (_ENV.kitsu_host or "")
+        project_id = (_ENV.kitsu_project_id or "")
+        project_root = (_ENV.project_root or "")
+        prod_folder = (_ENV.production_folder or "02_archivos_de_produccion")
 
         addon_key = _get_kitsu_addon_key()
 

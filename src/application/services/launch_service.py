@@ -150,13 +150,19 @@ class LaunchService:
 
     @staticmethod
     def _deploy_bootstrap(project_root: Path, vfs_local: str) -> Path:
-        bootstrap_src = (
-            Path(__file__).resolve().parent.parent.parent / "infrastructure" / "templates" / "bootstrap.py"
-        )
+        src_root = Path(__file__).resolve().parent.parent.parent  # -> src/
+        bootstrap_src = src_root / "infrastructure" / "templates" / "bootstrap.py"
+        env_contract_src = src_root / "domain" / "shared_kernel" / "env_contract.py"
+
         bootstrap_dst = project_root / vfs_local / "bootstrap.py"
         bootstrap_dst.parent.mkdir(parents=True, exist_ok=True)
-        if bootstrap_src.exists():
-            shutil.copy2(bootstrap_src, bootstrap_dst)
-        else:
+
+        if not bootstrap_src.exists():
             raise FileNotFoundError("No se encontro src/infrastructure/templates/bootstrap.py")
+
+        shutil.copy2(bootstrap_src, bootstrap_dst)
+        # Ship the shared env contract next to bootstrap.py so the DCC-side
+        # script can import it from its own directory (Blender has no `src`).
+        if env_contract_src.exists():
+            shutil.copy2(env_contract_src, bootstrap_dst.parent / "env_contract.py")
         return bootstrap_dst

@@ -19,19 +19,29 @@ auditoría matemática de la geometría y detona los hooks de publicación.
 import bpy
 import os
 import shutil
-import math
+import sys
+from pathlib import Path
 from . import hooks
 
 from .vcs import vcs_factory
 
-PRIMITIVAS_PROHIBIDAS = {
-    "Cube", "Sphere", "Cylinder", "Cone", "Torus", "Plane", "Monkey", "Suzanne", "Circle",
-    "BézierCurve", "BezierCurve", "GPencil", "Grid", "Icosphere", "Mball", "NurbsCurve", "NurbsPath",
-    "Armature"
-}
+# Make the Hub's shared QA kernel importable from the addon (dev checkout).
+_HUB_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_HUB_ROOT) not in sys.path:
+    sys.path.insert(0, str(_HUB_ROOT))
 
-# Constante para auditar todos los objetos transformables en el pipeline
-TIPOS_AUDITABLES = {'MESH', 'CURVE', 'SURFACE', 'META', 'FONT', 'ARMATURE', 'GPENCIL', 'GREASEPENCIL'}
+from src.domain.qa.rules import (
+    AUDITABLE_OBJECT_TYPES,
+    FORBIDDEN_PRIMITIVES,
+    asset_name_from_filename,
+    is_dirty_transform,
+    is_out_of_bounds,
+    is_valid_object_name,
+)
+
+# Backward-compatible aliases (the domain rules are now the single source of truth).
+PRIMITIVAS_PROHIBIDAS = set(FORBIDDEN_PRIMITIVES)
+TIPOS_AUDITABLES = set(AUDITABLE_OBJECT_TYPES)
 
 # ---------------------------------------------------------
 # FUNCIONES DE LA FASE 1: LIMPIEZA
@@ -83,7 +93,7 @@ def escanear_out_of_bounds() -> list:
             continue
 
         abs_path = os.path.normpath(bpy.path.abspath(img.filepath))
-        if not abs_path.startswith(project_root):
+        if is_out_of_bounds(abs_path, project_root):
             infractores.append({
                 "tipo": "IMAGE",
                 "nombre": img.name,
@@ -129,19 +139,11 @@ def escanear_geometria_sucia() -> list:
     infractores = []
     for obj in bpy.context.view_layer.objects:
         if obj.type in TIPOS_AUDITABLES:
-            loc_sucia = not (math.isclose(obj.location.x, 0.0, abs_tol=1e-4) and
-                             math.isclose(obj.location.y, 0.0, abs_tol=1e-4) and
-                             math.isclose(obj.location.z, 0.0, abs_tol=1e-4))
-
-            rot_sucia = not (math.isclose(obj.rotation_euler.x, 0.0, abs_tol=1e-4) and
-                             math.isclose(obj.rotation_euler.y, 0.0, abs_tol=1e-4) and
-                             math.isclose(obj.rotation_euler.z, 0.0, abs_tol=1e-4))
-
-            esc_sucia = not (math.isclose(obj.scale.x, 1.0, abs_tol=1e-4) and
-                             math.isclose(obj.scale.y, 1.0, abs_tol=1e-4) and
-                             math.isclose(obj.scale.z, 1.0, abs_tol=1e-4))
-
-            if loc_sucia or rot_sucia or esc_sucia:
+            if is_dirty_transform(
+                (obj.location.x, obj.location.y, obj.location.z),
+                (obj.rotation_euler.x, obj.rotation_euler.y, obj.rotation_euler.z),
+                (obj.scale.x, obj.scale.y, obj.scale.z),
+            ):
                 infractores.append(obj.name)
 
     return infractores
@@ -193,10 +195,7 @@ def limpiar_transformaciones(nombres_infractores: list) -> int:
 # ---------------------------------------------------------
 
 def _obtener_asset_name() -> str:
-    nombre_archivo = bpy.path.basename(bpy.context.blend_data.filepath) or "Asset"
-    if "-" in nombre_archivo:
-        return "-".join(nombre_archivo.split("-")[:-1])
-    return "Asset"
+    return asset_name_from_filename(bpy.path.basename(bpy.context.blend_data.filepath))
 
 def escanear_nombres_sucios() -> list:
     infractores = []
@@ -204,10 +203,7 @@ def escanear_nombres_sucios() -> list:
 
     for obj in bpy.context.view_layer.objects:
         if obj.type in TIPOS_AUDITABLES:
-            nombre_base = obj.name.split('.')[0]
-            if nombre_base in PRIMITIVAS_PROHIBIDAS:
-                infractores.append(obj.name)
-            elif not obj.name.startswith(f"{asset_name}-"):
+            if not is_valid_object_name(obj.name, asset_name):
                 infractores.append(obj.name)
 
     return infractores

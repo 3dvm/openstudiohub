@@ -28,6 +28,9 @@ _HUB_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_HUB_ROOT) not in sys.path:
     sys.path.insert(0, str(_HUB_ROOT))
 
+from src.domain.shared_kernel.env_contract import SandboxEnvironment
+_ENV = SandboxEnvironment.from_os_environ()
+
 # =================================================================
 # 1. RESOLUCIÓN DINÁMICA DE EXTENSIONES (Paridad con bootstrap.py)
 # =================================================================
@@ -126,7 +129,7 @@ def cargar_plantilla_segura(task_type_name: str = None, app_template: str = None
         # =======================================================
         # 3. REINYECCIÓN DEL MONKEY PATCH VFS
         # =======================================================
-        vfs_svn = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+        vfs_svn = (_ENV.production_folder or "svn")
         try:
             kitsu_prefs_mod = importlib.import_module(f"{kitsu_module.__name__}.prefs")
             
@@ -185,11 +188,11 @@ def autenticar_kitsu_headless(kitsu_module, mod_name):
     dentro del addon de Kitsu e inicia sesión de forma estricta.
     Resuelve el problema de Gazu intentando conectar a 'gazu.change.serverhost'.
     """
-    hub_host = os.environ.get("OPENSTUDIO_KITSU_HOST", "http://localhost:8080/api")
-    hub_user = os.environ.get("OPENSTUDIO_KITSU_USER", "")
-    hub_pwd = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
-    project_id = os.environ.get("OPENSTUDIO_KITSU_PROJECT_ID", "")
-    project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
+    hub_host = (_ENV.kitsu_host or "http://localhost:8080/api")
+    hub_user = (_ENV.kitsu_user or "")
+    hub_pwd = (_ENV.kitsu_pwd or "")
+    project_id = (_ENV.kitsu_project_id or "")
+    project_root = (_ENV.project_root or "")
     
     if not (hub_user and hub_pwd):
         print(f"[HeadlessBuilder] ⚠️ Advertencia: No se proporcionaron credenciales completas para {hub_host}")
@@ -217,7 +220,7 @@ def autenticar_kitsu_headless(kitsu_module, mod_name):
         prefs.project_active_id = project_id
 
     # Inyectar el Monkey Patch VFS Inicial
-    vfs_svn = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+    vfs_svn = (_ENV.production_folder or "svn")
     try:
         kitsu_prefs_mod = importlib.import_module(f"{kitsu_module.__name__}.prefs")
         def custom_root_dir_get(context):
@@ -267,9 +270,9 @@ def forjar_storyboard():
         
     try:
         # 2. Extraer contexto inyectado por el Hub
-        project_root = Path(os.environ.get("OPENSTUDIO_PROJECT_ROOT", ""))
-        vfs_svn = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
-        seq_name = os.environ.get("OPENSTUDIO_TARGET_SEQUENCE", "SQ000").lower()
+        project_root = Path((_ENV.project_root or ""))
+        vfs_svn = (_ENV.production_folder or "svn")
+        seq_name = (_ENV.target_sequence or "SQ000").lower()
         
         # 3. Construir la ruta (En la carpeta de edición, tal como lo definimos)
         out_path = project_root / vfs_svn / "edit" / "storyboards" / f"{seq_name}-storyboard.blend"
@@ -325,9 +328,9 @@ def forjar_shot():
         autenticar_kitsu_headless(kitsu_module, mod_name)
 
         # 2. EXTRAER NOMBRES DESDE LAS VARIABLES DE ENTORNO
-        seq_name = os.environ.get("OPENSTUDIO_KITSU_SEQUENCE_NAME", "")
-        shot_name = os.environ.get("OPENSTUDIO_KITSU_ENTITY_NAME", "")
-        task_type_name = os.environ.get("OPENSTUDIO_KITSU_TASK_TYPE_NAME", "Layout")
+        seq_name = (_ENV.kitsu_sequence_name or "")
+        shot_name = (_ENV.kitsu_entity_name or "")
+        task_type_name = (_ENV.kitsu_task_type_name or "Layout")
         
         # 3. PREPARAR PLANTILLA USANDO LA TAREA
         # task_type = kitsu_module.cache.task_type_active_get()
@@ -374,7 +377,7 @@ def forjar_shot():
             
             if task:
                 # Calculamos la ruta relativa al VFS (Ej: pro/shots/01/010/010-layout.blend)
-                vfs_root = Path(os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")) / os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+                vfs_root = Path((_ENV.project_root or "")) / (_ENV.production_folder or "svn")
                 rel_path = out_path.relative_to(vfs_root).as_posix()
                 
                 # Preparamos e inyectamos los datos en Kitsu
@@ -411,8 +414,8 @@ def forjar_asset():
         autenticar_kitsu_headless(kitsu_module, mod_name)
 
         # 2. RECUPERAR IDs DEL ENTORNO
-        target_id = os.environ.get("OPENSTUDIO_TARGET_ENTITY_ID", "")
-        asset_type_id = os.environ.get("OPENSTUDIO_KITSU_ASSET_TYPE_ID", "")
+        target_id = (_ENV.target_entity_id or "")
+        asset_type_id = (_ENV.kitsu_asset_type_id or "")
 
         # --- DEBUG TEMPORAL ---
         print(f"[DEBUG Headless] TARGET_ID recibido: '{target_id}'")
@@ -470,7 +473,7 @@ def main():
     print("\n" + "="*50)
     print("[OPENSTUDIO HUB] Iniciando Constructor Headless...")
     
-    build_target = os.environ.get("OPENSTUDIO_BUILD_TARGET", "STORYBOARD").upper()
+    build_target = (_ENV.build_target or "STORYBOARD").upper()
     
     if build_target == "STORYBOARD":
         forjar_storyboard()
