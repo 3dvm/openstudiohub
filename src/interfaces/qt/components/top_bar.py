@@ -80,7 +80,8 @@ class TopBar(QFrame):
 
         # Info de Usuario
         rol = self.auth.get_user_role().capitalize() if self.auth else "Offline"
-        nombre_user = self.auth.user_data.get("first_name", "User") if self.auth and self.auth.user_data else "User"
+        user = self.auth.current_user if self.auth else None
+        nombre_user = user.first_name if user else "User"
         
         self.lbl_name = QLabel(self.tr("{0} ({1})").format(nombre_user, rol))
         self.lbl_name.setObjectName("TopBarUserLabel")

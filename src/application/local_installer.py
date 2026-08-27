@@ -8,8 +8,8 @@
 
 The workspace-installation saga now lives in
 ``src.application.services.installation_service.InstallationService``. This
-class keeps the legacy ``LocalInstaller`` API for ``view_artist``,
-``project_card`` and ``widget_task_list``.
+class keeps the legacy ``LocalInstaller`` API for ``view_artist`` and
+``project_card``.
 """
 
 from pathlib import Path

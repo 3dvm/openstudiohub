@@ -52,38 +52,7 @@ class FetchArtistTasksWorker(QThread):
 
     def run(self):
         try:
-            user = self.auth.kitsu.get_current_user()
-            all_tasks = self.auth.kitsu.all_tasks_for_person(user)
-
-            status_targets = ["Todo", "Work In Progress", "Waiting For Approval", "Retake", "Ready To Start"]
-            tasks = [
-                t for t in all_tasks
-                if (t.get("task_status_name") in status_targets or
-                    t.get("task_status", {}).get("name") in status_targets)
-            ]
-
-            # --- NUEVO: ENRIQUECIMIENTO DEL TASK DATA ---
-            for t in tasks:
-                entity_type = t.get("entity_type_name", t.get("entity_type", "")).lower()
-
-                # Si la tarea pertenece a un Asset, Kitsu no nos da la subcategoría nativamente,
-                # así que debemos consultarla y empaquetarla nosotros.
-                if entity_type == "asset":
-                    try:
-                        # 1. Consultar el Asset real usando el entity_id
-                        asset_completo = self.auth.kitsu.get_asset(t["entity_id"])
-                        if asset_completo:
-                            # En Kitsu, el ID del 'Asset Type' se guarda como 'entity_type_id' dentro del Asset
-                            t["asset_type_id"] = asset_completo.get("entity_type_id", "")
-
-                            # 2. Opcional pero vital para tu PathResolver: Traer también el nombre del tipo
-                            asset_type = self.auth.kitsu.get_asset_type(t["asset_type_id"])
-                            if asset_type:
-                                t["asset_type_name"] = asset_type.get("name", "")
-                    except Exception as inner_e:
-                        print(f"[Worker] Advertencia: Fallo al enriquecer Asset: {inner_e}")
-            # --------------------------------------------
-
+            tasks = self.auth.production_service.get_artist_task_board()
             self.data_ready.emit(tasks)
         except Exception as e:
             self.error_occurred.emit(str(e))
@@ -105,7 +74,7 @@ class InstallProjectWorker(QThread):
         try:
             installer = LocalInstaller(self.project_root.parent, self.config_factory)
 
-            vcs_user = self.auth.user_data.get("email", "artist") if self.auth.user_data else "artist"
+            vcs_user = self.auth.current_user.email if self.auth.current_user else "artist"
             vcs_pwd = self.auth.get_current_token()
 
             total_steps = 7

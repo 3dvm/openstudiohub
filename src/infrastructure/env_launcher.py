@@ -9,7 +9,7 @@
 The DCC-launch saga now lives in
 ``src.application.services.launch_service.LaunchService``. This module-level
 function keeps the legacy ``lanzar_blender`` signature so existing callers
-(``view_artist``'s LaunchTaskWorker, ``widget_task_list``) keep working.
+(``view_artist``'s LaunchTaskWorker) keep working.
 """
 
 from pathlib import Path

@@ -38,12 +38,24 @@ from src.application.credential_vault import CredentialVault
 from src.infrastructure.config_factory import ConfigFactory
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
 from src.infrastructure.kitsu_manager import KitsuManager
+from src.domain.identity.value_objects import Role
 
 # --- UI (Vistas) ---
 from src.interfaces.qt.view_login import ViewLogin
 from src.interfaces.qt.view_artist import ViewArtist
 from src.interfaces.qt.view_td import ViewTD
 from src.interfaces.qt.view_pm import ViewPM
+
+
+def _select_dashboard(role: Role, position: str) -> str:
+    """Map an authenticated role/position to a dashboard ('td' | 'pm' | 'artist')."""
+    if role is Role.TD:
+        return "td"
+    if role is Role.MANAGER:
+        # A Kitsu 'manager' whose position is 'lead' is an Editor in the Hub.
+        return "artist" if position == "lead" else "pm"
+    return "artist"
+
 
 if getattr(sys, 'frozen', False):
     os.chdir(sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable))
@@ -123,51 +135,37 @@ class OpenStudioHub(QMainWindow):
             
         self.setWindowTitle(f"{studio_name} Hub - v{__version__}")
         
-        # Enrutamiento de Vistas (Factory)
-        rol = self.auth.get_user_role()
-        posicion = self.auth.get_user_position()
-
+        # Enrutamiento de Vistas (Role-based Factory)
+        role = self.auth.current_role()
+        position = self.auth.current_position()
         nas_dir = self.config_factory.get_workspace_root()
-        
-        if rol in ["td"]:
+
+        dashboard = _select_dashboard(role, position)
+        if dashboard == "td":
             self.vista_actual = ViewTD(
-                parent=self, 
-                auth_manager=self.auth, 
-                nas_dir=nas_dir, 
+                parent=self,
+                auth_manager=self.auth,
+                nas_dir=nas_dir,
                 vault_manager=self.vault,
                 config_factory=self.config_factory,
-                on_logout=self.ejecutar_logout
+                on_logout=self.ejecutar_logout,
             )
-        elif rol in ["manager"]:
-            # Función anónima para mapear el status_callback a la barra de estado de QMainWindow
-
-            if "lead" in posicion:
-                # EL INFILTRADO: Es un Manager en Kitsu, pero Artista (Editor) en el Hub
-                print("[OpenStudio Hub] Perfil Híbrido Detectado: Editor (Manager+Lead). Enrutando a ViewArtist.")
-                self.vista_actual = ViewArtist(
-                    self,
-                    self.auth,
-                    nas_dir,
-                    self.credential_vault,
-                    self.config_factory,
-                    self.ejecutar_logout)
-            else:
-                # El Production Manager real
-                self.vista_actual = ViewPM(
-                    parent=self,
-                    auth_manager=self.auth,
-                    config_factory=self.config_factory,
-                    credential_vault=self.credential_vault,
-                    on_logout=self.ejecutar_logout
-                )
+        elif dashboard == "pm":
+            self.vista_actual = ViewPM(
+                parent=self,
+                auth_manager=self.auth,
+                config_factory=self.config_factory,
+                credential_vault=self.credential_vault,
+                on_logout=self.ejecutar_logout,
+            )
         else:
             self.vista_actual = ViewArtist(
-                parent=self, 
-                auth_manager=self.auth, 
+                parent=self,
+                auth_manager=self.auth,
                 nas_dir=nas_dir,
                 credential_vault=self.credential_vault,
                 config_factory=self.config_factory,
-                on_logout=self.ejecutar_logout
+                on_logout=self.ejecutar_logout,
             )
 
         # 2. NUEVO: Implementamos el Sistema de Capas (Stack)

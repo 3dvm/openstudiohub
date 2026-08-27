@@ -36,7 +36,7 @@ class ProjectGridWorker(QThread):
 
     def run(self):
         try:
-            proyectos = self.auth.kitsu.get_all_projects()
+            proyectos = self.auth.production_service.list_open_projects()
             self.data_ready.emit(proyectos)
         except Exception as e:
             print(f"[ProjectList] Error retrieving projects: {e}")

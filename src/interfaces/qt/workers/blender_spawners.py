@@ -99,60 +99,6 @@ class BatchCreationWorker(QThread):
                     else:
                         self.log_stream.emit(f"[{display_name}] ✓ Physical file spawned.")
 
-                # base_progress = 10 + int((idx / total_ents) * 90)
-                # self.progress_updated.emit(base_progress, self.tr(f"Processing {e_type}: {e_name} ({idx+1}/{total_ents})"))
-                #
-                # self.log_stream.emit(f"\n[{e_name}] Spawning physical file via Headless Engine...")
-                #
-                # env = os.environ.copy()
-                # env["OPENSTUDIO_BUILD_TARGET"] = e_type # "ASSET" o "SHOT"
-                # env["OPENSTUDIO_PROJECT_ROOT"] = str(project_root)
-                # env["OPENSTUDIO_PRODUCTION_FOLDER"] = vfs_svn
-                # env["BLENDER_USER_RESOURCES"] = str(project_root / vfs_local / "blender_data")
-                # env["OPENSTUDIO_KITSU_PROJECT_ID"] = str(self.project_id)
-                # env["OPENSTUDIO_TARGET_ENTITY_ID"] = str(e_id) # <- ID Inyectado
-                # env["OPENSTUDIO_KITSU_ENTITY_NAME"] = str(e_name)
-                #
-                # # Inyectamos los datos del Asset Type que arreglamos en el ProductionManager
-                # env["OPENSTUDIO_KITSU_ASSET_TYPE_ID"] = str(entity.get("asset_type_id", ""))
-                # env["OPENSTUDIO_KITSU_ASSET_TYPE_NAME"] = str(entity.get("asset_type_name", ""))
-                #
-                # # Si llega a ser un Shot, enviamos el nombre de la secuencia (que está guardado en "parent")
-                # if e_type == "SHOT":
-                #     env["OPENSTUDIO_KITSU_SEQUENCE_NAME"] = str(entity.get("sequence_name", ""))
-                #     env["OPENSTUDIO_KITSU_TASK_TYPE_NAME"] = "Layout"
-                # # ----------------------------------------
-                #
-                # env["OPENSTUDIO_KITSU_HOST"] = self.config.get_kitsu_api_url()
-                # env["OPENSTUDIO_KITSU_USER"] = os.environ.get("OPENSTUDIO_KITSU_USER", "")
-                # env["OPENSTUDIO_KITSU_PWD"] = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
-                #  # --- DEBUG: VOLCADO COMPLETO DEL ENTORNO ---
-                # print("\n" + "="*60)
-                # print("🔍 AUDITORÍA COMPLETA DE VARIABLES DE ENTORNO")
-                # print("="*60)
-                #
-                # # Cambia 'clean_env' por 'env' si quieres ver el diccionario original
-                # for key, value in sorted(env.items()):
-                #     # Filtramos un poco para no imprimir las cientos de variables base del sistema, 
-                #     # y centrarnos solo en las inyectadas por OpenStudio o Blender.
-                #     if key.startswith("OPENSTUDIO_") or key.startswith("BLENDER_"):
-                #         print(f"[{key}]: '{value}'")
-                #
-                # print("="*60 + "\n")
-                # # -------------------------------------------
-                # script_path = Path(__file__).resolve().parent.parent.parent.parent / "infrastructure" / "templates" / "headless_builder.py"
-                # cmd = [str(blender_bin), "-b", "--python", str(script_path)]
-                #
-                # proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                # for line in proceso.stdout:
-                #     if line.strip(): self.log_stream.emit(f"    ↳ {line.strip()}")
-                # proceso.wait()
-                #
-                # if proceso.returncode != 0:
-                #     self.log_stream.emit(f"[{e_name}] ❌ ERROR: Blender Headless failed.")
-                # else:
-                #     self.log_stream.emit(f"[{e_name}] ✓ Physical file spawned.")
-
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
             self.finished_batch.emit(True, f"{total_ents} entities processed successfully.")
             

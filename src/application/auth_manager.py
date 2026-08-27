@@ -22,6 +22,8 @@ from typing import Dict, List, Optional, Tuple
 from src.application.ports import SessionRepository
 from src.application.services.auth_service import AuthService
 from src.application.services.production_service import ProductionService
+from src.domain.identity.entities import User
+from src.domain.identity.value_objects import Role
 from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.session_repository import FileSessionRepository
 
@@ -52,6 +54,18 @@ class AuthManager:
     @property
     def kitsu_host(self) -> str:
         return self.auth_service.host
+
+    @property
+    def current_user(self) -> Optional[User]:
+        """The authenticated user as a typed domain entity (or None)."""
+        return self.auth_service.current_user
+
+    def current_role(self) -> Role:
+        return self.auth_service.current_role()
+
+    def current_position(self) -> str:
+        user = self.auth_service.current_user
+        return user.position if user else ""
 
     # ------------------------------------------------------------------
     # Authentication

@@ -53,6 +53,50 @@ class ProductionService:
             print(f"[ProductionService] Error fetching assigned tasks: {error}")
             return []
 
+    def list_open_projects(self) -> List[dict]:
+        """Return all open projects (raw Kitsu dicts) for the project grid."""
+        try:
+            return self.kitsu.get_all_projects()
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error listing projects: {error}")
+            return []
+
+    def get_artist_task_board(self) -> List[dict]:
+        """Assigned tasks (filtered + asset-enriched) for the artist dashboard.
+
+        This moves the enrichment logic out of the UI worker into the
+        application layer.
+        """
+        try:
+            raw_user = self.kitsu.get_current_user()
+            all_tasks = self.kitsu.all_tasks_for_person(raw_user)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching artist tasks: {error}")
+            return []
+
+        status_targets = ["Todo", "Work In Progress", "Waiting For Approval", "Retake", "Ready To Start"]
+        tasks = [
+            task
+            for task in all_tasks
+            if task.get("task_status_name") in status_targets
+            or (task.get("task_status") or {}).get("name") in status_targets
+        ]
+
+        for task in tasks:
+            entity_type = (task.get("entity_type_name") or task.get("entity_type") or "").lower()
+            if entity_type == "asset":
+                try:
+                    asset = self.kitsu.get_asset(task["entity_id"])
+                    if asset:
+                        task["asset_type_id"] = asset.get("entity_type_id", "")
+                        asset_type = self.kitsu.get_asset_type(task["asset_type_id"])
+                        if asset_type:
+                            task["asset_type_name"] = asset_type.get("name", "")
+                except Exception as inner_error:  # noqa: BLE001
+                    print(f"[ProductionService] Warning: failed to enrich asset: {inner_error}")
+
+        return tasks
+
     def get_recent_activity(self, limit: int = 15) -> List[dict]:
         # TODO(Phase 3): implement against the ProductionRepository.
         return []
