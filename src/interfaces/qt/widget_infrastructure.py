@@ -25,7 +25,6 @@ from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QMessageBox, QGridLayout)
 from PySide6.QtCore import QThread, Signal
 
-from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.dev_defaults import (
     DEV_KITSU_ADMIN_EMAIL,
     DEV_KITSU_ADMIN_PASSWORD,
@@ -64,8 +63,9 @@ class KitsuSeederWorker(QThread):
     """Hilo dedicado a interactuar con la base de datos de Kitsu vía Gazu y línea de comandos."""
     finished_signal = Signal(bool, str)
 
-    def __init__(self, action: str):
+    def __init__(self, production_service, action: str):
         super().__init__()
+        self.production_service = production_service
         self.action = action
 
     def run(self):
@@ -82,12 +82,9 @@ class KitsuSeederWorker(QThread):
                 self.finished_signal.emit(True, f"Admin Creado: {DEV_KITSU_ADMIN_EMAIL} / {DEV_KITSU_ADMIN_PASSWORD}")
 
             elif self.action == "dummy":
-                # 2. Inyectamos a los usuarios Dummy consumiendo el Manager
-                kitsu_mgr = KitsuManager()
-                # Sobrescribimos temporalmente el host para apuntar al entorno de prueba local (Docker)
-                kitsu_mgr.set_host('http://localhost:8080/api')
-                
-                success, msg = kitsu_mgr.seed_test_database(
+                # 2. Inyectamos a los usuarios Dummy consumiendo el servicio
+                self.production_service.set_host('http://localhost:8080/api')
+                success, msg = self.production_service.seed_test_database(
                     admin_email=DEV_KITSU_ADMIN_EMAIL,
                     admin_pwd=DEV_KITSU_ADMIN_PASSWORD
                 )
@@ -101,9 +98,10 @@ class KitsuSeederWorker(QThread):
 
 
 class InfrastructureWidget(QFrame):
-    def __init__(self, parent, config_factory, status_callback, **kwargs):
+    def __init__(self, parent, config_factory, production_service, status_callback, **kwargs):
         super().__init__(parent, **kwargs)
         self.config_factory = config_factory
+        self.production_service = production_service
         self.status_callback = status_callback
         
         self.infra_dir = self.config_factory.get_workspace_root() / ".openstudio_infra"
@@ -460,7 +458,7 @@ networks:
     # ---------------------------------------------------------
     def _ejecutar_seeder(self, action: str):
         self.status_callback(self.tr("Ejecutando Seeder en la Base de Datos..."), "yellow")
-        self.seeder_worker = KitsuSeederWorker(action)
+        self.seeder_worker = KitsuSeederWorker(self.production_service, action)
         self.seeder_worker.finished_signal.connect(self._on_worker_finished)
         self.seeder_worker.finished.connect(self.seeder_worker.deleteLater)
         self.seeder_worker.start()

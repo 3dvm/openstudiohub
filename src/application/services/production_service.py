@@ -262,3 +262,28 @@ class ProductionService:
     def acknowledge_activity(self, task_id: str, comment_id: str) -> bool:
         # TODO(Phase 3): implement against the ProductionRepository.
         return True
+
+    # ------------------------------------------------------------------
+    # Project utilities / provisioning passthroughs (single Kitsu facade)
+    # ------------------------------------------------------------------
+    def set_host(self, host_url: str) -> None:
+        self.kitsu.set_host(host_url)
+
+    def list_templates(self) -> list:
+        try:
+            return self.kitsu.get_all_templates()
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching templates: {error}")
+            return []
+
+    def build_web_url(self, host_url: str, project_id: str, sub_path: str) -> str:
+        return self.kitsu.build_web_url(host_url, project_id, sub_path)
+
+    def delete_project(self, project_id: str) -> Tuple[bool, str]:
+        return self.kitsu.delete_project(project_id)
+
+    def download_project_thumbnail(self, project_id: str, token: str, host_url: str) -> Optional[bytes]:
+        return self.kitsu.download_project_thumbnail(project_id, token, host_url)
+
+    def seed_test_database(self, admin_email: str, admin_pwd: str) -> Tuple[bool, str]:
+        return self.kitsu.seed_test_database(admin_email=admin_email, admin_pwd=admin_pwd)

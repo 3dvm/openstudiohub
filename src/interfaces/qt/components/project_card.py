@@ -30,7 +30,6 @@ from PySide6.QtWidgets import (QFrame, QVBoxLayout, QHBoxLayout, QLabel,
 from PySide6.QtCore import Qt, QThread, Signal, QUrl
 from PySide6.QtGui import QPixmap, QImage, QCursor, QAction, QDesktopServices, QColor, QIcon
 
-from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.nas_manager import NasManager
 from src.application.local_installer import LocalInstaller
 from src.infrastructure.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
@@ -40,9 +39,9 @@ class ProjectThumbnailWorker(QThread):
     image_downloaded = Signal(bytes)
     error_occurred = Signal(str)
 
-    def __init__(self, kitsu_manager: KitsuManager, project_id: str, token: str, host_url: str):
+    def __init__(self, production_service, project_id: str, token: str, host_url: str):
         super().__init__()
-        self.kitsu_mgr = kitsu_manager
+        self.kitsu_mgr = production_service
         self.project_id = project_id
         self.token = token
         self.host_url = host_url
@@ -140,7 +139,7 @@ class ProjectCard(QFrame):
         self.status_callback = status_callback
         
         # Instanciar Controladores
-        self.kitsu_mgr = KitsuManager()
+        self.kitsu_mgr = self.auth.production_service
         self.nas_mgr = NasManager(nas_dir)
         
         self.project_dir = None

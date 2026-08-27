@@ -200,6 +200,7 @@ class ProjectListWidget(QFrame):
         self.wizard_window = NewProjectWindow(
             parent=self.window(),
             config_factory=self.config_factory,
+            production_service=self.auth.production_service,
             on_success_callback=self.cargar_proyectos
         )
         self.wizard_window.show()

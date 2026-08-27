@@ -25,15 +25,18 @@ from PySide6.QtCore import Qt, QThread, Signal
 
 from src.application.project_builder import ProjectBuilder
 from src.application.vault_manager import VaultManager
-from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
 class FetchKitsuTemplatesWorker(QThread):
     data_ready = Signal(list)
+
+    def __init__(self, production_service):
+        super().__init__()
+        self.production_service = production_service
+
     def run(self):
         try:
-            manager = KitsuManager()
-            self.data_ready.emit(manager.get_all_templates())
+            self.data_ready.emit(self.production_service.list_templates())
         except Exception as e:
             print(f"[FetchKitsuTemplatesWorker] Error de red: {e}")
             self.data_ready.emit([])
@@ -67,13 +70,14 @@ class ProjectCreationWorker(QThread):
         self.result.emit(exito, mensaje)
 
 class NewProjectWindow(QDialog):
-    def __init__(self, parent: QWidget, config_factory, on_success_callback):
+    def __init__(self, parent: QWidget, config_factory, production_service, on_success_callback):
         super().__init__(parent)
         self.setWindowTitle(self.tr("New Project"))
         self.setFixedSize(500, 700) # Más compacta sin los campos de Auth
         self.setModal(True)
         self.ruta_splash = ""
         self.config_factory = config_factory
+        self.production_service = production_service
         self.on_success = on_success_callback
         self.builder = ProjectBuilder(self.config_factory)
         self.vault_manager = VaultManager(self.config_factory)
@@ -113,7 +117,7 @@ class NewProjectWindow(QDialog):
         self.combo_kitsu_template.setEnabled(False)
         main_layout.addWidget(self.combo_kitsu_template)
         
-        self.worker_kitsu_templates = FetchKitsuTemplatesWorker()
+        self.worker_kitsu_templates = FetchKitsuTemplatesWorker(self.production_service)
         self.worker_kitsu_templates.data_ready.connect(self._on_kitsu_templates_loaded)
         self.worker_kitsu_templates.start()
 

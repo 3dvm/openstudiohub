@@ -81,6 +81,7 @@ class ViewTD(BaseDashboardView):
         self.vista_infra = InfrastructureWidget(
             parent=self.stacked_content,
             config_factory=self.config_factory,
+            production_service=self.auth.production_service,
             status_callback=self.actualizar_status
         )
         self.stacked_content.addWidget(self.vista_infra)
