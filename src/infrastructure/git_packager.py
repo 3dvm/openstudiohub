@@ -15,6 +15,7 @@ from PySide6.QtCore import QThread, Signal
 
 from src.infrastructure.manifest_manager import ManifestManager
 from src.domain.addon_parser import AddonParser
+from src.application.services.provisioning_service import ProvisioningService
 
 class StudioToolsPackagerWorker(QThread):
     """Clones the repo (resolving Git LFS), repacks internal addons individually, and registers valid ones."""
@@ -82,18 +83,13 @@ class StudioToolsPackagerWorker(QThread):
                             arcname = file_path.relative_to(addons_src_dir)
                             out_zf.write(file_path, arcname)
                 
-                # Validación vía AddonParser
+                # Validación y registro vía ProvisioningService
                 parsed = AddonParser.parse_zip(addon_zip_path)
-                if parsed["is_valid"]:
-                    if AddonParser.is_compatible(parsed["min_blender_version"], self.current_version):
-                        exito, msg = self.manifest_manager.register_addon(
-                            blender_version=self.current_version,
-                            addon_name=parsed["name"],
-                            addon_version=parsed["version"],
-                            source_zip=addon_zip_path
-                        )
-                        if exito:
-                            registered_count += 1
+                exito, _ = ProvisioningService.register_if_compatible(
+                    self.manifest_manager, parsed, self.current_version, addon_zip_path
+                )
+                if exito:
+                    registered_count += 1
                 
                 self.progress_updated.emit(int(((i + 1) / total) * 100))
             

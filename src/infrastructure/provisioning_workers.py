@@ -20,7 +20,7 @@ from pathlib import Path
 from html.parser import HTMLParser
 from PySide6.QtCore import Signal, QThread
 
-from src.domain.addon_inspector import AddonInspector
+from src.application.services.provisioning_service import ProvisioningService
 from src.infrastructure.manifest_manager import ManifestManager
 from src.domain.addon_parser import AddonParser
 
@@ -200,10 +200,6 @@ class StudioToolsFetchWorker(QThread):
             
             # 2. Creamos un diccionario para acumular lo que logramos registrar
             nuevos_addons_ram = {}
-            import os
-
-            addons_dir =self.vault_root / "addons"
-            addons_dir.mkdir(parents=True, exist_ok=True)
 
             for i, addon_dir in enumerate(addon_dirs):
                 self.status_update.emit(f"Empaquetando y validando {addon_dir.name}...", "yellow")
@@ -222,32 +218,13 @@ class StudioToolsFetchWorker(QThread):
                 
                 # Validación y Registro en la Bóveda
                 parsed = AddonParser.parse_zip(addon_zip_path)
-                if parsed["is_valid"]:
-                    if AddonParser.is_compatible(parsed["min_blender_version"], self.current_version):
-                        addon_name_parsed = parsed["name"]
-                        addon_ver_parsed = parsed["version"]
+                exito, entry = ProvisioningService.register_if_compatible(
+                    self.manifest_manager, parsed, self.current_version, addon_zip_path
+                )
+                if exito:
+                    registered_count += 1
+                    nuevos_addons_ram[parsed["name"]] = entry
 
-                        target_zip_name = f"{addon_name_parsed}-{addon_ver_parsed}.zip"
-                        target_zip_path = addons_dir / target_zip_name
-                        shutil.copy2(addon_zip_path, target_zip_path)
-
-                        exito, msg = self.manifest_manager.register_addon(
-                            blender_version=self.current_version,
-                            addon_name=addon_name_parsed,
-                            addon_version=addon_ver_parsed,
-                            source_zip=target_zip_path
-                        )
-                        if exito:
-                            registered_count += 1
-                            # 3. Guardamos los datos con la misma estructura que usa TabSoftware
-                            desc = parsed.get("description", "Blender Studio Tool")
-                            nuevos_addons_ram[addon_name_parsed] = {
-                                "version": addon_ver_parsed,
-                                "description": desc[:60] + "..." if len(desc) > 60 else desc,
-                                "mandatory": False,
-                                "requires": []
-                            }
-                            
                 self.progress_updated.emit(30 + int(((i + 1) / total_addons) * 70))
                 
             self.status_update.emit(f"✓ Studio Tools Auto-Fetch completado. {registered_count} add-ons registrados.", "green")
