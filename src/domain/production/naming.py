@@ -21,6 +21,8 @@ Names are slugified (lowercase, spaces -> underscores). This intentionally
 unifies the previously inconsistent per-module casing/separator behavior.
 """
 
+import re
+
 from .value_objects import EntityType, FilePath
 
 
@@ -28,6 +30,15 @@ class NamingPolicy:
     @staticmethod
     def slug(name: str) -> str:
         return (name or "").strip().lower().replace(" ", "_")
+
+    @staticmethod
+    def sanitize_name(raw: str) -> str:
+        """Lowercase + underscores and strip non-alphanumeric (Kitsu name sanitization)."""
+        if not raw:
+            return ""
+        name = raw.lower().replace(" ", "_")
+        name = re.sub(r"[^a-z0-9_\-]", "", name)
+        return re.sub(r"_+", "_", name)
 
     @staticmethod
     def project_slug(name: str) -> str:

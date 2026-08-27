@@ -13,9 +13,10 @@ from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices, QColor
 
 from src.application.production_manager import ProductionManager
+from src.domain.production.naming import NamingPolicy
 from src.interfaces.qt.components.pipeline_wizard import PipelineWizardWidget
 from src.interfaces.qt.components.progress_dialog import SpawningProgressDialog
-from src.interfaces.qt.workers.api_queries import FetchProjectsWorker, FetchEntitiesWorker, FetchSequencesWorker, FetchEditStatusWorker, FetchAssetsWorker, FetchShotsWorker, sanitize_kitsu_name
+from src.interfaces.qt.workers.api_queries import FetchProjectsWorker, FetchEntitiesWorker, FetchSequencesWorker, FetchEditStatusWorker, FetchAssetsWorker, FetchShotsWorker
 from src.interfaces.qt.workers.blender_spawners import BatchCreationWorker, MasterSpawningWorker, StoryboardBatchWorker
 
 class WidgetBlendBuilder(QFrame):
@@ -268,7 +269,7 @@ class WidgetBlendBuilder(QFrame):
         raw_seq_name = self.input_seq.text().strip().upper()
         if not raw_seq_name: return
 
-        seq_name = sanitize_kitsu_name(raw_seq_name)
+        seq_name = NamingPolicy.sanitize_name(raw_seq_name)
 
         for i in range(self.list_sequences.count()):
             item = self.list_sequences.item(i)
@@ -291,7 +292,7 @@ class WidgetBlendBuilder(QFrame):
         self.combo_projects.blockSignals(True)
         self.combo_projects.addItem(self.tr("Loading projects..."))
         
-        self.worker_projects = FetchProjectsWorker()
+        self.worker_projects = FetchProjectsWorker(self.auth.production_service)
         self.worker_projects.data_ready.connect(self._on_projects_loaded)
         self.worker_projects.error_occurred.connect(lambda e: self.status_callback(f"Project fetch error: {e}", "red"))
         self.worker_projects.start()
@@ -337,7 +338,7 @@ class WidgetBlendBuilder(QFrame):
         folder_name = project_name.strip().lower().replace(" ", "-")
         project_root = nas_root / folder_name
         
-        self.worker_edit = FetchEditStatusWorker(self.current_project_id, project_name, project_root, vfs_svn)
+        self.worker_edit = FetchEditStatusWorker(self.auth.production_service, self.current_project_id, project_name, project_root, vfs_svn)
         self.worker_edit.data_ready.connect(self._render_editorial_status)
         self.worker_edit.error_occurred.connect(lambda e: self.status_callback(f"Edit fetch error: {e}", "red"))
         self.worker_edit.start()
@@ -355,7 +356,7 @@ class WidgetBlendBuilder(QFrame):
         folder_name = project_name.strip().lower().replace(" ", "-")
         project_root = nas_root / folder_name
         
-        self.worker_assets = FetchAssetsWorker(self.current_project_id, project_root, vfs_svn)
+        self.worker_assets = FetchAssetsWorker(self.auth.production_service, self.current_project_id, project_root, vfs_svn)
         self.worker_assets.data_ready.connect(self._render_assets)
         self.worker_assets.error_occurred.connect(lambda e: self.status_callback(f"Asset fetch error: {e}", "red"))
         self.worker_assets.start()
@@ -437,7 +438,7 @@ class WidgetBlendBuilder(QFrame):
         folder_name = project_name.strip().lower().replace(" ", "-")
         project_root = nas_root / folder_name
 
-        self.worker_entities = FetchShotsWorker(self.current_project_id, project_root, vfs_svn)
+        self.worker_entities = FetchShotsWorker(self.auth.production_service, self.current_project_id, project_root, vfs_svn)
         self.worker_entities.data_ready.connect(self._render_shots)
         self.worker_entities.error_occurred.connect(lambda e: self.status_callback(f"Shot fetch error: {e}", "red"))
         self.worker_entities.start()
@@ -527,7 +528,7 @@ class WidgetBlendBuilder(QFrame):
         folder_name = project_name.strip().lower().replace(" ", "-")
         project_root = nas_root / folder_name
         
-        self.worker_seqs = FetchSequencesWorker(self.current_project_id, project_root, vfs_svn)
+        self.worker_seqs = FetchSequencesWorker(self.auth.production_service, self.current_project_id, project_root, vfs_svn)
         self.worker_seqs.data_ready.connect(self._render_sequences)
         self.worker_seqs.error_occurred.connect(lambda e: self.status_callback(f"Seq fetch error: {e}", "red"))
         self.worker_seqs.start()

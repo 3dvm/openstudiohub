@@ -12,8 +12,12 @@ with typed domain entities (Project/Shot/Asset/Task); for now they keep their
 existing behavior so consumers are unchanged.
 """
 
-from typing import Dict, List, Optional
+import glob
+import re
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
+from src.domain.production.naming import NamingPolicy
 from src.infrastructure.kitsu_manager import KitsuManager
 
 
@@ -96,6 +100,160 @@ class ProductionService:
                     print(f"[ProductionService] Warning: failed to enrich asset: {inner_error}")
 
         return tasks
+
+    def list_all_projects(self) -> List[dict]:
+        """Return all projects (open + closed) for the project grid."""
+        try:
+            return self.kitsu.all_projects()
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error listing all projects: {error}")
+            return []
+
+    def audit_shots(self, project_id: str, project_root: Path, vfs_svn: str) -> Tuple[List[dict], List[str]]:
+        """Cross-reference shots/tasks against physical files (PM batch audit)."""
+        shots = self.kitsu.all_shots_for_project(project_id)
+        sequences = self.kitsu.all_sequences_for_project(project_id)
+        all_tasks = self.kitsu.all_tasks_for_project(project_id)
+        task_types = self.kitsu.all_task_types()
+
+        seq_map = {seq["id"]: seq["name"] for seq in sequences}
+        tt_map = {tt["id"]: tt["name"] for tt in task_types}
+
+        tasks_by_entity: Dict[str, list] = {}
+        for task in all_tasks:
+            tasks_by_entity.setdefault(task.get("entity_id"), []).append(task)
+
+        result = []
+        project_task_types = set()
+
+        for shot in shots:
+            shot_id = shot["id"]
+            shot_tasks = tasks_by_entity.get(shot_id, [])
+            shot_tasks_data = {}
+            shot_has_all_files = bool(shot_tasks)
+
+            for task in shot_tasks:
+                tt_name = tt_map.get(task["task_type_id"], "Unknown")
+                project_task_types.add(tt_name)
+
+                task_data = task.get("data") or {}
+                kitsu_filepath = task_data.get("filepath")
+                has_file = bool(kitsu_filepath) and (project_root / vfs_svn / kitsu_filepath).exists()
+
+                shot_tasks_data[tt_name] = {"task_id": task["id"], "has_file": has_file, "raw_task": task}
+                if not has_file:
+                    shot_has_all_files = False
+
+            result.append({
+                "id": shot_id,
+                "name": shot.get("name", "Unknown"),
+                "type": "Shot",
+                "parent": seq_map.get(shot.get("parent_id"), "Unknow"),
+                "frame_in": shot.get("nb_frames", 0),
+                "tasks": shot_tasks_data,
+                "has_file": shot_has_all_files,
+                "raw_data": shot,
+            })
+
+        return result, list(project_task_types)
+
+    def audit_sequences(self, project_id: str, project_root: Path, vfs_svn: str) -> List[dict]:
+        """Check storyboard .blend existence for each sequence."""
+        sequences = self.kitsu.all_sequences_for_project(project_id)
+        result = []
+        for seq in sequences:
+            name = seq.get("name", "").upper()
+            file_path = project_root / vfs_svn / "edit" / "storyboards" / f"{name.lower()}-storyboard.blend"
+            result.append({"name": name, "has_file": file_path.exists()})
+        return result
+
+    def audit_assets(self, project_id: str, project_root: Path, vfs_svn: str) -> List[dict]:
+        """Audit assets against physical files and normalize dirty names in Kitsu."""
+        assets = self.kitsu.all_assets_for_project(project_id)
+        asset_types_map = {at["id"]: at for at in self.kitsu.all_asset_types()}
+
+        result = []
+        for asset in assets:
+            raw_name = asset.get("name", "Unknown")
+            clean_name = NamingPolicy.sanitize_name(raw_name)
+
+            has_file = False
+            asset_data = asset.get("data") or {}
+            kitsu_filepath = asset_data.get("filepath")
+            if kitsu_filepath:
+                physical_path = project_root / vfs_svn / kitsu_filepath
+                has_file = physical_path.exists()
+                if not has_file:
+                    print(f"[AUDITORIA ASSETS] ⚠️ Ruta registrada en Kitsu, pero no existe en disco: {physical_path}")
+
+            type_id = asset.get("entity_type_id")
+            if type_id and type_id in asset_types_map:
+                asset["asset_type_id"] = type_id
+                asset["asset_type_name"] = asset_types_map[type_id].get("name", "")
+            else:
+                asset["asset_type_id"] = ""
+                asset["asset_type_name"] = ""
+
+            final_name = raw_name
+            if not has_file and raw_name != clean_name:
+                try:
+                    asset["name"] = clean_name
+                    self.kitsu.update_asset(asset)
+                    final_name = clean_name
+                except Exception as error:  # noqa: BLE001
+                    print(f"⚠️ Error actualizando nombre en Kitsu para {raw_name}: {error}")
+
+            asset["name"] = final_name
+            result.append({
+                "id": asset["id"],
+                "name": final_name,
+                "type": asset["asset_type_name"],
+                "has_file": has_file,
+                "raw_data": asset,
+            })
+
+        return result
+
+    def audit_edit(self, project_id: str, project_name: str, project_root: Path, vfs_svn: str) -> dict:
+        """Audit the master Edit entity against physical .blend files."""
+        edits = self.kitsu.all_edits_for_project(project_id)
+        main_edit = edits[0] if edits else None
+
+        status_name = "Not Created"
+        assignees_names = "Unassigned"
+
+        if main_edit:
+            tasks = self.kitsu.all_tasks_for_edit(main_edit["id"])
+            task = tasks[0] if tasks else None
+            if task:
+                status_name = (task.get("task_status") or {}).get("name", "N/A")
+                assignees = task.get("assignees", [])
+                if assignees:
+                    assignees_names = ", ".join([a.get("full_name", "Unknown") for a in assignees])
+
+        edit_dir = project_root / vfs_svn / "edit"
+        has_file = False
+        file_name = "File not found"
+        version = "N/A"
+
+        if edit_dir.exists():
+            blend_files = [f for f in glob.glob(str(edit_dir / "*.blend")) if "blend1" not in f]
+            if blend_files:
+                has_file = True
+                blend_files.sort()
+                latest_file = Path(blend_files[-1])
+                file_name = latest_file.name
+                match = re.search(r"(v\d+)", file_name, re.IGNORECASE)
+                if match:
+                    version = match.group(1).lower()
+
+        return {
+            "has_file": has_file,
+            "file_name": file_name,
+            "version": version,
+            "assignees": assignees_names,
+            "status": status_name,
+        }
 
     def get_recent_activity(self, limit: int = 15) -> List[dict]:
         # TODO(Phase 3): implement against the ProductionRepository.

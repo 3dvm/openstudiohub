@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
-from src.infrastructure.kitsu_manager import KitsuManager
+from src.domain.shared_kernel.env_contract import SandboxEnvironment
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
 
@@ -65,26 +65,26 @@ class BatchCreationWorker(QThread):
                     
                     self.log_stream.emit(f"\n[{display_name}] Spawning physical file via Headless Engine...")
                     
-                    env = os.environ.copy()
-                    env["OPENSTUDIO_BUILD_TARGET"] = e_type 
-                    env["OPENSTUDIO_PROJECT_ROOT"] = str(project_root)
-                    env["OPENSTUDIO_PRODUCTION_FOLDER"] = vfs_svn
-                    env["BLENDER_USER_RESOURCES"] = str(project_root / vfs_local / "blender_data")
-                    env["OPENSTUDIO_KITSU_PROJECT_ID"] = str(self.project_id)
-                    env["OPENSTUDIO_TARGET_ENTITY_ID"] = str(e_id) 
-                    env["OPENSTUDIO_KITSU_ENTITY_NAME"] = str(e_name)
-                    
-                    env["OPENSTUDIO_KITSU_ASSET_TYPE_ID"] = str(entity.get("asset_type_id", ""))
-                    env["OPENSTUDIO_KITSU_ASSET_TYPE_NAME"] = str(entity.get("asset_type_name", ""))
-
-                    # Inyección dinámica de la secuencia y el tipo de tarea
+                    sandbox = SandboxEnvironment(
+                        build_target=e_type,
+                        project_root=str(project_root),
+                        production_folder=vfs_svn,
+                        blender_user_resources=str(project_root / vfs_local / "blender_data"),
+                        kitsu_project_id=str(self.project_id),
+                        target_entity_id=str(e_id),
+                        kitsu_entity_name=str(e_name),
+                        kitsu_asset_type_id=str(entity.get("asset_type_id", "")),
+                        kitsu_asset_type_name=str(entity.get("asset_type_name", "")),
+                        kitsu_host=self.config.get_kitsu_api_url(),
+                        kitsu_user=os.environ.get("OPENSTUDIO_KITSU_USER", ""),
+                        kitsu_pwd=os.environ.get("OPENSTUDIO_KITSU_PWD", ""),
+                    )
                     if e_type == "SHOT":
-                        env["OPENSTUDIO_KITSU_SEQUENCE_NAME"] = str(entity.get("parent", ""))
-                        env["OPENSTUDIO_KITSU_TASK_TYPE_NAME"] = str(t_name) 
-                    
-                    env["OPENSTUDIO_KITSU_HOST"] = self.config.get_kitsu_api_url()
-                    env["OPENSTUDIO_KITSU_USER"] = os.environ.get("OPENSTUDIO_KITSU_USER", "")
-                    env["OPENSTUDIO_KITSU_PWD"] = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
+                        sandbox.kitsu_sequence_name = str(entity.get("parent", ""))
+                        sandbox.kitsu_task_type_name = str(t_name)
+
+                    env = os.environ.copy()
+                    env.update(sandbox.to_os_environ())
                     
                     script_path = Path(__file__).resolve().parent.parent.parent.parent / "infrastructure" / "templates" / "headless_builder.py"
                     cmd = [str(blender_bin), "-b", "--python", str(script_path)]
@@ -129,20 +129,18 @@ class MasterSpawningWorker(QThread):
             blender_bin = BlenderLocator.resolve(base_blender_dir)
 
             self.progress_updated.emit(20, self.tr("Preparing environment variables..."))
+            sandbox = SandboxEnvironment(
+                build_target=self.build_target,
+                project_root=str(project_root),
+                production_folder=self.config.get_vfs_svn_name(),
+                blender_user_resources=str(project_root / vfs_local / "blender_data"),
+                kitsu_project_id=str(self.project_id),
+                kitsu_host=self.config.get_kitsu_api_url(),
+                kitsu_user=os.environ.get("OPENSTUDIO_KITSU_USER", ""),
+                kitsu_pwd=os.environ.get("OPENSTUDIO_KITSU_PWD", ""),
+            )
             env = os.environ.copy()
-            
-            # --- INYECCIÓN DE DEPENDENCIAS ---
-            env["OPENSTUDIO_BUILD_TARGET"] = self.build_target
-            env["OPENSTUDIO_PROJECT_ROOT"] = str(project_root)
-            env["OPENSTUDIO_PRODUCTION_FOLDER"] = self.config.get_vfs_svn_name()
-            env["BLENDER_USER_RESOURCES"] = str(project_root / vfs_local / "blender_data")
-            env["OPENSTUDIO_KITSU_PROJECT_ID"] = str(self.project_id)
-            
-            # --- CÓDIGO CORREGIDO ---
-            env["OPENSTUDIO_KITSU_HOST"] = self.config.get_kitsu_api_url()
-            env["OPENSTUDIO_KITSU_USER"] = os.environ.get("OPENSTUDIO_KITSU_USER", "")
-            env["OPENSTUDIO_KITSU_PWD"] = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
-            # ----------------------------------------
+            env.update(sandbox.to_os_environ())
             
             script_path = Path(__file__).resolve().parent.parent.parent.parent / "infrastructure" / "templates" / "headless_builder.py"
             
@@ -184,7 +182,6 @@ class StoryboardBatchWorker(QThread):
         self.project_id = project_id
         self.project_name = project_name
         self.sequence_names = sequence_names
-        self.kitsu = KitsuManager()
 
     def run(self):
         try:
@@ -208,61 +205,29 @@ class StoryboardBatchWorker(QThread):
                 base_progress = 10 + int((idx / total_seqs) * 90)
                 self.progress_updated.emit(base_progress, self.tr(f"Processing Sequence: {seq_name} ({idx+1}/{total_seqs})"))
                 
-                self.log_stream.emit(f"\n[{seq_name}] Registering Entity and Task in Kitsu API...")
-                existing_seq = self.kitsu.get_sequence_by_name(self.project_id, seq_name)
-                
-                if not existing_seq:
-                    existing_seq = self.pm_core.create_sequence_with_task(self.project_id, seq_name, tt_id)
-                    self.log_stream.emit(f"[{seq_name}] ✓ Kitsu database updated.")
-                else:
-                    self.log_stream.emit(f"[{seq_name}] ⚠️ Sequence already exists. Skipping Kitsu creation.")
-               
                 vfs_svn = self.config.get_vfs_svn_name()
-                
-                try:
-                    storyboard_tt = self.pm_core.get_or_create_storyboard_task_type(self.project_id)
-                    task = self.kitsu.get_task_by_entity(existing_seq, storyboard_tt)
-                    
-                    if task is None:
-                        self.log_stream.emit(f"[{seq_name}] Tarea no encontrada. Creando nueva tarea 'main'...")
-                        default_status = self.kitsu.get_default_task_status()
-                        task = self.kitsu.new_task(existing_seq, storyboard_tt, name="main", task_status=default_status)
-                    
-                    rel_path = f"{vfs_svn}/edit/storyboards/{seq_name.lower()}-storyboard.blend"
-                    
-                    seq_data = existing_seq.get("data")
-                    if not seq_data:
-                        seq_data = {}
-
-                    seq_data["blend_file_path"] = rel_path
-                    self.kitsu.update_sequence_data(existing_seq["id"], seq_data)
-                    self.log_stream.emit(f"[{seq_name}] ✓ File path saved in Sequence metadata: {rel_path}")
-                    
-                    software = self.kitsu.get_software_by_name("Blender")
-                    if software and task:
-                        self.kitsu.new_working_file(task, software, name=rel_path)
-                        
-                    self.log_stream.emit(f"[{seq_name}] ✓ File path mapped to Kitsu Task.")
-                except Exception as e:
-                    self.log_stream.emit(f"[{seq_name}] ⚠️ Fallo al mapear archivo en Kitsu: {e}")
+                self.log_stream.emit(f"\n[{seq_name}] Registering Entity and Task in Kitsu API...")
+                seq = self.pm_core.register_storyboard_sequence(self.project_id, seq_name, tt_id, vfs_svn)
+                if seq:
+                    self.log_stream.emit(f"[{seq_name}] ✓ Kitsu database and file mapping updated.")
+                else:
+                    self.log_stream.emit(f"[{seq_name}] ⚠️ Failed to register sequence in Kitsu.")
 
                 self.log_stream.emit(f"[{seq_name}] Spawning physical .blend file via Headless Engine...")
                 
+                sandbox = SandboxEnvironment(
+                    build_target="STORYBOARD",
+                    project_root=str(project_root),
+                    production_folder=vfs_svn,
+                    blender_user_resources=str(project_root / vfs_local / "blender_data"),
+                    target_sequence=seq_name,
+                    kitsu_project_id=str(self.project_id),
+                    kitsu_host=self.config.get_kitsu_api_url(),
+                    kitsu_user=os.environ.get("OPENSTUDIO_KITSU_USER", ""),
+                    kitsu_pwd=os.environ.get("OPENSTUDIO_KITSU_PWD", ""),
+                )
                 env = os.environ.copy()
-                
-                # --- INYECCIÓN DE DEPENDENCIAS ---
-                env["OPENSTUDIO_BUILD_TARGET"] = "STORYBOARD"
-                env["OPENSTUDIO_PROJECT_ROOT"] = str(project_root)
-                env["OPENSTUDIO_PRODUCTION_FOLDER"] = vfs_svn
-                env["BLENDER_USER_RESOURCES"] = str(project_root / vfs_local / "blender_data")
-                env["OPENSTUDIO_TARGET_SEQUENCE"] = seq_name 
-                env["OPENSTUDIO_KITSU_PROJECT_ID"] = str(self.project_id)
-                
-                # --- CÓDIGO CORREGIDO ---
-                env["OPENSTUDIO_KITSU_HOST"] = self.config.get_kitsu_api_url()
-                env["OPENSTUDIO_KITSU_USER"] = os.environ.get("OPENSTUDIO_KITSU_USER", "")
-                env["OPENSTUDIO_KITSU_PWD"] = os.environ.get("OPENSTUDIO_KITSU_PWD", "")
-                # ----------------------------------------
+                env.update(sandbox.to_os_environ())
                 
                 script_path = Path(__file__).resolve().parent.parent.parent.parent / "infrastructure" / "templates" / "headless_builder.py"
                 cmd = [str(blender_bin), "-b", "--python", str(script_path)]

@@ -40,3 +40,26 @@ def test_get_artist_task_board_filters_and_enriches():
     asset_task = next(t for t in tasks if t["id"] == "t2")
     assert asset_task["asset_type_id"] == "at1"
     assert asset_task["asset_type_name"] == "Character"
+
+
+def test_audit_assets_renames_dirty_names(tmp_path):
+    class FakeKitsuAssets:
+        def __init__(self):
+            self.updated = None
+
+        def all_assets_for_project(self, project_id):
+            return [{"id": "a1", "name": "My Asset", "entity_type_id": "at1", "data": {}}]
+
+        def all_asset_types(self):
+            return [{"id": "at1", "name": "Character"}]
+
+        def update_asset(self, asset):
+            self.updated = asset
+            return asset
+
+    kitsu = FakeKitsuAssets()
+    result = ProductionService(kitsu).audit_assets("p1", tmp_path, "svn")
+
+    assert result[0]["name"] == "my_asset"
+    assert result[0]["type"] == "Character"
+    assert kitsu.updated["name"] == "my_asset"

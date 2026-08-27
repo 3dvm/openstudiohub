@@ -195,3 +195,38 @@ class ProductionManager:
         default_status = self.kitsu.get_default_task_status()
         self.kitsu.new_task(entity=sequence, task_type=task_type_id, name="main", task_status=default_status)
         return sequence
+
+    def register_storyboard_sequence(self, project_id: str, sequence_name: str, storyboard_tt_id: str, vfs_svn: str) -> Optional[dict]:
+        """Get-or-create a sequence + storyboard task and map its file path in Kitsu.
+
+        Extracted from the StoryboardBatchWorker so the UI worker no longer
+        writes to Kitsu directly.
+        """
+        try:
+            sequence = self.kitsu.get_sequence_by_name(project_id, sequence_name)
+            if not sequence:
+                sequence = self.create_sequence_with_task(project_id, sequence_name, storyboard_tt_id)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionManager] Error registering sequence {sequence_name}: {error}")
+            return None
+
+        rel_path = f"{vfs_svn}/edit/storyboards/{sequence_name.lower()}-storyboard.blend"
+
+        try:
+            storyboard_tt = self.get_or_create_storyboard_task_type(project_id)
+            task = self.kitsu.get_task_by_entity(sequence, storyboard_tt)
+            if task is None:
+                default_status = self.kitsu.get_default_task_status()
+                task = self.kitsu.new_task(sequence, storyboard_tt, name="main", task_status=default_status)
+
+            seq_data = sequence.get("data") or {}
+            seq_data["blend_file_path"] = rel_path
+            self.kitsu.update_sequence_data(sequence["id"], seq_data)
+
+            software = self.kitsu.get_software_by_name("Blender")
+            if software and task:
+                self.kitsu.new_working_file(task, software, name=rel_path)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionManager] Error mapping storyboard file for {sequence_name}: {error}")
+
+        return sequence
