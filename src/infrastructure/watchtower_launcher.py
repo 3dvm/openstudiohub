@@ -66,28 +66,28 @@ class WatchtowerLauncher(QObject):
 
         self.status_callback("Watchtower: Extrayendo datos desde la API de Kitsu...", "yellow")
 
-        # 2. Inyectar Credenciales JIT (Zero-Disk) en el subproceso
+        # 2. Inyectar credenciales JIT en un .env temporal (0o600, siempre eliminado).
+        #    NOTE: watchtower_pipeline reads a dotenv file, so the password touches disk
+        #    only for the subprocess lifetime; it is removed in `finally` on every path.
         env_file_path = wt_dir / ".env.local"
-        env_content=(
-                f"KITSU_DATA_SOURCE_URL={self.kitsu_host}/api\n"
-                f"KITSU_DATA_SOURCE_USER_EMAIL={self.kitsu_user}\n"
-                f"KITSU_DATA_SOURCE_USER_PASSWORD={self.kitsu_pwd}\n"
+        env_content = (
+            f"KITSU_DATA_SOURCE_URL={self.kitsu_host}/api\n"
+            f"KITSU_DATA_SOURCE_USER_EMAIL={self.kitsu_user}\n"
+            f"KITSU_DATA_SOURCE_USER_PASSWORD={self.kitsu_pwd}\n"
         )
 
         # 3. Ejecutar el compilador (watchtower_pipeline.kitsu -b)
         try:
-            with open(env_file_path, "w", encoding="utf-8") as f:
-                f.write(env_content)
+            fd = os.open(env_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                handle.write(env_content)
+
             cmd = [sys.executable, "-m", "watchtower_pipeline.kitsu", "-b"]
             # Redirigimos el CWD al directorio temporal
             result = subprocess.run(cmd, cwd=str(wt_dir), capture_output=True, text=True)
 
-            if env_file_path.exists():
-                env_file_path.unlink()
-
             if result.returncode != 0:
                 self.status_callback("Watchtower: Error al procesar datos de Kitsu.", "red")
-                #print(f"[WATCHTOWER ERROR]\n{result.stderr}")
                 print("[WATCHTOWER ERROR DETALLADO]")
                 print(f"--- STDOUT ---\n{result.stdout}")
                 print(f"--- STDERR ---\n{result.stderr}")
@@ -99,12 +99,15 @@ class WatchtowerLauncher(QObject):
             # 4. Iniciar el servidor local apuntando al bundle generado
             serve_dir = wt_dir / "watchtower"
             if not serve_dir.exists():
-                serve_dir = wt_dir # Fallback en caso de que la API de watchtower cambie
+                serve_dir = wt_dir  # Fallback en caso de que la API de watchtower cambie
 
             self._start_ephemeral_server(serve_dir)
 
         except Exception as e:
             self.status_callback(f"Watchtower: Fallo crítico en subproceso: {e}", "red")
+        finally:
+            if env_file_path.exists():
+                env_file_path.unlink()
 
     def _start_ephemeral_server(self, serve_dir: Path):
         """Levanta un SimpleHTTPRequestHandler y abre el navegador del OS."""
