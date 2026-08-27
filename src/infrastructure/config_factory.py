@@ -19,17 +19,17 @@ Strictly encapsulates Fallback logic (Defaults) to keep UI components decoupled.
 
 import json
 import platform
-import base64
-import zlib
 from pathlib import Path
 
 from src.domain.workspace.topography import WorkspaceTopography
+from src.infrastructure.seed_engine import StudioSeedService
 
 class ConfigFactory:
     def __init__(self, config_path: Path):
         self.config_path = config_path
         self._config = {}
         self._volatile_identity = {}  # Volatile RAM cache for Kitsu identity
+        self._seed_service = StudioSeedService(self)
         self._load_config()
 
     def _load_config(self):
@@ -53,63 +53,12 @@ class ConfigFactory:
     # ---------------------------------------------------------
 
     def exportar_semilla(self, payload: dict, destino_dir: Path) -> tuple[bool, str]:
-        """
-        Packages, compresses, and obfuscates global configuration into a .seed file.
-        Dynamically generates filename based on studio identity.
-        """
-        try:
-            # 1. Dynamic Naming and Sanitization
-            studio_name = payload.get("studio_profile", {}).get("name", "").strip()
-            if not studio_name:
-                studio_name = "openstudio"
-            
-            safe_name = "".join(c if c.isalnum() else "_" for c in studio_name).lower()
-            
-            import re
-            safe_name = re.sub(r'_+', '_', safe_name).strip('_')
-            
-            seed_filename = f"{safe_name}.seed"
-            seed_path = destino_dir / seed_filename
-
-            # 2. Serialize and Obfuscate (JSON -> ZLIB -> BASE64)
-            json_str = json.dumps(payload)
-            compressed_bytes = zlib.compress(json_str.encode('utf-8'))
-            encoded_str = base64.b64encode(compressed_bytes).decode('utf-8')
-
-            # 3. Isolated Atomic Write
-            with open(seed_path, 'w', encoding='utf-8') as f:
-                f.write(encoded_str)
-
-            return True, str(seed_path)
-            
-        except Exception as e:
-            error_msg = f"Failed to export seed: {e}"
-            print(f"[SEED ENGINE ERROR] {error_msg}")
-            return False, error_msg
+        """DEPRECATED: delegates to StudioSeedService."""
+        return self._seed_service.export_seed(payload, destino_dir)
 
     def importar_semilla(self, seed_path: Path) -> bool:
-        """
-        Reads, decodes, and decompresses a .seed file, injecting it into local environment.
-        This is the dispatcher called by the Login view on Day 0.
-        """
-        try:
-            if not seed_path.exists():
-                return False
-            
-            with open(seed_path, 'r', encoding='utf-8') as f:
-                encoded_str = f.read()
-
-            # Reverse Flow: BASE64 -> ZLIB -> JSON
-            compressed_bytes = base64.b64decode(encoded_str)
-            json_str = zlib.decompress(compressed_bytes).decode('utf-8')
-            payload = json.loads(json_str)
-
-            # Persist automatically using native CRUD
-            return self.guardar_configuracion(payload, from_seed=True)
-            
-        except Exception as e:
-            print(f"[SEED ENGINE ERROR] Integrity failure during seed import: {e}")
-            return False
+        """DEPRECATED: delegates to StudioSeedService."""
+        return self._seed_service.import_seed(seed_path)
 
     def purgar_configuracion_local(self) -> bool:
         """Destroys local settings.json returning the Hub to Day 0 state."""

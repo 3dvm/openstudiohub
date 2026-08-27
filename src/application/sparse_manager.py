@@ -17,11 +17,11 @@ a la capa de abstracción VCS de forma iterativa y recursiva leyendo los
 manifiestos de dependencias locales (*-meta.json).
 """
 
-import os
 import json
 from pathlib import Path
 from typing import Dict, Callable, List, Set
 from src.domain.path_resolver import PathResolver
+from src.domain.workspace.jailing import JailingPolicy
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
 class SparseManager:
@@ -119,24 +119,14 @@ class SparseManager:
                         data = json.load(f)
                     
                     deps = data.get("dependencies", [])
+                    rel_dir = meta_file.parent.relative_to(adapter.workspace_dir)
                     for dep in deps:
-                        if dep.startswith("//"):
-                            # Limpiar la sintaxis relativa de Blender
-                            rel_to_blend = dep[2:] 
-                            # Determinar ruta relativa al repositorio (SVN root)
-                            rel_dir = meta_file.parent.relative_to(adapter.workspace_dir)
-                            
-                            # Normalizar la ruta final uniendo la base del meta con el destino del dep
-                            combined = os.path.normpath(os.path.join(str(rel_dir), rel_to_blend))
-                            combined = combined.replace("\\", "/") # SVN exige forward slashes
-                            
-                            if combined not in visited:
-                                next_batch.add(combined)
-                                # Si requerimos un .blend, exigimos también su manifiesto para continuar la cadena
-                                if combined.endswith(".blend"):
-                                    meta_combo = combined.replace(".blend", "-meta.json")
-                                    if meta_combo not in visited:
-                                        next_batch.add(meta_combo)
+                        combined = JailingPolicy.resolve_dependency(str(rel_dir), dep)
+                        if combined is None:
+                            continue
+                        for target in JailingPolicy.expand_with_meta(combined):
+                            if target not in visited:
+                                next_batch.add(target)
                                         
                 except Exception as e:
                     print(f"[SPARSE ERROR] Fallo al leer manifiesto {meta_file.name}: {e}")

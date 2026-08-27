@@ -2,5 +2,6 @@
 
 from .topography import WorkspaceTopography
 from .blueprint import ProjectBlueprint
+from .jailing import JailingPolicy
 
-__all__ = ["WorkspaceTopography", "ProjectBlueprint"]
+__all__ = ["WorkspaceTopography", "ProjectBlueprint", "JailingPolicy"]
