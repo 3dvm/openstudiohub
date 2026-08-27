@@ -24,6 +24,7 @@ from src.domain.production.entities import (
     TaskType,
     Task,
 )
+from src.domain.vault.manifest import VaultManifest
 
 
 class SessionRepository(ABC):
@@ -101,3 +102,19 @@ class ProductionRepository(ABC):
     @abstractmethod
     def update_entity_data(self, entity_id: str, data: dict) -> bool:
         """Persist custom metadata on a generic entity."""
+
+
+class VaultManifestRepository(ABC):
+    """Port for the vault software-inventory manifest (one schema, one location)."""
+
+    @abstractmethod
+    def load(self) -> VaultManifest:
+        """Load the manifest (empty if absent/corrupt)."""
+
+    @abstractmethod
+    def save(self, manifest: VaultManifest) -> bool:
+        """Persist the manifest; returns True on success."""
+
+    @abstractmethod
+    def path(self) -> str:
+        """Return the manifest file path."""

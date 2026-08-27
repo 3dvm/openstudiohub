@@ -4,6 +4,7 @@ from .value_objects import SemVer
 from .compatibility import CompatibilityPolicy
 from .addon import AddonMetadata, parse_zip, parse_directory, parse_toml, parse_legacy_bl_info
 from .entities import Addon, Template, BlenderVersion
+from .manifest import VaultManifest
 
 __all__ = [
     "SemVer",
@@ -16,4 +17,5 @@ __all__ = [
     "Addon",
     "Template",
     "BlenderVersion",
+    "VaultManifest",
 ]
