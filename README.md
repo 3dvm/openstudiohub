@@ -106,7 +106,7 @@ The codebase is designed following the **Separation of Concerns (MVC)** principl
 1. Clone the repository:
 
 ```bash
-git clone [https://github.com/tu-usuario/openstudio-hub.git](https://github.com/tu-usuario/openstudiohub.git)
+git clone https://github.com/3dvm/openstudiohub.git
 cd openstudiohub
 
 ```
