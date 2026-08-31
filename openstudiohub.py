@@ -66,7 +66,7 @@ class OpenStudioHub(QMainWindow):
 
         # Título base (Se sobrescribe dinámicamente tras el login)
         self.setWindowTitle(f"OpenStudioHub - v{__version__}")
-        self.resize(1000, 700) 
+        self.resize(1000, 700)
         self.setMinimumSize(800, 600)
 
         self.setWindowIcon(QIcon("assets/openstudiohub.ico"))
@@ -80,7 +80,7 @@ class OpenStudioHub(QMainWindow):
         self.config_factory = ConfigFactory(settings_path)
         self.vault = VaultManager(self.config_factory)
         self.credential_vault = CredentialVault()
-        
+
 
         # 2. Enrutador Inicial (State Machine MVC)
         self.mostrar_login()
@@ -100,13 +100,13 @@ class OpenStudioHub(QMainWindow):
                 "Please close the program first to release the master files on the server (SVN Unlock) "
                 "and avoid production corruption."
             ).format(self.blender_instances)
-            
+
             QMessageBox.warning(
                 self,
                 self.tr("Blocked Operation"),
                 mensaje
             )
-            event.ignore() 
+            event.ignore()
         else:
             if self.auth.get_current_token():
                 self.auth.logout()
@@ -116,11 +116,11 @@ class OpenStudioHub(QMainWindow):
     def mostrar_login(self):
         """Monta la vista de Login en el contenedor central."""
         self.setWindowTitle(f"OpenStudio Hub - v{__version__}")
-        
+
         vista_login = ViewLogin(
-            parent=self, 
-            auth_manager=self.auth, 
-            credential_vault=self.credential_vault, 
+            parent=self,
+            auth_manager=self.auth,
+            credential_vault=self.credential_vault,
             config_factory=self.config_factory,
             on_login_success=self.mostrar_dashboard
         )
@@ -132,9 +132,9 @@ class OpenStudioHub(QMainWindow):
         studio_name = self.config_factory.get_studio_name()
         if not studio_name:
             studio_name = "OpenStudio"
-            
+
         self.setWindowTitle(f"{studio_name} Hub - v{__version__}")
-        
+
         # Enrutamiento de Vistas (Role-based Factory)
         role = self.auth.current_role()
         position = self.auth.current_position()
@@ -170,26 +170,26 @@ class OpenStudioHub(QMainWindow):
 
         # 2. NUEVO: Implementamos el Sistema de Capas (Stack)
         self.view_stack = QStackedWidget()
-        
-        # Capa 0: El Dashboard 
+
+        # Capa 0: El Dashboard
         self.view_stack.addWidget(self.vista_actual)
-        
+
         # Capa 1: El Contexto Web (Kitsu/Watchtower)
         self.web_context = WebContextView(self)
         self.web_context.back_requested.connect(self.cerrar_kitsu)
         self.view_stack.addWidget(self.web_context)
-        
+
         self.setCentralWidget(self.view_stack)
 
     def abrir_kitsu(self, target_url: str = None):
         """Extrae la URL de Kitsu, limpia el sufijo /api y cambia la capa visual."""
         # Obtenemos la URL (ej: "http://localhost:8080" o "http://localhost:8080/api")
         kitsu_url = self.config_factory.get_kitsu_api_url()
-        
+
         # Limpiamos /api porque queremos cargar la Interfaz Gráfica, no el endpoint crudo
         if kitsu_url.endswith("/api"):
             kitsu_url = kitsu_url[:-4]
-        
+
         if not target_url:
             target_url = f"{kitsu_url}/news-feed"
 
@@ -199,19 +199,19 @@ class OpenStudioHub(QMainWindow):
             allowed_hosts = [parsed_url.hostname, "localhost", "127.0.0.1"]
 
             token = self.auth.get_current_token()
-            
+
             # Cargamos el navegador y cambiamos la vista
             self.web_context.load_context(target_url, "Kitsu", allowed_hosts, sso_token=token)
             self.view_stack.setCurrentWidget(self.web_context)
-            
+
         else:
             QDesktopServices.openUrl(QUrl(target_url))
 
     def cerrar_kitsu(self):
         """Regresa al Dashboard nativo (Capa 0) y gatilla un refresco de datos."""
         self.view_stack.setCurrentWidget(self.vista_actual)
-        
-        # Aquí más adelante podemos hacer que dispare una señal para que 
+
+        # Aquí más adelante podemos hacer que dispare una señal para que
         # el ActivityCard o el PM Dashboard recarguen los datos recientes.
         print("[OpenStudio Hub] Regreso de Kitsu completado.")
 
@@ -223,8 +223,8 @@ class OpenStudioHub(QMainWindow):
             kitsu_mgr = KitsuManager()
             if not kitsu_mgr.check_edit_preview_exists(project_id):
                 QMessageBox.warning(
-                    self, 
-                    "Edición No Renderizada", 
+                    self,
+                    "Edición No Renderizada",
                     "No hay un video renderizado para el Edit en Kitsu.\n\n"
                     "Watchtower requiere el archivo de edición principal para funcionar.\n"
                     "Por favor, renderiza y haz Push del Master Edit desde Blender antes de abrir Watchtower."
@@ -245,7 +245,7 @@ class OpenStudioHub(QMainWindow):
             lambda msg, color: print(f"[Watchtower] {msg}"),
             self.config_factory
         )
-        
+
         # Conectamos la señal que emite la URL
         self.wt_launcher.server_ready.connect(self._on_watchtower_ready)
         self.wt_launcher.launch()
@@ -259,16 +259,16 @@ class OpenStudioHub(QMainWindow):
     def ejecutar_logout(self):
         """Limpia el estado global de Qt y revierte al formulario de acceso."""
         if self.blender_instances > 0:
-            self.close() 
+            self.close()
             return
-            
+
         self.auth.logout()
-        self.credential_vault.clear()  
+        self.credential_vault.clear()
         self.mostrar_login()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    
+
     # ---------------------------------------------------------
     # INYECCIÓN GLOBAL DE ESTILOS (QSS)
     # ---------------------------------------------------------
@@ -282,7 +282,7 @@ if __name__ == "__main__":
             print(f"[OPENSTUDIO HUB] ❌ Error reading QSS file: {e}")
     else:
         print("[OPENSTUDIO HUB] ⚠️ WARNING: 'macuare_theme.qss' not found. Starting with OS native theme.")
-        
+
     window = OpenStudioHub()
     window.show()
     sys.exit(app.exec())

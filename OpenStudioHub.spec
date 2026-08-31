@@ -7,7 +7,7 @@ a = Analysis(
     datas=[
         ('assets', 'assets'),                     # Incluye todos los íconos, logos y SVGs
         ('macuare_theme.qss', '.'),               # Incluye la hoja de estilos corporativa
-        ('core/templates', 'core/templates'),     # Incluye los scripts de inyección y sandboxing
+        ('src/infrastructure/templates', 'src/infrastructure/templates'),     # Incluye los scripts de inyección y sandboxing
     ],
     hiddenimports=[],
     hookspath=[],
