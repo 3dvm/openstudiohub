@@ -7,8 +7,7 @@
 """Project creation saga.
 
 Orchestrates: Kitsu project -> physical folder tree -> template copy ->
-project_init.json blueprint -> VCS repository + initial commit. Extracted from
-``ProjectBuilder`` (which is now a thin facade).
+project_init.json blueprint -> VCS repository + initial commit.
 """
 
 import json
@@ -56,13 +55,13 @@ class ProjectCreationService:
         kitsu = KitsuManager()
 
         success, kitsu_msg, kitsu_project = kitsu.create_project_from_template(
-            project_name.strip(), template_name="standard-3d-production"
+            project_name.strip(), template_name="standard-3d-production" # this shouldn't be hardcoded
         )
         if not success:
-            return False, f"Abortado por Kitsu: {kitsu_msg}"
+            return False, f"Aborted by Kitsu: {kitsu_msg}"
 
         project_id = kitsu_project.get("id", "")
-        print(f"[ProjectCreationService] Entidad Kitsu forjada con plantilla. ID: {project_id}")
+        print(f"[ProjectCreationService] Kitsu project created with template. ID: {project_id}")
 
         try:
             vfs_svn = self.config_factory.get_vfs_svn_name()
@@ -138,7 +137,7 @@ class ProjectCreationService:
                     adapter.full_pull(username=vcs_user, password=vcs_pwd)
                     print("[ProjectCreationService] Repositorio VCS emparejado.")
 
-                    ignore_patterns = [vfs_local, vfs_shared, vfs_pipe, "*.blend1", "*.blend2", "quit.blend"]
+                    ignore_patterns = [vfs_local, vfs_shared, vfs_pipe, "*.blend1", "*.blend2", "quit.blend"] # The patterns should be configurable
                     adapter.setup_ignore(ignore_patterns)
 
                     startup_dir = project_path / vfs_local / "blender_data" / "scripts" / "startup"
@@ -157,7 +156,7 @@ class ProjectCreationService:
                         patch_content = patch_content.replace("{VFS_SVN_PLACEHOLDER}", vfs_svn)
                         with open(patch_file, "w", encoding="utf-8") as handle:
                             handle.write(patch_content)
-                        print("[ProjectCreationService] Parche VFS inyectado exitosamente.")
+                        print("[ProjectCreationService] VFS Patch applied.")
 
                     adapter.add_all(".")
                     adapter.commit(

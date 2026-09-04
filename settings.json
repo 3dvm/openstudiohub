@@ -26,5 +26,7 @@
             "03_render"
         ]
     },
-    "infrastructure_topology": {}
+    "infrastructure_topology": {
+        "vault_path": "/home/macuare/Nextcloud/Macuare-Estudio-Archivos/01_PROYECTOS_ESTUDIO/openstudio_vault"
+    }
 }
