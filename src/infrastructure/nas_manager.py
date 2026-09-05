@@ -74,7 +74,7 @@ class NasManager:
                     return json.load(f)
         except Exception as e:
             print(f"[NasManager] Error leyendo blueprint en {project_dir}: {e}")
-            
+
         return {}
 
     def delete_project_folder(self, project_dir: Path) -> bool:

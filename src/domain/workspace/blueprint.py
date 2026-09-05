@@ -24,6 +24,7 @@ class ProjectBlueprint:
     template: str = ""
     dependencies: Dict[str, Any] = field(default_factory=dict)
     topography: WorkspaceTopography = field(default_factory=WorkspaceTopography)
+    vcs_enabled: bool = True
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProjectBlueprint":

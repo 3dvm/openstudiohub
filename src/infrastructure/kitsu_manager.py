@@ -236,7 +236,7 @@ class KitsuManager:
             print(f"[KitsuManager] Error al consultar plantillas: {e}")
             return []
 
-    def create_project_from_template(self, project_name: str, template_name: str = "OpenStudioHub Default") -> Tuple[bool, str, dict]:
+    def create_project_from_template(self, project_name: str, template_name: str) -> Tuple[bool, str, dict]:
         """
         Construye el proyecto inyectando la estructura de una plantilla de Kitsu.
         """
