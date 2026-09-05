@@ -36,14 +36,14 @@ class ProjectCreationService:
         self.base_dir = config_factory.get_workspace_root()
         #self.vault_templates_dir = config_factory.get_vault_path() / "project_templates"
 
-    @property
-    def base_dir(self) -> Path:
-        return self.config_factory.get_workspace_root()
-
-    @property
-    def vault_templates_dir(self) -> Path:
-        return self.config_factory.get_vault_path() / "project_templates"
-
+    # @property
+    # def base_dir(self) -> Path:
+    #     return self.config_factory.get_workspace_root()
+    #
+    # @property
+    # def vault_templates_dir(self) -> Path:
+    #     return self.config_factory.get_vault_path() / "project_templates"
+    #
     def create_project(
         self,
         project_name: str,
