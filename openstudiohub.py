@@ -1,50 +1,43 @@
 # =========================================================================================
 # OPENSTUDIOHUB
-# Módulo: openstudio_hub.py
-# Rol Arquitectónico: Main App Root / Orquestador Inicial (PySide6)
-# =========================================================================================
-# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
-# Licencia: GNU General Public License v3.0 (GPLv3)
-#
-# Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.8.0
+# Module: openstudiohub.py
+# Architectural role: Main App Root / Initial Orchestrator (PySide6)
 # =========================================================================================
 
+"""Main entry point of OpenStudio Hub.
+
+Initializes the native Qt environment, builds the composition root, and routes
+between the Login view and the role-based dashboards.
 """
-Punto de entrada principal de OpenStudio Hub.
-Inicializa el entorno gráfico nativo en Qt (PySide6), lee la configuración maestra B2B,
-gestiona el enrutamiento base (Login vs Dashboard) e implementa el guardián de procesos.
-Optimizado para Cero-Latencia en el arranque del Dashboard y enrutamiento PM.
-"""
+
+from pathlib import Path
+import os
+import sys
+import urllib.parse
 
 from _version import __version__
 
-import sys
-import os
-from pathlib import Path
-import urllib.parse
-
-# --- PySide6 (Motor Gráfico) ---
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget
-from src.interfaces.qt.web_context_view import WebContextView
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget
 
-# --- CORE (Motores) ---
-#from core import vault_manager
-from src.application.auth_manager import AuthManager
-from src.application.vault_manager import VaultManager
-from src.application.credential_vault import CredentialVault
-from src.infrastructure.config_factory import ConfigFactory
-from src.infrastructure.watchtower_launcher import WatchtowerLauncher
-from src.infrastructure.kitsu_manager import KitsuManager
 from src.domain.identity.value_objects import Role
-
-# --- UI (Vistas) ---
-from src.interfaces.qt.view_login import ViewLogin
-from src.interfaces.qt.view_artist import ViewArtist
-from src.interfaces.qt.view_td import ViewTD
-from src.interfaces.qt.view_pm import ViewPM
+from src.infrastructure.kitsu_manager import KitsuManager
+from src.infrastructure.watchtower_launcher import WatchtowerLauncher
+from src.interfaces.qt.composition import AppContext
+from src.interfaces.qt.shell.web_context_view import WebContextView
+from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
+from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderViewModel
+from src.interfaces.qt.viewmodels.infrastructure_viewmodel import InfrastructureViewModel
+from src.interfaces.qt.viewmodels.login_viewmodel import LoginViewModel
+from src.interfaces.qt.viewmodels.new_project_viewmodel import NewProjectViewModel
+from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
+from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
+from src.interfaces.qt.views.artist_view import ViewArtist
+from src.interfaces.qt.views.login_view import ViewLogin
+from src.interfaces.qt.views.new_project_dialog import NewProjectDialog
+from src.interfaces.qt.views.pm_view import ViewPM
+from src.interfaces.qt.views.td_view import ViewTD
 
 
 def _select_dashboard(role: Role, position: str) -> str:
@@ -52,234 +45,268 @@ def _select_dashboard(role: Role, position: str) -> str:
     if role is Role.TD:
         return "td"
     if role is Role.MANAGER:
-        # A Kitsu 'manager' whose position is 'lead' is an Editor in the Hub.
         return "artist" if position == "lead" else "pm"
     return "artist"
 
 
-if getattr(sys, 'frozen', False):
-    os.chdir(sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable))
+if getattr(sys, "frozen", False):
+    os.chdir(sys._MEIPASS if hasattr(sys, "_MEIPASS") else os.path.dirname(sys.executable))
+
 
 class OpenStudioHub(QMainWindow):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-        # Título base (Se sobrescribe dinámicamente tras el login)
         self.setWindowTitle(f"OpenStudioHub - v{__version__}")
         self.resize(1000, 700)
         self.setMinimumSize(800, 600)
-
         self.setWindowIcon(QIcon("assets/openstudiohub.ico"))
 
-        # Guardián de Procesos (Protección de Lock Passing)
         self.blender_instances = 0
 
-        # 1. Inicializar los Motores Base
-        self.auth = AuthManager()
-        settings_path = Path("settings.json")
-        self.config_factory = ConfigFactory(settings_path)
-        self.vault = VaultManager(self.config_factory)
-        self.credential_vault = CredentialVault()
+        self.ctx = AppContext(Path("settings.json"))
 
-
-        # 2. Enrutador Inicial (State Machine MVC)
         self.mostrar_login()
 
-    def registrar_instancia(self, activa: bool):
-        """Incrementa o decrementa el contador de instancias de Blender activas."""
-        if activa:
+    # ------------------------------------------------------------------
+    # Process guardian
+    # ------------------------------------------------------------------
+    def registrar_instancia(self, active: bool) -> None:
+        if active:
             self.blender_instances += 1
         else:
             self.blender_instances = max(0, self.blender_instances - 1)
 
-    def closeEvent(self, event: QCloseEvent):
-        """Intercepta el cierre de la ventana nativa de Qt para proteger la integridad del SVN."""
+    def closeEvent(self, event: QCloseEvent) -> None:
         if self.blender_instances > 0:
-            mensaje = self.tr(
+            message = self.tr(
                 "You have {0} 3D environment session(s) open.\n\n"
                 "Please close the program first to release the master files on the server (SVN Unlock) "
                 "and avoid production corruption."
             ).format(self.blender_instances)
 
-            QMessageBox.warning(
-                self,
-                self.tr("Blocked Operation"),
-                mensaje
-            )
+            QMessageBox.warning(self, self.tr("Blocked Operation"), message)
             event.ignore()
         else:
-            if self.auth.get_current_token():
-                self.auth.logout()
-            self.credential_vault.clear()
+            if self.ctx.auth_service.access_token():
+                self.ctx.auth_service.logout()
+            self.ctx.credential_vault.clear()
             event.accept()
 
-    def mostrar_login(self):
-        """Monta la vista de Login en el contenedor central."""
+    # ------------------------------------------------------------------
+    # Login
+    # ------------------------------------------------------------------
+    def mostrar_login(self) -> None:
         self.setWindowTitle(f"OpenStudio Hub - v{__version__}")
 
-        vista_login = ViewLogin(
-            parent=self,
-            auth_manager=self.auth,
-            credential_vault=self.credential_vault,
-            config_factory=self.config_factory,
-            on_login_success=self.mostrar_dashboard
+        login_vm = LoginViewModel(
+            self.ctx.auth_service,
+            self.ctx.credential_vault,
+            self.ctx.config_factory,
         )
+        login_vm.login_succeeded.connect(self.mostrar_dashboard)
+
+        vista_login = ViewLogin(parent=self, viewmodel=login_vm)
         self.setCentralWidget(vista_login)
 
-    def mostrar_dashboard(self):
-        """Monta el Dashboard inyectando el contexto B2B local (Cero Latencia)."""
-        # Leemos el nombre del estudio directamente de la configuración local (SSoT)
-        studio_name = self.config_factory.get_studio_name()
-        if not studio_name:
-            studio_name = "OpenStudio"
-
+    # ------------------------------------------------------------------
+    # Dashboards
+    # ------------------------------------------------------------------
+    def mostrar_dashboard(self) -> None:
+        studio_name = self.ctx.config_factory.get_studio_name() or "OpenStudio"
         self.setWindowTitle(f"{studio_name} Hub - v{__version__}")
 
-        # Enrutamiento de Vistas (Role-based Factory)
-        role = self.auth.current_role()
-        position = self.auth.current_position()
-        nas_dir = self.config_factory.get_workspace_root()
+        role = self.ctx.auth_service.current_role()
+        user = self.ctx.auth_service.current_user
+        position = user.position if user else ""
+        nas_dir = self.ctx.config_factory.get_workspace_root()
 
         dashboard = _select_dashboard(role, position)
         if dashboard == "td":
-            self.vista_actual = ViewTD(
-                parent=self,
-                auth_manager=self.auth,
-                nas_dir=nas_dir,
-                vault_manager=self.vault,
-                config_factory=self.config_factory,
-                on_logout=self.ejecutar_logout,
-            )
+            self.vista_actual = self._build_td_view(nas_dir)
         elif dashboard == "pm":
-            self.vista_actual = ViewPM(
-                parent=self,
-                auth_manager=self.auth,
-                config_factory=self.config_factory,
-                credential_vault=self.credential_vault,
-                on_logout=self.ejecutar_logout,
-            )
+            self.vista_actual = self._build_pm_view(nas_dir)
         else:
-            self.vista_actual = ViewArtist(
-                parent=self,
-                auth_manager=self.auth,
-                nas_dir=nas_dir,
-                credential_vault=self.credential_vault,
-                config_factory=self.config_factory,
-                on_logout=self.ejecutar_logout,
-            )
+            self.vista_actual = self._build_artist_view(nas_dir)
 
-        # 2. NUEVO: Implementamos el Sistema de Capas (Stack)
         self.view_stack = QStackedWidget()
-
-        # Capa 0: El Dashboard
         self.view_stack.addWidget(self.vista_actual)
 
-        # Capa 1: El Contexto Web (Kitsu/Watchtower)
         self.web_context = WebContextView(self)
         self.web_context.back_requested.connect(self.cerrar_kitsu)
         self.view_stack.addWidget(self.web_context)
 
         self.setCentralWidget(self.view_stack)
 
-    def abrir_kitsu(self, target_url: str = None):
-        """Extrae la URL de Kitsu, limpia el sufijo /api y cambia la capa visual."""
-        # Obtenemos la URL (ej: "http://localhost:8080" o "http://localhost:8080/api")
-        kitsu_url = self.config_factory.get_kitsu_api_url()
+    def _build_project_list_vm(self, nas_dir, read_vcs_credentials: bool) -> ProjectListViewModel:
+        return ProjectListViewModel(
+            production_service=self.ctx.production_service,
+            auth_service=self.ctx.auth_service,
+            config_factory=self.ctx.config_factory,
+            installation_service=self.ctx.installation_service,
+            read_vcs_credentials=read_vcs_credentials,
+            nas_dir=nas_dir,
+            open_kitsu_callback=self.abrir_kitsu,
+            open_watchtower_callback=lambda project_dir: self.abrir_watchtower(project_dir),
+            instance_lock_callback=self.registrar_instancia,
+            status_sink=self.ctx.status_sink,
+        )
 
-        # Limpiamos /api porque queremos cargar la Interfaz Gráfica, no el endpoint crudo
+    def _build_td_view(self, nas_dir):
+        project_list_vm = self._build_project_list_vm(nas_dir, True)
+        infrastructure_vm = InfrastructureViewModel(
+            self.ctx.config_factory, self.ctx.production_service, self.ctx.status_sink
+        )
+        settings_vm = SettingsViewModel(self.ctx.config_factory, self.ctx.vault_service, self.ctx.status_sink)
+
+        return ViewTD(
+            parent=self,
+            project_list_vm=project_list_vm,
+            infrastructure_vm=infrastructure_vm,
+            settings_vm=settings_vm,
+            auth_service=self.ctx.auth_service,
+            config_factory=self.ctx.config_factory,
+            production_service=self.ctx.production_service,
+            vault_service=self.ctx.vault_service,
+            on_logout=self.ejecutar_logout,
+            on_new_project_callback=self._open_new_project_dialog,
+            status_sink=self.ctx.status_sink,
+        )
+
+    def _build_pm_view(self, nas_dir):
+        project_list_vm = self._build_project_list_vm(nas_dir, False)
+        blend_builder_vm = BlendBuilderViewModel(
+            self.ctx.production_service,
+            self.ctx.config_factory,
+            self.ctx.credential_vault,
+            self.ctx.status_sink,
+        )
+
+        return ViewPM(
+            parent=self,
+            project_list_vm=project_list_vm,
+            blend_builder_vm=blend_builder_vm,
+            auth_service=self.ctx.auth_service,
+            config_factory=self.ctx.config_factory,
+            on_logout=self.ejecutar_logout,
+            status_sink=self.ctx.status_sink,
+        )
+
+    def _build_artist_view(self, nas_dir):
+        artist_vm = ArtistViewModel(
+            production_service=self.ctx.production_service,
+            auth_service=self.ctx.auth_service,
+            credential_vault=self.ctx.credential_vault,
+            config_factory=self.ctx.config_factory,
+            installation_service=self.ctx.installation_service,
+            register_instance=self.registrar_instancia,
+            status_sink=self.ctx.status_sink,
+        )
+
+        return ViewArtist(
+            parent=self,
+            viewmodel=artist_vm,
+            auth_service=self.ctx.auth_service,
+            config_factory=self.ctx.config_factory,
+            on_logout=self.ejecutar_logout,
+            status_sink=self.ctx.status_sink,
+        )
+
+    def _open_new_project_dialog(self) -> None:
+        vm = NewProjectViewModel(
+            self.ctx.config_factory,
+            self.ctx.production_service,
+            self.ctx.vault_service,
+        )
+        dialog = NewProjectDialog(self, vm, on_success_callback=self._on_project_created)
+        dialog.show()
+
+    def _on_project_created(self) -> None:
+        view = getattr(self, "vista_actual", None)
+        project_list = getattr(view, "vista_proyectos", None)
+        if project_list is not None:
+            project_list.refresh()
+
+    # ------------------------------------------------------------------
+    # Web context layer (Kitsu / Watchtower)
+    # ------------------------------------------------------------------
+    def abrir_kitsu(self, target_url: str | None = None) -> None:
+        kitsu_url = self.ctx.config_factory.get_kitsu_api_url()
         if kitsu_url.endswith("/api"):
             kitsu_url = kitsu_url[:-4]
 
         if not target_url:
             target_url = f"{kitsu_url}/news-feed"
 
-        if False: # hay que solucionar el SSO primero
-            # Parseamos el host para inyectarlo en la lista blanca de seguridad (Whitelisting de enlaces)
+        if False:  # SSO still needs a fix first
             parsed_url = urllib.parse.urlparse(kitsu_url)
             allowed_hosts = [parsed_url.hostname, "localhost", "127.0.0.1"]
 
-            token = self.auth.get_current_token()
-
-            # Cargamos el navegador y cambiamos la vista
+            token = self.ctx.auth_service.access_token()
             self.web_context.load_context(target_url, "Kitsu", allowed_hosts, sso_token=token)
             self.view_stack.setCurrentWidget(self.web_context)
-
         else:
             QDesktopServices.openUrl(QUrl(target_url))
 
-    def cerrar_kitsu(self):
-        """Regresa al Dashboard nativo (Capa 0) y gatilla un refresco de datos."""
+    def cerrar_kitsu(self) -> None:
         self.view_stack.setCurrentWidget(self.vista_actual)
+        print("[OpenStudio Hub] Returned from Kitsu.")
 
-        # Aquí más adelante podemos hacer que dispare una señal para que
-        # el ActivityCard o el PM Dashboard recarguen los datos recientes.
-        print("[OpenStudio Hub] Regreso de Kitsu completado.")
-
-    def abrir_watchtower(self, project_root_path: Path, project_id: str = ""):
-        """Inicializa el servidor local de Watchtower y enruta la vista."""
-
-        # --- VERIFICACIÓN DE VIDEO DE EDICIÓN ---
+    def abrir_watchtower(self, project_root_path: Path, project_id: str = "") -> None:
         if project_id:
             kitsu_mgr = KitsuManager()
             if not kitsu_mgr.check_edit_preview_exists(project_id):
                 QMessageBox.warning(
                     self,
-                    "Edición No Renderizada",
-                    "No hay un video renderizado para el Edit en Kitsu.\n\n"
-                    "Watchtower requiere el archivo de edición principal para funcionar.\n"
-                    "Por favor, renderiza y haz Push del Master Edit desde Blender antes de abrir Watchtower."
+                    "Edit Not Rendered",
+                    "There is no rendered video for the Edit in Kitsu.\n\n"
+                    "Watchtower requires the main edit file to work.\n\n"
+                    "Please render and push the Master Edit from Blender before opening Watchtower.",
                 )
                 return
-        # ----------------------------------------
 
-        # Extraemos las credenciales guardadas en la bóveda
-        kitsu_url = self.config_factory.get_kitsu_api_url()
-        kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
+        kitsu_url = self.ctx.config_factory.get_kitsu_api_url()
+        kitsu_user, kitsu_pwd = self.ctx.credential_vault.get_kitsu_credentials()
 
-        # Instanciamos el launcher
         self.wt_launcher = WatchtowerLauncher(
             project_root_path,
             kitsu_url,
             kitsu_user,
             kitsu_pwd,
             lambda msg, color: print(f"[Watchtower] {msg}"),
-            self.config_factory
+            self.ctx.config_factory,
         )
-
-        # Conectamos la señal que emite la URL
         self.wt_launcher.server_ready.connect(self._on_watchtower_ready)
         self.wt_launcher.launch()
 
-    def _on_watchtower_ready(self, url: str):
-        """Recibe la URL del servidor local y cambia la capa visual."""
-        # Como no enviamos el parámetro sso_token, la vista actuará como un navegador normal
+    def _on_watchtower_ready(self, url: str) -> None:
         self.web_context.load_context(url, "Watchtower", ["localhost", "127.0.0.1"])
         self.view_stack.setCurrentWidget(self.web_context)
 
-    def ejecutar_logout(self):
-        """Limpia el estado global de Qt y revierte al formulario de acceso."""
+    # ------------------------------------------------------------------
+    # Logout
+    # ------------------------------------------------------------------
+    def ejecutar_logout(self) -> None:
         if self.blender_instances > 0:
             self.close()
             return
 
-        self.auth.logout()
-        self.credential_vault.clear()
+        self.ctx.auth_service.logout()
+        self.ctx.credential_vault.clear()
         self.mostrar_login()
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
-    # ---------------------------------------------------------
-    # INYECCIÓN GLOBAL DE ESTILOS (QSS)
-    # ---------------------------------------------------------
     theme_path = Path("macuare_theme.qss")
     if theme_path.exists():
         try:
-            with open(theme_path, "r", encoding="utf-8") as f:
-                app.setStyleSheet(f.read())
+            with open(theme_path, "r", encoding="utf-8") as handle:
+                app.setStyleSheet(handle.read())
             print("[OPENSTUDIO HUB] ✓ Corporate QSS theme loaded successfully.")
-        except Exception as e:
-            print(f"[OPENSTUDIO HUB] ❌ Error reading QSS file: {e}")
+        except Exception as error:  # noqa: BLE001
+            print(f"[OPENSTUDIO HUB] ❌ Error reading QSS file: {error}")
     else:
         print("[OPENSTUDIO HUB] ⚠️ WARNING: 'macuare_theme.qss' not found. Starting with OS native theme.")
 

@@ -40,6 +40,15 @@ class InstallationService:
             return "windows", "zip"
         return "macos", "dmg"
 
+    def verify_installation(self, project_root: Path) -> bool:
+        """Return True when the local sandbox and VCS checkout already exist."""
+        vfs_local = self.config_factory.get_vfs_local_name()
+        vfs_svn = self.config_factory.get_vfs_svn_name()
+
+        config_local = project_root / vfs_local / "project_config.json"
+        vcs_dir = project_root / vfs_svn
+        return config_local.exists() and vcs_dir.exists()
+
     def instalar_entorno(
         self,
         project_root: Path,

@@ -42,21 +42,21 @@ class BatchCreationWorker(QThread):
                 e_id = entity.get("id", "")
                 e_type = entity.get("type", "Asset").upper()
                 
-                # --- NUEVA LÓGICA DE FILTRADO POR TAREAS ---
+                # --- NEW TASK FILTERING LOGIC ---
                 tasks_to_spawn = []
                 if e_type == "SHOT":
                     tasks_dict = entity.get("tasks", {})
                     for t_name in self.task_types:
-                        # Solo forjamos si la toma tiene esta tarea en Kitsu y NO tiene archivo
+                        # Only spawn if the shot has this task in Kitsu and it has no file
                         task_info = tasks_dict.get(t_name)
                         if task_info and not task_info.get("has_file"):
                             tasks_to_spawn.append(t_name)
                 else:
-                    # Los Assets conservan su comportamiento de iterar una vez por ahora
+                    # Assets keep iterating once for now
                     tasks_to_spawn = [""] 
                 # -------------------------------------------
                 
-                # Bucle anidado para iterar cada tarea faltante de la entidad
+                # Nested loop to iterate each missing task of the entity
                 for t_idx, t_name in enumerate(tasks_to_spawn):
                     
                     display_name = f"{e_name} [{t_name}]" if t_name else e_name

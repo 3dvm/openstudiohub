@@ -32,8 +32,7 @@ from src.infrastructure.kitsu_manager import KitsuManager
 
 
 class ProductionManager:
-    def __init__(self, auth_manager, config_factory, bus: Optional[MessageBus] = None) -> None:
-        self.auth_manager = auth_manager
+    def __init__(self, config_factory, bus: Optional[MessageBus] = None) -> None:
         self.config_factory = config_factory
         self.kitsu = KitsuManager()
         self.repository = KitsuProductionRepository(self.kitsu)
