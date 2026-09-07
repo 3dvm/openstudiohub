@@ -46,6 +46,7 @@ prompt_context.txt
 openstudio_projects/
 # OpenStudio Hub per-user session/config cache
 .openstudio/
+settings.json
 
 # === Dev-tool credential caches (NEVER commit these) ===
 tests/dev_tools/*_env.json

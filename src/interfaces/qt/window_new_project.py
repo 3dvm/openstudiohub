@@ -12,14 +12,14 @@
 
 """
 Asistente modal para la creación de nuevos proyectos (TD Wizard).
-Implementa validaciones estrictas de plantillas y campos de autenticación 
+Implementa validaciones estrictas de plantillas y campos de autenticación
 VCS efímeros en la UI para sobreescribir el SSO sin persistencia en disco.
 """
 
 from pathlib import Path
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
-                               QLineEdit, QComboBox, QCheckBox, QRadioButton, 
-                               QButtonGroup, QPushButton, QScrollArea, QWidget, 
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                               QLineEdit, QComboBox, QCheckBox, QRadioButton,
+                               QButtonGroup, QPushButton, QScrollArea, QWidget,
                                QFileDialog)
 from PySide6.QtCore import Qt, QThread, Signal
 
@@ -45,27 +45,29 @@ class ProjectCreationWorker(QThread):
     """Hilo trabajador para ejecutar la I/O pesada del ProjectBuilder sin congelar la modal."""
     result = Signal(bool, str)
 
-    def __init__(self, builder: ProjectBuilder, nombre: str, version: str, 
-                 dependencias: dict, template: str, splash: str, vcs_user: str, vcs_pwd: str):
+    def __init__(self, builder: ProjectBuilder, nombre: str, version: str,
+                 dependencias: dict, kitsu_template: str, splash: str, vcs_user: str, vcs_pwd: str, vcs_enabled: bool):
         super().__init__()
         self.builder = builder
         self.nombre = nombre
         self.version = version
         self.dependencias = dependencias
-        self.template = template
+        self.template = kitsu_template
         self.splash = splash
         self.vcs_user = vcs_user
         self.vcs_pwd = vcs_pwd
+        self.vcs_enabled = vcs_enabled
 
     def run(self):
         exito, mensaje = self.builder.create_project(
-            project_name=self.nombre, 
-            blender_version=self.version, 
-            dependencies=self.dependencias, 
-            project_template=self.template, 
+            project_name=self.nombre,
+            blender_version=self.version,
+            dependencies=self.dependencias,
+            kitsu_template=self.template,
             splash_image_path=self.splash,
             vcs_user=self.vcs_user,
-            vcs_pwd=self.vcs_pwd
+            vcs_pwd=self.vcs_pwd,
+            vcs_enabled=self.vcs_enabled
         )
         self.result.emit(exito, mensaje)
 
@@ -96,7 +98,7 @@ class NewProjectWindow(QDialog):
         lbl_titulo.setObjectName("CardTitle")
         lbl_titulo.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(lbl_titulo)
-        
+
         main_layout.addSpacing(10)
 
         self.entry_nombre = QLineEdit()
@@ -109,14 +111,14 @@ class NewProjectWindow(QDialog):
         lbl_kitsu_template = QLabel(self.tr("Kitsu Template:"))
         lbl_kitsu_template.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_kitsu_template)
-        
+
         self.combo_kitsu_template = QComboBox()
         self.combo_kitsu_template.setFixedHeight(40)
         self.combo_kitsu_template.setStyleSheet("QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }")
         self.combo_kitsu_template.addItem(self.tr("Loading templates..."))
         self.combo_kitsu_template.setEnabled(False)
         main_layout.addWidget(self.combo_kitsu_template)
-        
+
         self.worker_kitsu_templates = FetchKitsuTemplatesWorker(self.production_service)
         self.worker_kitsu_templates.data_ready.connect(self._on_kitsu_templates_loaded)
         self.worker_kitsu_templates.start()
@@ -124,7 +126,7 @@ class NewProjectWindow(QDialog):
         lbl_version = QLabel(self.tr("Target Blender Version:"))
         lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_version)
-        
+
         versiones = list(self.vault_data.keys()) if self.vault_data else []
         self.combo_version = QComboBox()
         self.combo_version.addItems(versiones)
@@ -136,11 +138,11 @@ class NewProjectWindow(QDialog):
         lbl_addons = QLabel(self.tr("Vault Components (vault_manifest.json):"))
         lbl_addons.setStyleSheet("font-weight: bold; margin-top: 15px;")
         main_layout.addWidget(lbl_addons)
-        
+
         self.scroll_addons = QScrollArea()
         self.scroll_addons.setWidgetResizable(True)
         self.scroll_addons.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; background-color: #1E293B; }")
-        
+
         self.addons_widget = QWidget()
         self.addons_widget.setStyleSheet("background: transparent;")
         self.addons_layout = QVBoxLayout(self.addons_widget)
@@ -194,7 +196,7 @@ class NewProjectWindow(QDialog):
     def _on_kitsu_templates_loaded(self, templates: list):
         self.combo_kitsu_template.clear()
         if not templates:
-            self.combo_kitsu_template.addItem("standard-3d-production")
+            self.combo_kitsu_template.addItem("No templates found on Kitsu")
         else:
             for t in templates:
                 self.combo_kitsu_template.addItem(t["name"])
@@ -231,7 +233,7 @@ class NewProjectWindow(QDialog):
                 version_item = datos.get("version", "1.0")
                 es_obligatorio = datos.get("mandatory", False)
                 texto_label = f"{nombre_item} v{version_item} - {datos.get('description', '')}"
-                
+
                 if categoria == "templates":
                     cb = QRadioButton(texto_label)
                     cb.setStyleSheet("QRadioButton { color: #F8FAFC; padding: 5px; }")
@@ -239,7 +241,7 @@ class NewProjectWindow(QDialog):
                 else:
                     cb = QCheckBox(texto_label)
                     cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; }")
-                
+
                 cb.toggled.connect(lambda checked, c=categoria, n=nombre_item, r=datos.get("requires", []): self._resolver_subdependencias(checked, c, n, r))
                 self.addons_layout.addWidget(cb)
 
@@ -294,8 +296,8 @@ class NewProjectWindow(QDialog):
         self.builder.kitsu_active_template = kitsu_template
 
         self.worker = ProjectCreationWorker(
-            self.builder, nombre, version_blender, dependencias_finales, 
-            template_principal, self.ruta_splash, user_vcs, pwd_vcs
+            self.builder, nombre, version_blender, dependencias_finales,
+            template_principal, self.ruta_splash, user_vcs, pwd_vcs, vcs_enabled=True
         )
         self.worker.result.connect(self._on_creation_finished)
         self.worker.finished.connect(self.worker.deleteLater)
@@ -305,7 +307,7 @@ class NewProjectWindow(QDialog):
         if exito:
             self.lbl_status.setText(mensaje)
             self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold;")
-            self.on_success() 
+            self.on_success()
             self.close()
         else:
             self.btn_crear.setEnabled(True)
