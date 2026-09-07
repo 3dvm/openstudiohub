@@ -7,7 +7,7 @@ class FakeConfigFactory:
     def __init__(self):
         self.saved = None
 
-    def guardar_configuracion(self, payload, from_seed=False):
+    def save_configuration(self, payload, from_seed=False):
         self.saved = payload
         return True
 

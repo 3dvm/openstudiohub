@@ -54,17 +54,17 @@ class ViewTD(BaseDashboardView):
         self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_td_content()
-        self.vista_proyectos.refresh()
+        self.projects_view.refresh()
 
     def _build_td_content(self) -> None:
         self.stacked_content = QStackedWidget()
 
-        self.vista_proyectos = ProjectListWidget(
+        self.projects_view = ProjectListWidget(
             parent=self.stacked_content,
             viewmodel=self.project_list_vm,
             on_new_project_callback=self.on_new_project_callback,
         )
-        self.stacked_content.addWidget(self.vista_proyectos)
+        self.stacked_content.addWidget(self.projects_view)
 
         self.vista_infra = InfrastructureWidget(
             parent=self.stacked_content,

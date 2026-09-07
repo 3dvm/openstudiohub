@@ -40,7 +40,7 @@ class SettingsViewModel(BaseViewModel):
         return {"raw": raw, "manifest": manifest}
 
     def save(self, config_payload: dict, software_payload: dict) -> tuple[bool, bool]:
-        config_ok = self.config_factory.guardar_configuracion(config_payload)
+        config_ok = self.config_factory.save_configuration(config_payload)
         vault_ok = self.vault_service.save_inventory(software_payload)
         return config_ok, vault_ok
 

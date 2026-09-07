@@ -54,7 +54,7 @@ class StudioSeedService:
 
             compressed = base64.b64decode(encoded)
             payload = json.loads(zlib.decompress(compressed).decode("utf-8"))
-            return self.config_factory.guardar_configuracion(payload, from_seed=True)
+            return self.config_factory.save_configuration(payload, from_seed=True)
         except Exception as error:  # noqa: BLE001
             print(f"[SEED ENGINE ERROR] Integrity failure during seed import: {error}")
             return False

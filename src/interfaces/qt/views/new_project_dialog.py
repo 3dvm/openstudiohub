@@ -82,6 +82,12 @@ class NewProjectDialog(QDialog):
         self.combo_kitsu_template.setEnabled(False)
         main_layout.addWidget(self.combo_kitsu_template)
 
+        self.lbl_vcs = QLabel(self.tr("Version Control System (VCS):"))
+        main_layout.addWidget(self.lbl_vcs)
+        self.combo_vcs = QComboBox()
+        self.combo_vcs.addItems(["Settings Default", "SVN", "Git-LFS", "None (NAS only)"])
+        main_layout.addWidget(self.combo_vcs)
+
         lbl_version = QLabel(self.tr("Target Blender Version:"))
         lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
         main_layout.addWidget(lbl_version)
@@ -250,13 +256,22 @@ class NewProjectDialog(QDialog):
         vcs_user = vcs_config.get("vcs_username", DEV_SVN_USER)
         vcs_pwd = vcs_config.get("vcs_password", DEV_SVN_PASSWORD)
 
+        vcs_selection = self.combo_vcs.currentIndex()
+        vcs_enabled = True
+
+        if vcs_selection == 3:
+            vcs_enabled = False
+        elif vcs_selection == 0:
+            if vcs_config.get("active_adapter", "svn") == "none":
+                vcs_enabled = False
+
         self.btn_create.setEnabled(False)
         self.btn_create.setText(self.tr("Creating..."))
         self.lbl_status.setText(self.tr("Forging structure and connecting repositories..."))
         self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
         self.lbl_status.show()
 
-        self.vm.create_project(name, version_blender, final_dependencies, main_template, self.splash_path, vcs_user, vcs_pwd)
+        self.vm.create_project(name, version_blender, final_dependencies, main_template, self.splash_path, vcs_user, vcs_pwd, vcs_enabled=vcs_enabled)
 
     def _on_creation_finished(self, success: bool, message: str) -> None:
         if success:

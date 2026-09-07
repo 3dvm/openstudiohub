@@ -31,7 +31,7 @@ class TabVCS(QWidget):
         layout.addRow("", lbl_section_1)
 
         self.combo_vcs = QComboBox()
-        self.combo_vcs.addItems(["svn", "git-lfs"])
+        self.combo_vcs.addItems(["svn", "git-lfs", "None (NAS only)"])
         self.combo_vcs.setFixedHeight(35)
         self.combo_vcs.setStyleSheet("QComboBox { background-color: #0F172A; border: 1px solid #475569; color: #F8FAFC; border-radius: 6px; padding-left: 10px; }")
 
@@ -72,7 +72,13 @@ class TabVCS(QWidget):
 
     def load_data(self, active_adapter: str, repo_url: str, enable_sparse: bool, user: str = "", pwd: str = "", ssh_key: str = "", ssh_pwd: str = "") -> None:
         self._is_loading = True
-        idx = self.combo_vcs.findText(active_adapter)
+        adapter_clean = active_adapter.lower()
+
+        if "none" in adapter_clean:
+            idx = self.combo_vcs.findText("None (NAS only)")
+        else:
+            idx = self.combo_vcs.findText(active_adapter)
+
         if idx >= 0:
             self.combo_vcs.setCurrentIndex(idx)
         self.entry_repo_url.setText(repo_url)

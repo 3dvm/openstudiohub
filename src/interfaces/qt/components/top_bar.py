@@ -117,5 +117,5 @@ class TopBar(QFrame):
     def _on_kitsu_clicked(self) -> None:
         """Find the main orchestrator and trigger the view switch."""
         main_window = self.window()
-        if hasattr(main_window, "abrir_kitsu"):
-            main_window.abrir_kitsu()
+        if hasattr(main_window, "open_kitsu"):
+            main_window.open_kitsu()

@@ -41,7 +41,7 @@ from src.interfaces.qt.views.td_view import ViewTD
 
 
 def _select_dashboard(role: Role, position: str) -> str:
-    """Map an authenticated role/position to a dashboard ('td' | 'pm' | 'artist')."""
+    """Map an authenticated role/position to a dashboard ('td' | 'pm' | 'artist' | 'editor')."""
     if role is Role.TD:
         return "td"
     if role is Role.MANAGER:
@@ -66,12 +66,12 @@ class OpenStudioHub(QMainWindow):
 
         self.ctx = AppContext(Path("settings.json"))
 
-        self.mostrar_login()
+        self.show_login()
 
     # ------------------------------------------------------------------
     # Process guardian
     # ------------------------------------------------------------------
-    def registrar_instancia(self, active: bool) -> None:
+    def register_instance(self, active: bool) -> None:
         if active:
             self.blender_instances += 1
         else:
@@ -96,7 +96,7 @@ class OpenStudioHub(QMainWindow):
     # ------------------------------------------------------------------
     # Login
     # ------------------------------------------------------------------
-    def mostrar_login(self) -> None:
+    def show_login(self) -> None:
         self.setWindowTitle(f"OpenStudio Hub - v{__version__}")
 
         login_vm = LoginViewModel(
@@ -104,15 +104,15 @@ class OpenStudioHub(QMainWindow):
             self.ctx.credential_vault,
             self.ctx.config_factory,
         )
-        login_vm.login_succeeded.connect(self.mostrar_dashboard)
+        login_vm.login_succeeded.connect(self.show_dashboard)
 
-        vista_login = ViewLogin(parent=self, viewmodel=login_vm)
-        self.setCentralWidget(vista_login)
+        view_login = ViewLogin(parent=self, viewmodel=login_vm)
+        self.setCentralWidget(view_login)
 
     # ------------------------------------------------------------------
     # Dashboards
     # ------------------------------------------------------------------
-    def mostrar_dashboard(self) -> None:
+    def show_dashboard(self) -> None:
         studio_name = self.ctx.config_factory.get_studio_name() or "OpenStudio"
         self.setWindowTitle(f"{studio_name} Hub - v{__version__}")
 
@@ -123,17 +123,17 @@ class OpenStudioHub(QMainWindow):
 
         dashboard = _select_dashboard(role, position)
         if dashboard == "td":
-            self.vista_actual = self._build_td_view(nas_dir)
+            self.current_view = self._build_td_view(nas_dir)
         elif dashboard == "pm":
-            self.vista_actual = self._build_pm_view(nas_dir)
+            self.current_view = self._build_pm_view(nas_dir)
         else:
-            self.vista_actual = self._build_artist_view(nas_dir)
+            self.current_view = self._build_artist_view(nas_dir)
 
         self.view_stack = QStackedWidget()
-        self.view_stack.addWidget(self.vista_actual)
+        self.view_stack.addWidget(self.current_view)
 
         self.web_context = WebContextView(self)
-        self.web_context.back_requested.connect(self.cerrar_kitsu)
+        self.web_context.back_requested.connect(self.close_kitsu)
         self.view_stack.addWidget(self.web_context)
 
         self.setCentralWidget(self.view_stack)
@@ -146,9 +146,9 @@ class OpenStudioHub(QMainWindow):
             installation_service=self.ctx.installation_service,
             read_vcs_credentials=read_vcs_credentials,
             nas_dir=nas_dir,
-            open_kitsu_callback=self.abrir_kitsu,
-            open_watchtower_callback=lambda project_dir: self.abrir_watchtower(project_dir),
-            instance_lock_callback=self.registrar_instancia,
+            open_kitsu_callback=self.open_kitsu,
+            open_watchtower_callback=lambda project_dir: self.open_watchtower(project_dir),
+            instance_lock_callback=self.register_instance,
             status_sink=self.ctx.status_sink,
         )
 
@@ -199,7 +199,7 @@ class OpenStudioHub(QMainWindow):
             credential_vault=self.ctx.credential_vault,
             config_factory=self.ctx.config_factory,
             installation_service=self.ctx.installation_service,
-            register_instance=self.registrar_instancia,
+            register_instance=self.register_instance,
             status_sink=self.ctx.status_sink,
         )
 
@@ -222,15 +222,15 @@ class OpenStudioHub(QMainWindow):
         dialog.show()
 
     def _on_project_created(self) -> None:
-        view = getattr(self, "vista_actual", None)
-        project_list = getattr(view, "vista_proyectos", None)
+        view = getattr(self, "current_view", None)
+        project_list = getattr(view, "projects_view", None)
         if project_list is not None:
             project_list.refresh()
 
     # ------------------------------------------------------------------
     # Web context layer (Kitsu / Watchtower)
     # ------------------------------------------------------------------
-    def abrir_kitsu(self, target_url: str | None = None) -> None:
+    def open_kitsu(self, target_url: str | None = None) -> None:
         kitsu_url = self.ctx.config_factory.get_kitsu_api_url()
         if kitsu_url.endswith("/api"):
             kitsu_url = kitsu_url[:-4]
@@ -238,7 +238,7 @@ class OpenStudioHub(QMainWindow):
         if not target_url:
             target_url = f"{kitsu_url}/news-feed"
 
-        if False:  # SSO still needs a fix first
+        if False:  # SSO still needs a fix first for embeded opening
             parsed_url = urllib.parse.urlparse(kitsu_url)
             allowed_hosts = [parsed_url.hostname, "localhost", "127.0.0.1"]
 
@@ -248,11 +248,11 @@ class OpenStudioHub(QMainWindow):
         else:
             QDesktopServices.openUrl(QUrl(target_url))
 
-    def cerrar_kitsu(self) -> None:
-        self.view_stack.setCurrentWidget(self.vista_actual)
-        print("[OpenStudio Hub] Returned from Kitsu.")
+    def close_kitsu(self) -> None:
+        self.view_stack.setCurrentWidget(self.current_view)
+        print("[OpenStudioHub] Returned from Kitsu.")
 
-    def abrir_watchtower(self, project_root_path: Path, project_id: str = "") -> None:
+    def open_watchtower(self, project_root_path: Path, project_id: str = "") -> None:
         if project_id:
             kitsu_mgr = KitsuManager()
             if not kitsu_mgr.check_edit_preview_exists(project_id):
@@ -293,7 +293,7 @@ class OpenStudioHub(QMainWindow):
 
         self.ctx.auth_service.logout()
         self.ctx.credential_vault.clear()
-        self.mostrar_login()
+        self.show_login()
 
 
 if __name__ == "__main__":

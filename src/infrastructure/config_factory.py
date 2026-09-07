@@ -75,7 +75,7 @@ class ConfigFactory:
     # ATOMIC PERSISTENCE (CRUD ENGINE)
     # ---------------------------------------------------------
 
-    def guardar_configuracion(self, datos_dict: dict, from_seed: bool = False) -> bool:
+    def save_configuration(self, datos_dict: dict, from_seed: bool = False) -> bool:
         """
         Public API: Receives a structured payload, injects semantic validations,
         and atomically writes data to disk.
@@ -86,15 +86,15 @@ class ConfigFactory:
         try:
             # 1. Extraction and Normalization
             kitsu_url = datos_dict.get("kitsu_production", {}).get("api_url", "").strip()
-            
+
             vcs_data = datos_dict.get("vcs_engine", {})
             vcs_sys = vcs_data.get("active_adapter", "svn").strip()
             vendor_sparse = bool(vcs_data.get("enable_vendor_sparse_checkout", True))
             repo_url = vcs_data.get("repository_url", "").strip()
-            
+
             topo_data = datos_dict.get("project_topography", {})
             infra_data = datos_dict.get("infrastructure_topology", {})
-            
+
             # 2. B2B Schema Scaffolding
             if "studio_profile" not in self._config: self._config["studio_profile"] = {}
             if "vcs_engine" not in self._config: self._config["vcs_engine"] = {}
@@ -106,14 +106,14 @@ class ConfigFactory:
             # 3. Semantic Validations & Injection
             if "local_workspace_root" not in self._config["vcs_engine"]:
                 self._config["vcs_engine"]["local_workspace_root"] = {}
-            
+
             # Multi-OS Mapping
             if "local_workspace_root" in vcs_data:
                 self._config["vcs_engine"]["local_workspace_root"] = vcs_data["local_workspace_root"]
 
             if kitsu_url:
                 self._config["kitsu_production"]["api_url"] = kitsu_url
-                
+
             studio_name = datos_dict.get("studio_profile", {}).get("name", "").strip()
             if studio_name:
                 self._config["studio_profile"]["name"] = studio_name
@@ -125,7 +125,7 @@ class ConfigFactory:
                 self._config["project_topography"]["vfs_local"] = topo_data.get("vfs_local", "local")
                 self._config["project_topography"]["vfs_pipeline"] = topo_data.get("vfs_pipeline", "pipeline")
                 self._config["project_topography"]["custom_dirs"] = topo_data.get("custom_dirs", [])
-                
+
             # Infrastructure & Vault Mapping
             if infra_data:
                 self._config["infrastructure_topology"]["vault_path"] = infra_data.get("vault_path", "")
@@ -136,6 +136,8 @@ class ConfigFactory:
                 self._config["vcs_engine"]["active_adapter"] = "git-svn"
             elif "git" in vcs_clean:
                 self._config["vcs_engine"]["active_adapter"] = "git-lfs"
+            elif "none" in vcs_clean:
+                self._config["vcs_engine"]["active_adapter"] = "none"
             else:
                 self._config["vcs_engine"]["active_adapter"] = "svn"
 
@@ -183,14 +185,14 @@ class ConfigFactory:
         os_key = self._get_current_os()
         vcs_config = self._config.get("vcs_engine", {})
         roots = vcs_config.get("local_workspace_root", {})
-        
+
         root_str = roots.get(os_key)
         if not root_str:
             # Fallback seguro en lugar de romper la app con ValueError
             return Path.home() / "openstudio_projects"
-            
+
         return Path(root_str)
-        
+
     def get_vault_path(self) -> Path:
         """
         Returns the absolute path to the Vault.
@@ -199,7 +201,7 @@ class ConfigFactory:
         vault_str = self._config.get("infrastructure_topology", {}).get("vault_path", "")
         if vault_str:
             return Path(vault_str)
-            
+
         # Fallback dinámico
         return self.get_workspace_root() / "openstudio_vault"
 

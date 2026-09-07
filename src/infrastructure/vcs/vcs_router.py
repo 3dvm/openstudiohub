@@ -45,5 +45,7 @@ class VCSRouter:
             return SVNAdapter(self.repo_url, self.workspace_dir)
         elif self.vcs_type == "git-lfs":
             return GitLFSAdapter(self.repo_url, self.workspace_dir)
+        elif self.vcs_type == "none":
+            return None
         else:
             raise ValueError(f"Unsupported or unknown VCS engine: '{self.vcs_type}'")

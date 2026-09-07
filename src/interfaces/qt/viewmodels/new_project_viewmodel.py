@@ -56,6 +56,7 @@ class NewProjectViewModel(BaseViewModel):
         splash: str,
         vcs_user: str,
         vcs_pwd: str,
+        vcs_enabled: bool = True,
     ) -> None:
         self.set_busy(True)
         self._worker = ProjectCreationWorker(
@@ -67,7 +68,7 @@ class NewProjectViewModel(BaseViewModel):
             splash,
             vcs_user,
             vcs_pwd,
-            vcs_enabled=True,
+            vcs_enabled=vcs_enabled,
         )
         self._worker.result.connect(self._on_creation_finished)
         self._worker.finished.connect(self._worker.deleteLater)
