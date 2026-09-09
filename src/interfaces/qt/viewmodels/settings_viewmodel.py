@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Signal
 
+from src.application.credential_vault import CredentialVault
 from src.application.services.vault_service import VaultService
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 
@@ -27,11 +28,13 @@ class SettingsViewModel(BaseViewModel):
         config_factory,
         vault_service: VaultService,
         status_sink: StatusSink | None = None,
+        credential_vault: CredentialVault | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.config_factory = config_factory
         self.vault_service = vault_service
+        self.credential_vault = credential_vault
 
     def load_state(self) -> dict:
         """Return the data the View needs to hydrate its tabs."""
@@ -46,3 +49,17 @@ class SettingsViewModel(BaseViewModel):
 
     def export_seed(self, config_payload: dict, dest_dir: Path) -> tuple[bool, str]:
         return self.config_factory.exportar_semilla(config_payload, dest_dir)
+
+    # ------------------------------------------------------------------
+    # Session VCS credentials (RAM-only, never persisted)
+    # ------------------------------------------------------------------
+    def load_session_credentials(self) -> tuple[str, bool]:
+        if self.credential_vault is None:
+            return "", False
+        username, _ = self.credential_vault.get_svn_credentials()
+        return username or "", self.credential_vault.is_svn_enabled()
+
+    def save_session_credentials(self, username: str, password: str, enabled: bool) -> None:
+        if self.credential_vault is None:
+            return
+        self.credential_vault.save_svn_credentials(username, password, enabled)

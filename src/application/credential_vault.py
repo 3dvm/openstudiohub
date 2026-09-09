@@ -23,6 +23,7 @@ class CredentialVault:
         self._kitsu_password: Optional[str] = None
         self._svn_user: Optional[str] = None
         self._svn_password: Optional[str] = None
+        self._svn_enabled: bool = False
 
     # ------------------------------------------------------------------
     # Kitsu
@@ -39,9 +40,10 @@ class CredentialVault:
     # ------------------------------------------------------------------
     # SVN / VCS
     # ------------------------------------------------------------------
-    def save_svn_credentials(self, username: str, password: str) -> None:
+    def save_svn_credentials(self, username: str, password: str, enabled: bool = True) -> None:
         self._svn_user = username
         self._svn_password = password
+        self._svn_enabled = enabled
         os.environ[EnvKey.SVN_USER] = username
         os.environ[EnvKey.SVN_PASSWORD] = password
 
@@ -51,6 +53,12 @@ class CredentialVault:
     def has_svn_credentials(self) -> bool:
         return bool(self._svn_user and self._svn_password)
 
+    def set_svn_enabled(self, enabled: bool) -> None:
+        self._svn_enabled = enabled
+
+    def is_svn_enabled(self) -> bool:
+        return self._svn_enabled
+
     # ------------------------------------------------------------------
     # Teardown
     # ------------------------------------------------------------------
@@ -59,6 +67,7 @@ class CredentialVault:
         self._kitsu_password = None
         self._svn_user = None
         self._svn_password = None
+        self._svn_enabled = False
         for key in (
             EnvKey.KITSU_USER,
             EnvKey.KITSU_PWD,

@@ -28,7 +28,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.interfaces.qt.viewmodels.new_project_viewmodel import NewProjectViewModel
 
 
@@ -253,8 +252,7 @@ class NewProjectDialog(QDialog):
             main_template = "Macuare_Estudio"
 
         vcs_config = self.vm.config_factory.get_raw_config().get("vcs_engine", {})
-        vcs_user = vcs_config.get("vcs_username", DEV_SVN_USER)
-        vcs_pwd = vcs_config.get("vcs_password", DEV_SVN_PASSWORD)
+        vcs_user, vcs_pwd = self.vm.resolve_vcs_credentials()
 
         vcs_selection = self.combo_vcs.currentIndex()
         vcs_enabled = True

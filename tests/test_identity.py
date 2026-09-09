@@ -61,10 +61,18 @@ def test_credential_vault_roundtrip_and_env():
     assert vault.has_svn_credentials() is True
     assert vault.get_svn_credentials() == ("artist", "svn-secret")
     assert os.environ["OPENSTUDIO_SVN_USER"] == "artist"
+    assert vault.is_svn_enabled() is True
+
+    vault.set_svn_enabled(False)
+    assert vault.is_svn_enabled() is False
+
+    vault.save_svn_credentials("artist", "svn-secret", enabled=True)
+    assert vault.is_svn_enabled() is True
 
     vault.clear()
     assert vault.get_kitsu_credentials() == (None, None)
     assert vault.get_svn_credentials() == (None, None)
     assert vault.has_svn_credentials() is False
+    assert vault.is_svn_enabled() is False
     assert "OPENSTUDIO_KITSU_USER" not in os.environ
     assert "OPENSTUDIO_SVN_PASSWORD" not in os.environ

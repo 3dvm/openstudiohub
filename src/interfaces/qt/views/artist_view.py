@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QScrollArea,
     QStackedWidget,
     QVBoxLayout,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from src.application.services.auth_service import AuthService
 from src.interfaces.qt.components.task_card import TaskCard
+from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
@@ -55,6 +57,7 @@ class ViewArtist(BaseDashboardView):
         self.setObjectName("ViewArtistBase")
 
         self.add_sidebar_button("my_tasks", self.tr("My Tasks"), "📋", "list.svg", lambda: self._switch_panel("my_tasks"), active=True)
+        self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_content()
         self.vm.tasks_loaded.connect(self._on_tasks_loaded)
@@ -100,7 +103,37 @@ class ViewArtist(BaseDashboardView):
 
         self.stacked_content.addWidget(self.panel_tasks)
 
+        self.panel_settings = self._build_settings_panel()
+        self.stacked_content.addWidget(self.panel_settings)
+
         self.content_layout.addWidget(self.stacked_content, stretch=1)
+
+    def _build_settings_panel(self) -> QFrame:
+        panel = QFrame()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+
+        lbl_title = QLabel(self.tr("Session Settings"))
+        lbl_title.setObjectName("PageTitle")
+        layout.addWidget(lbl_title)
+
+        self.tab_credentials = TabCredentials()
+        layout.addWidget(self.tab_credentials)
+
+        btn_save = QPushButton(self.tr("Save Session Credentials"))
+        btn_save.setObjectName("PrimaryButton")
+        btn_save.setFixedSize(220, 40)
+        btn_save.setCursor(Qt.PointingHandCursor)
+        btn_save.clicked.connect(self._save_credentials)
+        layout.addWidget(btn_save, alignment=Qt.AlignLeft)
+
+        layout.addStretch()
+        return panel
+
+    def _save_credentials(self) -> None:
+        creds = self.tab_credentials.credentials_payload()
+        self.vm.save_vcs_settings(creds["username"], creds["password"], creds["enabled"])
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -133,8 +166,12 @@ class ViewArtist(BaseDashboardView):
 
     def _switch_panel(self, panel_id: str) -> None:
         self.set_active_sidebar_button(panel_id)
-        indices = {"my_tasks": 0, "watchtower": 1}
+        indices = {"my_tasks": 0, "settings": 1}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
+
+        if panel_id == "settings":
+            username, enabled = self.vm.vcs_settings()
+            self.tab_credentials.load_data(username, enabled)
 
     def _on_tasks_loaded(self, cards: list) -> None:
         self._cards = cards

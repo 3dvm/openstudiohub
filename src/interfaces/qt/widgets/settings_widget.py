@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.application.services.vault_service import VaultService
+from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.settings_tabs.tab_identity import TabIdentity
 from src.interfaces.qt.settings_tabs.tab_software import TabSoftware
 from src.interfaces.qt.settings_tabs.tab_topography import TabTopography
@@ -71,12 +72,14 @@ class SettingsWidget(QFrame):
         self.tab_vcs = TabVCS(parent=self.stack)
         self.tab_topography = TabTopography(parent=self.stack)
         self.tab_software = TabSoftware(self.stack, self.vault_service, self.status_callback)
+        self.tab_credentials = TabCredentials(parent=self.stack)
 
         self._add_nav_item(self.tr("Identity and API"), self.tab_identity, 0)
         self._add_nav_item(self.tr("Vault Storage"), self.tab_vault, 1)
         self._add_nav_item(self.tr("Pipeline and VCS"), self.tab_vcs, 2)
         self._add_nav_item(self.tr("Project Topography"), self.tab_topography, 3)
         self._add_nav_item(self.tr("Software and Manifest"), self.tab_software, 4)
+        self._add_nav_item(self.tr("Session Credentials"), self.tab_credentials, 5)
 
         self.tab_bar_layout.addStretch()
         self.tab_bar_layout.addWidget(self.lbl_unsaved_warning)
@@ -133,6 +136,7 @@ class SettingsWidget(QFrame):
         self.tab_vcs.modified.connect(self._on_field_modified)
         self.tab_topography.modified.connect(self._on_field_modified)
         self.tab_software.modified.connect(self._on_field_modified)
+        self.tab_credentials.modified.connect(self._on_field_modified)
 
     def _on_field_modified(self) -> None:
         self.lbl_unsaved_warning.setText(self.tr("● Unsaved Changes"))
@@ -158,12 +162,13 @@ class SettingsWidget(QFrame):
         active_adapter = vcs.get("active_adapter", "svn")
         repo_url = vcs.get("repository_url", "")
         enable_sparse = vcs.get("enable_vendor_sparse_checkout", True)
-        vcs_user = vcs.get("vcs_username", "")
-        vcs_pwd = vcs.get("vcs_password", "")
 
-        self.tab_vcs.load_data(active_adapter, repo_url, enable_sparse, vcs_user, vcs_pwd)
+        self.tab_vcs.load_data(active_adapter, repo_url, enable_sparse)
         self.tab_topography.load_data(topo)
         self.tab_software.load_data(manifest)
+
+        vcs_username, vcs_enabled = self.vm.load_session_credentials()
+        self.tab_credentials.load_data(vcs_username, vcs_enabled)
 
         self.lbl_unsaved_warning.setText("")
 
@@ -202,9 +207,12 @@ class SettingsWidget(QFrame):
 
         config_ok, vault_ok = self.vm.save(payload, software_payload)
 
+        creds = self.tab_credentials.credentials_payload()
+        self.vm.save_session_credentials(creds["username"], creds["password"], creds["enabled"])
+
         if config_ok and vault_ok:
             self.lbl_unsaved_warning.setText("")
-            self.status_callback(self.tr("✓ Local settings and Network Manifest saved successfully."), "green")
+            self.status_callback(self.tr("✓ Local settings and Network Manifest saved successfully. VCS credentials kept in RAM for this session."), "green")
             self._load_current_data()
         else:
             if not config_ok:

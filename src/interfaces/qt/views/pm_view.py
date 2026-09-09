@@ -9,8 +9,10 @@
 Switches between the project list and the batch entity builder.
 """
 
-from PySide6.QtWidgets import QStackedWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QStackedWidget, QVBoxLayout
 
+from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
 from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderViewModel
@@ -29,17 +31,20 @@ class ViewPM(BaseDashboardView):
         config_factory,
         on_logout,
         status_sink: StatusSink | None = None,
+        credential_vault=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, auth_service, config_factory, on_logout, status_sink, **kwargs)
 
         self.project_list_vm = project_list_vm
         self.blend_builder_vm = blend_builder_vm
+        self.credential_vault = credential_vault
 
         self.setObjectName("ViewPMBase")
 
         self.add_sidebar_button("btn_projects", self.tr("Projects"), "📁", "folder.svg", lambda: self._switch_panel("btn_projects"), active=True)
         self.add_sidebar_button("btn_batch", self.tr("Batch Creation"), "📦", "box.svg", lambda: self._switch_panel("btn_batch"))
+        self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_pm_content()
 
@@ -59,16 +64,54 @@ class ViewPM(BaseDashboardView):
         )
         self.stacked_content.addWidget(self.blend_builder)
 
+        self.panel_settings = self._build_settings_panel()
+        self.stacked_content.addWidget(self.panel_settings)
+
         self.content_layout.addWidget(self.stacked_content, stretch=1)
         self.project_list.refresh()
 
+    def _build_settings_panel(self) -> QFrame:
+        panel = QFrame()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+
+        lbl_title = QLabel(self.tr("Session Settings"))
+        lbl_title.setObjectName("PageTitle")
+        layout.addWidget(lbl_title)
+
+        self.tab_credentials = TabCredentials()
+        layout.addWidget(self.tab_credentials)
+
+        btn_save = QPushButton(self.tr("Save Session Credentials"))
+        btn_save.setObjectName("PrimaryButton")
+        btn_save.setFixedSize(220, 40)
+        btn_save.setCursor(Qt.PointingHandCursor)
+        btn_save.clicked.connect(self._save_credentials)
+        layout.addWidget(btn_save, alignment=Qt.AlignLeft)
+
+        layout.addStretch()
+        return panel
+
+    def _save_credentials(self) -> None:
+        creds = self.tab_credentials.credentials_payload()
+        username = creds["username"]
+        if not username:
+            user = self.auth.current_user
+            username = user.email if user else "pm"
+        self.credential_vault.save_svn_credentials(username, creds["password"], creds["enabled"])
+        self.update_status(self.tr("✓ VCS credentials stored in RAM for this session."), "green")
+
     def _switch_panel(self, panel_id: str) -> None:
         self.set_active_sidebar_button(panel_id)
-        indices = {"btn_projects": 0, "btn_batch": 1}
+        indices = {"btn_projects": 0, "btn_batch": 1, "settings": 2}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
 
         if panel_id == "btn_projects":
             self.project_list.refresh()
+        elif panel_id == "settings" and self.credential_vault is not None:
+            username, _ = self.credential_vault.get_svn_credentials()
+            self.tab_credentials.load_data(username or "", self.credential_vault.is_svn_enabled())
 
     def _open_wizard_for_project(self, project_name: str) -> None:
         self._switch_panel("btn_batch")

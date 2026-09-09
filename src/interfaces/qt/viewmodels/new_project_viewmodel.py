@@ -12,9 +12,11 @@ collects the form inputs and forwards them here for the heavy I/O.
 
 from PySide6.QtCore import Signal
 
+from src.application.credential_vault import CredentialVault
 from src.application.services.project_creation_service import ProjectCreationService
 from src.application.services.production_service import ProductionService
 from src.application.services.vault_service import VaultService
+from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.new_project_workers import (
     FetchKitsuTemplatesWorker,
@@ -32,6 +34,7 @@ class NewProjectViewModel(BaseViewModel):
         production_service: ProductionService,
         vault_service: VaultService,
         status_sink: StatusSink | None = None,
+        credential_vault: CredentialVault | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -39,8 +42,15 @@ class NewProjectViewModel(BaseViewModel):
         self.production_service = production_service
         self.project_creation_service = ProjectCreationService(config_factory)
         self.vault_data = vault_service.load_inventory()
+        self.credential_vault = credential_vault
 
         self._worker = None
+
+    def resolve_vcs_credentials(self) -> tuple[str, str]:
+        user, pwd = "", ""
+        if self.credential_vault is not None:
+            user, pwd = self.credential_vault.get_svn_credentials()
+        return user or DEV_SVN_USER, pwd or DEV_SVN_PASSWORD
 
     def load_templates(self) -> None:
         self._templates_worker = FetchKitsuTemplatesWorker(self.production_service)

@@ -21,7 +21,6 @@ from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
-from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.artist_workers import (
     FetchArtistTasksWorker,
@@ -147,6 +146,11 @@ class ArtistViewModel(BaseViewModel):
             self.report_status("Config file missing. Reinstall workspace.", "red")
             return
 
+        svn_user, svn_pwd = self.credential_vault.get_svn_credentials()
+        if not self.credential_vault.is_svn_enabled() or not svn_pwd:
+            self.report_status("VCS is disabled or no session credentials set. Open Settings to configure VCS.", "red")
+            return
+
         self.report_status("🚀 Delegating to the DCC orchestrator...", "yellow")
 
         kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
@@ -161,8 +165,8 @@ class ArtistViewModel(BaseViewModel):
         kwargs = {
             "project_root": card.project_root,
             "config_path": config_path,
-            "svn_user": DEV_SVN_USER,
-            "svn_pwd": DEV_SVN_PASSWORD,
+            "svn_user": svn_user,
+            "svn_pwd": svn_pwd,
             "kitsu_user": kitsu_user,
             "kitsu_pwd": kitsu_pwd,
             "kitsu_host": kitsu_host,
@@ -193,8 +197,11 @@ class ArtistViewModel(BaseViewModel):
             self.report_status("Please wait, an installation is already running...", "red")
             return
 
-        vcs_user = self.auth_service.current_user.email if self.auth_service.current_user else "artist"
-        vcs_pwd = self.auth_service.access_token()
+        vcs_user, vcs_pwd = self.credential_vault.get_svn_credentials()
+        if not vcs_user:
+            vcs_user = self.auth_service.current_user.email if self.auth_service.current_user else "artist"
+        if not vcs_pwd:
+            vcs_pwd = self.auth_service.access_token()
 
         self._install_worker = InstallProjectWorker(
             project_root=card.project_root,
@@ -213,3 +220,16 @@ class ArtistViewModel(BaseViewModel):
             self.load_tasks()
         else:
             self.report_status(f"🔴 Install Error: {message}", "red")
+
+    # ------------------------------------------------------------------
+    # Session VCS settings (RAM-only)
+    # ------------------------------------------------------------------
+    def vcs_settings(self) -> tuple[str, bool]:
+        username, _ = self.credential_vault.get_svn_credentials()
+        return username or "", self.credential_vault.is_svn_enabled()
+
+    def save_vcs_settings(self, username: str, password: str, enabled: bool) -> None:
+        if not username:
+            username = self.auth_service.current_user.email if self.auth_service.current_user else "artist"
+        self.credential_vault.save_svn_credentials(username, password, enabled)
+        self.report_status("✓ VCS credentials stored in RAM for this session.", "green")

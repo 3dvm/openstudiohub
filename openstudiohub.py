@@ -152,6 +152,7 @@ class OpenStudioHub(QMainWindow):
             open_watchtower_callback=lambda project_dir: self.open_watchtower(project_dir),
             instance_lock_callback=self.register_instance,
             status_sink=self.ctx.status_sink,
+            credential_vault=self.ctx.credential_vault,
         )
 
     def _build_td_view(self, nas_dir):
@@ -159,7 +160,12 @@ class OpenStudioHub(QMainWindow):
         infrastructure_vm = InfrastructureViewModel(
             self.ctx.config_factory, self.ctx.production_service, self.ctx.status_sink
         )
-        settings_vm = SettingsViewModel(self.ctx.config_factory, self.ctx.vault_service, self.ctx.status_sink)
+        settings_vm = SettingsViewModel(
+            self.ctx.config_factory,
+            self.ctx.vault_service,
+            self.ctx.status_sink,
+            credential_vault=self.ctx.credential_vault,
+        )
 
         return ViewTD(
             parent=self,
@@ -195,6 +201,7 @@ class OpenStudioHub(QMainWindow):
             config_factory=self.ctx.config_factory,
             on_logout=self.ejecutar_logout,
             status_sink=self.ctx.status_sink,
+            credential_vault=self.ctx.credential_vault,
         )
 
     def _build_artist_view(self, nas_dir):
@@ -222,6 +229,7 @@ class OpenStudioHub(QMainWindow):
             self.ctx.config_factory,
             self.ctx.production_service,
             self.ctx.vault_service,
+            credential_vault=self.ctx.credential_vault,
         )
         dialog = NewProjectDialog(self, vm, on_success_callback=self._on_project_created)
         dialog.show()

@@ -22,7 +22,6 @@ from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 from src.application.services.project_audit_service import ProjectAuditService
 from src.domain.workspace.entities import ERROR_KITSU_ORPHAN, ERROR_NAS_GHOST
-from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.infrastructure.nas_manager import NasManager
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.project_list_workers import ProjectGridWorker
@@ -48,6 +47,7 @@ class ProjectListViewModel(BaseViewModel):
         open_watchtower_callback: Callable[[Path], None],
         instance_lock_callback: Callable[[bool], None] | None = None,
         status_sink: StatusSink | None = None,
+        credential_vault=None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -61,6 +61,7 @@ class ProjectListViewModel(BaseViewModel):
         self.open_watchtower_callback = open_watchtower_callback
         self.instance_lock_callback = instance_lock_callback or (lambda _active: None)
         self.audit_service = audit_service
+        self.credential_vault = credential_vault
 
         self.nas_manager = NasManager(self.nas_dir)
         self._projects: List[dict] = []
@@ -161,12 +162,10 @@ class ProjectListViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     def install_project(self, project_dir: Path) -> None:
         vcs_user, vcs_pwd = "", ""
-        if self.read_vcs_credentials:
-            vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
-            vcs_user = vcs_config.get("vcs_username", DEV_SVN_USER)
-            vcs_pwd = vcs_config.get("vcs_password", DEV_SVN_PASSWORD)
+        if self.read_vcs_credentials and self.credential_vault is not None:
+            vcs_user, vcs_pwd = self.credential_vault.get_svn_credentials()
 
-        self._install_worker = self._build_install_worker(project_dir, vcs_user, vcs_pwd)
+        self._install_worker = self._build_install_worker(project_dir, vcs_user or "", vcs_pwd or "")
         self._install_worker.progress_update.connect(self.report_status)
         self._install_worker.finished_install.connect(
             lambda success, msg, p=project_dir: self._on_install_finished(p, success, msg)
