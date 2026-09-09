@@ -11,11 +11,14 @@ Switches between the project list, infrastructure and settings widgets.
 
 from PySide6.QtWidgets import QStackedWidget
 
+from src.application.services.project_audit_service import ProjectAuditService
 from src.application.services.vault_service import VaultService
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
 from src.interfaces.qt.viewmodels.infrastructure_viewmodel import InfrastructureViewModel
+from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
+from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
 from src.interfaces.qt.widgets.infrastructure_widget import InfrastructureWidget
 from src.interfaces.qt.widgets.project_list_widget import ProjectListWidget
@@ -29,12 +32,15 @@ class ViewTD(BaseDashboardView):
         project_list_vm: ProjectListViewModel,
         infrastructure_vm: InfrastructureViewModel,
         settings_vm: SettingsViewModel,
+        audit_vm: ProjectAuditViewModel,
+        repair_vm: ProjectRepairViewModel,
         auth_service,
         config_factory,
         production_service,
         vault_service: VaultService,
         on_logout,
         on_new_project_callback=None,
+        on_repair_callback=None,
         status_sink: StatusSink | None = None,
         **kwargs,
     ) -> None:
@@ -43,9 +49,12 @@ class ViewTD(BaseDashboardView):
         self.project_list_vm = project_list_vm
         self.infrastructure_vm = infrastructure_vm
         self.settings_vm = settings_vm
+        self.audit_vm = audit_vm
+        self.repair_vm = repair_vm
         self.production_service = production_service
         self.vault_service = vault_service
         self.on_new_project_callback = on_new_project_callback
+        self.on_repair_callback = on_repair_callback
 
         self.setObjectName("ViewTDBase")
 
@@ -62,7 +71,10 @@ class ViewTD(BaseDashboardView):
         self.projects_view = ProjectListWidget(
             parent=self.stacked_content,
             viewmodel=self.project_list_vm,
+            audit_vm=self.audit_vm,
+            repair_vm=self.repair_vm,
             on_new_project_callback=self.on_new_project_callback,
+            on_repair_callback=self.on_repair_callback,
         )
         self.stacked_content.addWidget(self.projects_view)
 

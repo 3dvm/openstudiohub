@@ -20,6 +20,7 @@ from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSin
 class ProjectAuditViewModel(BaseViewModel):
     audit_completed = Signal(object)  # HubProject
     audit_failed = Signal(str)
+    audit_bulk_completed = Signal(list)
 
     def __init__(
         self,
@@ -32,3 +33,6 @@ class ProjectAuditViewModel(BaseViewModel):
 
     def audit(self, project_name: str, kitsu_id: str = "") -> None:
         raise NotImplementedError("ProjectAuditViewModel is not wired yet (Phase 2).")
+
+    def audit_projects(self, projects_data: list) -> None:
+        raise NotImplementedError("Bulk audit is not wired yet (phase 2).")

@@ -56,11 +56,11 @@ class AppContext:
 
         # Application services for the future audit/repair use cases.
         self.audit_service = ProjectAuditService(self.nas_manager, self.kitsu)
-        self.repair_service = ProjectRepairService(self.kitsu, self.nas_manager, self.vcs_router)
+        self.repair_service = ProjectRepairService(self.kitsu, self.nas_manager, self.config_factory)
 
         # Shared status channel for the dashboard ViewModels.
         self.status_sink = StatusSink()
 
         # ViewModels for the upcoming audit/repair features (Phase 2 wiring).
         self.audit_viewmodel = ProjectAuditViewModel(self.audit_service, self.status_sink)
-        self.repair_viewmodel = ProjectRepairViewModel(self.repair_service, self.status_sink)
+        self.repair_viewmodel = ProjectRepairViewModel(self.repair_service, self.credential_vault, self.status_sink)

@@ -28,27 +28,36 @@ from PySide6.QtWidgets import (
 
 from src.interfaces.qt.components.project_card import ProjectCard
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
-
+from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
+from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
+from src.interfaces.qt.views.repair_project_dialog import RepairBatchDialog
 
 class ProjectListWidget(QFrame):
     def __init__(
         self,
         parent,
         viewmodel: ProjectListViewModel,
+        audit_vm: ProjectAuditViewModel,
+        repair_vm: ProjectRepairViewModel,
         on_open_wizard_callback: Optional[Callable] = None,
         on_new_project_callback: Optional[Callable] = None,
+        on_repair_callback: Optional[Callable] = None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
 
         self.vm = viewmodel
+        self.audit_vm = audit_vm
+        self.repair_vm = repair_vm
         self.on_open_wizard_callback = on_open_wizard_callback
         self.on_new_project_callback = on_new_project_callback
+        self.on_repair_callback = on_repair_callback
 
         self.user_role = self.vm.user_role
 
         self._project_widgets = []
         self._cards_by_dir = {}
+        self._corrupted_projects = []
         self._current_cols = 0
 
         self.setObjectName("ProjectListWidgetBase")
@@ -79,6 +88,13 @@ class ProjectListWidget(QFrame):
         hero_layout.addWidget(self.btn_refresh)
 
         if self.user_role == "td":
+            self.btn_audit_system = QPushButton(self.tr("Repair Projects"))
+            self.btn_audit_system.setObjectName("SecondaryButton")
+            self.btn_audit_system.setFixedSize(150, 40)
+            self.btn_audit_system.setCursor(Qt.PointingHandCursor)
+            self.btn_audit_system.clicked.connect(self._on_repair_projects_clicked)
+            hero_layout.addWidget(self.btn_audit_system)
+
             self.btn_new_project = QPushButton(self.tr("Create New Project"))
             self.btn_new_project.setObjectName("PrimaryButton")
             self.btn_new_project.setFixedSize(220, 40)
@@ -118,6 +134,23 @@ class ProjectListWidget(QFrame):
     def _open_new_project(self) -> None:
         if self.on_new_project_callback:
             self.on_new_project_callback()
+
+    def _on_repair_projects_clicked(self) -> None:
+        """Shows a selectable list of damaged projects and repairs the chosen ones."""
+        if not self._corrupted_projects:
+            QMessageBox.information(self, self.tr("Repair"), self.tr("No damaged project available to repair."))
+            return
+
+        dialog = RepairBatchDialog(self, self._corrupted_projects)
+        if not dialog.exec():
+            return
+
+        for project in dialog.selected_projects():
+            self._request_repair(project["name"], project["id"], project["error_code"])
+
+    def _request_repair(self, project_name: str, project_id: str, error_code: str) -> None:
+        if self.on_repair_callback:
+            self.on_repair_callback(project_name, project_id, error_code)
 
     # ------------------------------------------------------------------
     # Responsive grid
@@ -163,6 +196,14 @@ class ProjectListWidget(QFrame):
             status = self.vm.compute_status(project_data)
             project_dir = status["project_dir"]
 
+            if status.get("is_corrupted"):
+                self._corrupted_projects.append({
+                    "name": project_data.get("name", ""),
+                    "id": project_id,
+                    "error_code": status.get("error_code"),
+                    "error_type": status.get("error_type"),
+                })
+
             card = ProjectCard(
                 parent=self.grid_widget,
                 project_data=project_data,
@@ -177,6 +218,7 @@ class ProjectListWidget(QFrame):
                 on_open_kitsu=lambda sub_path, pid=project_id: self.vm.open_kitsu(pid, sub_path),
                 on_watchtower=self.vm.open_watchtower,
                 on_open_wizard=self.on_open_wizard_callback,
+                on_repair=lambda name, pid=project_id, ec=status.get("error_code"): self._request_repair(name, pid, ec),
             )
 
             self._project_widgets.append(card)
@@ -192,6 +234,7 @@ class ProjectListWidget(QFrame):
             widget.deleteLater()
         self._project_widgets.clear()
         self._cards_by_dir.clear()
+        self._corrupted_projects.clear()
 
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)

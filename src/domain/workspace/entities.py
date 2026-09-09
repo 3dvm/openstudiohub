@@ -10,6 +10,10 @@ from typing import List, Optional
 from src.domain.production.entities import Project as KitsuProject
 from src.domain.workspace.blueprint import ProjectBlueprint
 
+# Repair error codes shared across layers.
+ERROR_NAS_GHOST = "nas_ghost"        # filesystem exists, Kitsu project missing
+ERROR_KITSU_ORPHAN = "kitsu_orphan"  # Kitsu project exists, filesystem missing
+
 @dataclass
 class ProjectHealth:
     """Value Object representing the result of the project audit."""
@@ -28,7 +32,7 @@ class ProjectHealth:
 
 @dataclass
 class HubProject:
-    """Main Hub unifiying entity between prodcution and file system."""
+    """Main Hub unifiying entity between production and file system."""
 
     name: str
     kitsu_info: Optional[KitsuProject] = None

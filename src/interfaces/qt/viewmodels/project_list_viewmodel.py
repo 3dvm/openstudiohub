@@ -11,6 +11,7 @@ orchestrates install / launch / delete. Navigation to Kitsu and Watchtower is
 delegated to shell callbacks injected at construction time.
 """
 
+from os import error
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -19,6 +20,8 @@ from PySide6.QtCore import Signal
 from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
+from src.application.services.project_audit_service import ProjectAuditService
+from src.domain.workspace.entities import ERROR_KITSU_ORPHAN, ERROR_NAS_GHOST
 from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.infrastructure.nas_manager import NasManager
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
@@ -38,6 +41,7 @@ class ProjectListViewModel(BaseViewModel):
         auth_service: AuthService,
         config_factory,
         installation_service: InstallationService,
+        audit_service: ProjectAuditService,
         read_vcs_credentials: bool,
         nas_dir: Path,
         open_kitsu_callback: Callable[[str], None],
@@ -56,6 +60,7 @@ class ProjectListViewModel(BaseViewModel):
         self.open_kitsu_callback = open_kitsu_callback
         self.open_watchtower_callback = open_watchtower_callback
         self.instance_lock_callback = instance_lock_callback or (lambda _active: None)
+        self.audit_service = audit_service
 
         self.nas_manager = NasManager(self.nas_dir)
         self._projects: List[dict] = []
@@ -97,27 +102,56 @@ class ProjectListViewModel(BaseViewModel):
         """Resolve the filesystem-backed status rendered by a project card."""
         project_name = project_data.get("name", "")
         project_code = project_data.get("code", "")
+        project_id = project_data.get("id", "")
         project_dir = self.nas_manager.resolve_project_dir(project_name, project_code)
 
-        is_installed = False
-        if self.config_factory and project_dir:
-            is_installed = self.installation_service.verify_installation(project_dir)
+        hub_project = self.audit_service.audit_project(project_name, project_id)
+        health = hub_project.health
 
-        if is_installed and project_dir:
-            blueprint = self.nas_manager.get_project_blueprint(project_dir)
-            return {
-                "project_dir": project_dir,
-                "is_installed": True,
-                "badge_text": blueprint.get("blender_version", "Blender"),
-                "sync_text": "🗄️ 🟢 Ready on Disk",
-            }
+        is_corrupted = False
+        error_type = None
+        error_code = None
 
-        return {
+        if health.is_accessible_on_nas and not health.has_kitsu_project:
+            is_corrupted = True
+            error_type = "Missing Kitsu project"
+            error_code = ERROR_NAS_GHOST
+        elif health.has_kitsu_project and not health.is_accessible_on_nas:
+            is_corrupted = True
+            error_type = "Kitsu Orphan"
+            error_code = ERROR_KITSU_ORPHAN
+
+        project_dir = self.nas_manager.resolve_project_dir(project_name)
+        is_installed = health.is_installed_locally if health.has_blueprint else False
+
+        # is_installed = False
+        # if self.config_factory and project_dir:
+        #     is_installed = self.installation_service.verify_installation(project_dir)
+        #
+        # if is_installed and project_dir:
+        #     blueprint = self.nas_manager.get_project_blueprint(project_dir)
+        #     return {
+        #         "project_dir": project_dir,
+        #         "is_installed": True,
+        #         "badge_text": blueprint.get("blender_version", "Blender"),
+        #         "sync_text": "🗄️ 🟢 Ready on Disk",
+        #     }
+
+        status = {
             "project_dir": project_dir,
-            "is_installed": False,
+            "is_installed": is_installed,
+            "is_corrupted": is_corrupted,
+            "error_type": error_type,
+            "error_code": error_code,
             "badge_text": "Not Mounted",
             "sync_text": "🗄️ ⚪ Cloud Only",
         }
+
+        if is_installed and project_dir and health.has_blueprint:
+            status["badge_text"] = hub_project.blueprint.blender_version
+            status["sync_text"] = "🟢 Ready on Disk"
+
+        return status
 
     def thumbnail_fetcher(self, project_id: str, token: str, host: str) -> Optional[bytes]:
         return self.production_service.download_project_thumbnail(project_id, token, host)

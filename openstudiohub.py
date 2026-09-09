@@ -37,6 +37,7 @@ from src.interfaces.qt.views.artist_view import ViewArtist
 from src.interfaces.qt.views.login_view import ViewLogin
 from src.interfaces.qt.views.new_project_dialog import NewProjectDialog
 from src.interfaces.qt.views.pm_view import ViewPM
+from src.interfaces.qt.views.repair_project_dialog import RepairProjectDialog
 from src.interfaces.qt.views.td_view import ViewTD
 
 
@@ -142,6 +143,7 @@ class OpenStudioHub(QMainWindow):
         return ProjectListViewModel(
             production_service=self.ctx.production_service,
             auth_service=self.ctx.auth_service,
+            audit_service=self.ctx.audit_service,
             config_factory=self.ctx.config_factory,
             installation_service=self.ctx.installation_service,
             read_vcs_credentials=read_vcs_credentials,
@@ -164,12 +166,15 @@ class OpenStudioHub(QMainWindow):
             project_list_vm=project_list_vm,
             infrastructure_vm=infrastructure_vm,
             settings_vm=settings_vm,
+            audit_vm=self.ctx.audit_viewmodel,
+            repair_vm=self.ctx.repair_viewmodel,
             auth_service=self.ctx.auth_service,
             config_factory=self.ctx.config_factory,
             production_service=self.ctx.production_service,
             vault_service=self.ctx.vault_service,
             on_logout=self.ejecutar_logout,
             on_new_project_callback=self._open_new_project_dialog,
+            on_repair_callback=self._open_repair_dialog,
             status_sink=self.ctx.status_sink,
         )
 
@@ -219,6 +224,20 @@ class OpenStudioHub(QMainWindow):
             self.ctx.vault_service,
         )
         dialog = NewProjectDialog(self, vm, on_success_callback=self._on_project_created)
+        dialog.show()
+
+    def _open_repair_dialog(self, project_name: str, project_id: str, error_code: str) -> None:
+        dialog = RepairProjectDialog(
+            parent=self,
+            repair_vm=self.ctx.repair_viewmodel,
+            production_service=self.ctx.production_service,
+            vault_service=self.ctx.vault_service,
+            config_factory=self.ctx.config_factory,
+            project_name=project_name,
+            project_id=project_id,
+            error_code=error_code,
+            on_success_callback=self._on_project_created,
+        )
         dialog.show()
 
     def _on_project_created(self) -> None:

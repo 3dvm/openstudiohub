@@ -120,6 +120,8 @@ class ProjectCard(QFrame):
         on_open_kitsu: Callable,
         on_watchtower: Callable,
         on_open_wizard: Optional[Callable] = None,
+        on_repair: Optional[Callable] = None,
+
     ) -> None:
         super().__init__(parent)
 
@@ -135,6 +137,7 @@ class ProjectCard(QFrame):
         self.on_open_kitsu = on_open_kitsu
         self.on_watchtower = on_watchtower
         self.on_open_wizard = on_open_wizard
+        self.on_repair = on_repair
 
         self.project_dir = status["project_dir"]
         self.is_installed = status["is_installed"]
@@ -332,6 +335,31 @@ class ProjectCard(QFrame):
 
     def _apply_status(self, status: dict) -> None:
         """Update the sync badge and primary action button from computed state."""
+
+        if status.get("is_corrupted"):
+            error_msg = status.get("error_type", "Unknown Error")
+            self.lbl_sync_status.setText(self.tr(f"Corrupted: {error_msg}"))
+            self.lbl_badge.setText(self.tr("Error"))
+            self.btn_primary_action.setEnabled(False)
+            self.btn_primary_action.setText(self.tr("Repair Project"))
+
+            if self.user_role == "td" and self.on_repair:
+                self.actions_layout.addWidget(self.btn_primary_action)
+                self.btn_primary_action.setEnabled(True)
+                self.btn_primary_action.setStyleSheet(
+                    "background-color: #EF4444; color: white; font-weight: bold; border-radius: 6px; border: none;"
+                )
+                self.btn_primary_action.clicked.connect(
+                    lambda: self.on_repair(
+                        self.project_name,
+                        self.project_data.get("id", ""),
+                        status.get("error_code"),
+                    )
+                )
+                self.btn_primary_action.show()
+
+            return
+
         if status["is_installed"] and self.project_dir:
             self.lbl_sync_status.setText(self.tr("🗄️ 🟢 Ready on Disk"))
             self.lbl_sync_status.setStyleSheet("color: #10B981; font-size: 12px; font-weight: bold;")
