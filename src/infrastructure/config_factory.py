@@ -52,15 +52,15 @@ class ConfigFactory:
     # PROVISIONING ENGINE (STUDIO SEED)
     # ---------------------------------------------------------
 
-    def exportar_semilla(self, payload: dict, destino_dir: Path) -> tuple[bool, str]:
+    def export_seed(self, payload: dict, destino_dir: Path) -> tuple[bool, str]:
         """DEPRECATED: delegates to StudioSeedService."""
         return self._seed_service.export_seed(payload, destino_dir)
 
-    def importar_semilla(self, seed_path: Path) -> bool:
+    def import_seed(self, seed_path: Path) -> bool:
         """DEPRECATED: delegates to StudioSeedService."""
         return self._seed_service.import_seed(seed_path)
 
-    def purgar_configuracion_local(self) -> bool:
+    def purge_local_configuration(self) -> bool:
         """Destroys local settings.json returning the Hub to Day 0 state."""
         try:
             if self.config_path.exists():
@@ -74,6 +74,12 @@ class ConfigFactory:
     # ---------------------------------------------------------
     # ATOMIC PERSISTENCE (CRUD ENGINE)
     # ---------------------------------------------------------
+
+    def _persist(self) -> None:
+        """Atomically write the in-memory config to disk and reload it."""
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(self._config, f, indent=4, ensure_ascii=False)
+        self._load_config()
 
     def save_configuration(self, datos_dict: dict, from_seed: bool = False) -> bool:
         """
@@ -145,14 +151,24 @@ class ConfigFactory:
             self._config["vcs_engine"]["repository_url"] = repo_url
 
             # 4. Atomic Disk Write
-            with open(self.config_path, 'w', encoding='utf-8') as f:
-                json.dump(self._config, f, indent=4, ensure_ascii=False)
-
-            self._load_config()
+            self._persist()
             return True
 
         except Exception as e:
             print(f"[CONFIG FACTORY ERROR] Critical error during atomic write: {e}")
+            return False
+
+    def set_local_workspace_root(self, path: Path) -> bool:
+        """Persist the projects base folder for the CURRENT OS only (per-machine override)."""
+        try:
+            os_key = self._get_current_os()
+            vcs = self._config.setdefault("vcs_engine", {})
+            roots = vcs.setdefault("local_workspace_root", {})
+            roots[os_key] = str(path)
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to persist workspace root: {e}")
             return False
 
     # ---------------------------------------------------------
@@ -177,7 +193,7 @@ class ConfigFactory:
     def _get_current_os(self) -> str:
         system = platform.system().lower()
         if system == "windows": return "windows"
-        elif system == "darwin": return "darwin"
+        elif system == "darwin": return "macos"
         else: return "linux"
 
     def get_workspace_root(self) -> Path:

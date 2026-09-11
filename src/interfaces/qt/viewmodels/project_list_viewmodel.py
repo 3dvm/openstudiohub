@@ -21,9 +21,19 @@ from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 from src.application.services.project_audit_service import ProjectAuditService
-from src.domain.workspace.entities import ERROR_KITSU_ORPHAN, ERROR_NAS_GHOST
+from src.domain.workspace.entities import (
+    ERROR_INVALID_BLUEPRINT,
+    ERROR_KITSU_ORPHAN,
+    ERROR_MISSING_BLUEPRINT,
+    ERROR_NAS_GHOST,
+)
 from src.infrastructure.nas_manager import NasManager
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
+from src.interfaces.qt.viewmodels.vcs_credential_gate import (
+    VcsPrompt,
+    ensure_vcs_credentials,
+    vcs_requires_credentials,
+)
 from src.interfaces.qt.workers.project_list_workers import ProjectGridWorker
 
 
@@ -48,6 +58,7 @@ class ProjectListViewModel(BaseViewModel):
         instance_lock_callback: Callable[[bool], None] | None = None,
         status_sink: StatusSink | None = None,
         credential_vault=None,
+        vcs_prompt: VcsPrompt | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -62,10 +73,13 @@ class ProjectListViewModel(BaseViewModel):
         self.instance_lock_callback = instance_lock_callback or (lambda _active: None)
         self.audit_service = audit_service
         self.credential_vault = credential_vault
+        self.vcs_prompt = vcs_prompt
 
         self.nas_manager = NasManager(self.nas_dir)
         self._projects: List[dict] = []
+        self._worker = None
         self._install_worker = None
+        self._refresh_pending = False
 
     # ------------------------------------------------------------------
     # Queries
@@ -83,13 +97,26 @@ class ProjectListViewModel(BaseViewModel):
         return self.auth_service.host
 
     def refresh(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._refresh_pending = True
+            return
+
         self.report_status("Syncing projects catalog...", "yellow")
         self._projects = []
 
         self._worker = ProjectGridWorker(self.production_service)
         self._worker.data_ready.connect(self._on_projects_fetched)
-        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.finished.connect(self._on_grid_worker_finished)
         self._worker.start()
+
+    def _on_grid_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self._worker = None
+        if self._refresh_pending:
+            self._refresh_pending = False
+            self.refresh()
 
     def _on_projects_fetched(self, projects: list) -> None:
         self._projects = projects
@@ -121,9 +148,17 @@ class ProjectListViewModel(BaseViewModel):
             is_corrupted = True
             error_type = "Kitsu Orphan"
             error_code = ERROR_KITSU_ORPHAN
+        elif health.is_accessible_on_nas and health.has_kitsu_project and not health.has_blueprint:
+            is_corrupted = True
+            error_type = "Missing blueprint (project_init.json)"
+            error_code = ERROR_MISSING_BLUEPRINT
+        elif health.is_accessible_on_nas and health.has_kitsu_project and not health.has_valid_blueprint:
+            is_corrupted = True
+            error_type = "Invalid blueprint (project_init.json)"
+            error_code = ERROR_INVALID_BLUEPRINT
 
         project_dir = self.nas_manager.resolve_project_dir(project_name)
-        is_installed = health.is_installed_locally if health.has_blueprint else False
+        is_installed = health.is_installed_locally if health.has_valid_blueprint else False
 
         # is_installed = False
         # if self.config_factory and project_dir:
@@ -148,7 +183,7 @@ class ProjectListViewModel(BaseViewModel):
             "sync_text": "🗄️ ⚪ Cloud Only",
         }
 
-        if is_installed and project_dir and health.has_blueprint:
+        if is_installed and project_dir and health.has_valid_blueprint:
             status["badge_text"] = hub_project.blueprint.blender_version
             status["sync_text"] = "🟢 Ready on Disk"
 
@@ -160,17 +195,38 @@ class ProjectListViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
-    def install_project(self, project_dir: Path) -> None:
-        vcs_user, vcs_pwd = "", ""
-        if self.read_vcs_credentials and self.credential_vault is not None:
-            vcs_user, vcs_pwd = self.credential_vault.get_svn_credentials()
+    def _ensure_vcs_credentials(self) -> Optional[tuple[str, str]]:
+        """Gate VCS-backed actions behind the session credentials prompt."""
+        return ensure_vcs_credentials(
+            required=vcs_requires_credentials(self.config_factory),
+            credential_vault=self.credential_vault,
+            prompt=self.vcs_prompt,
+            report_status=self.report_status,
+        )
 
-        self._install_worker = self._build_install_worker(project_dir, vcs_user or "", vcs_pwd or "")
+    def install_project(self, project_dir: Path) -> None:
+        if self._install_worker is not None and self._install_worker.isRunning():
+            self.report_status("Please wait, an installation is already running...", "red")
+            return
+
+        creds = self._ensure_vcs_credentials()
+        if creds is None:
+            return
+        vcs_user, vcs_pwd = creds
+
+        self._install_worker = self._build_install_worker(project_dir, vcs_user, vcs_pwd)
         self._install_worker.progress_update.connect(self.report_status)
         self._install_worker.finished_install.connect(
             lambda success, msg, p=project_dir: self._on_install_finished(p, success, msg)
         )
+        self._install_worker.finished.connect(self._on_install_worker_finished)
         self._install_worker.start()
+
+    def _on_install_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self._install_worker = None
 
     def _build_install_worker(self, project_dir: Path, vcs_user: str, vcs_pwd: str):
         from src.interfaces.qt.workers.project_list_workers import ProjectInstallWorker
@@ -189,6 +245,10 @@ class ProjectListViewModel(BaseViewModel):
         config_path = project_dir / "local" / "project_config.json"
         if not config_path.exists():
             self.report_status("Error: config missing.", "red")
+            return
+
+        creds = self._ensure_vcs_credentials()
+        if creds is None:
             return
 
         try:

@@ -45,10 +45,11 @@ class FakeConfigFactory:
 
 
 class DummyHealth:
-    def __init__(self, is_nas=False, has_kitsu=True, has_bp=False, is_local=False) -> None:
+    def __init__(self, is_nas=False, has_kitsu=True, has_bp=False, has_valid_bp=None, is_local=False) -> None:
         self.is_accessible_on_nas = is_nas
         self.has_kitsu_project = has_kitsu
         self.has_blueprint = has_bp
+        self.has_valid_blueprint = has_bp if has_valid_bp is None else has_valid_bp
         self.is_installed_locally = is_local
 
 class DummyBlueprint:
@@ -112,3 +113,65 @@ def test_compute_status_installed(tmp_path, qapp):
     assert status["is_corrupted"] is False
     assert status["badge_text"] == "5.1.2"
     assert status["project_dir"] == project
+
+
+def test_compute_status_missing_blueprint(tmp_path, qapp):
+    from src.domain.workspace.entities import ERROR_MISSING_BLUEPRINT
+
+    nas_dir = tmp_path / "workspace"
+    nas_dir.mkdir(exist_ok=True)
+
+    class MissingBlueprintAuditService:
+        def audit_project(self, project_name: str, kitsu_id: str = ""):
+            return DummyHubProject(
+                DummyHealth(is_nas=True, has_kitsu=True, has_bp=False, is_local=False)
+            )
+
+    vm = ProjectListViewModel(
+        production_service=FakeProductionService(),
+        auth_service=FakeAuthService(),
+        config_factory=FakeConfigFactory(nas_dir),
+        installation_service=InstallationService(FakeConfigFactory(nas_dir), nas_dir / "vault"),
+        audit_service=MissingBlueprintAuditService(),
+        read_vcs_credentials=True,
+        nas_dir=nas_dir,
+        open_kitsu_callback=lambda url: None,
+        open_watchtower_callback=lambda project_dir: None,
+        instance_lock_callback=lambda active: None,
+    )
+
+    status = vm.compute_status({"name": "Broken", "id": "p1"})
+
+    assert status["is_corrupted"] is True
+    assert status["error_code"] == ERROR_MISSING_BLUEPRINT
+
+
+def test_compute_status_invalid_blueprint(tmp_path, qapp):
+    from src.domain.workspace.entities import ERROR_INVALID_BLUEPRINT
+
+    nas_dir = tmp_path / "workspace"
+    nas_dir.mkdir(exist_ok=True)
+
+    class InvalidBlueprintAuditService:
+        def audit_project(self, project_name: str, kitsu_id: str = ""):
+            return DummyHubProject(
+                DummyHealth(is_nas=True, has_kitsu=True, has_bp=True, has_valid_bp=False, is_local=False)
+            )
+
+    vm = ProjectListViewModel(
+        production_service=FakeProductionService(),
+        auth_service=FakeAuthService(),
+        config_factory=FakeConfigFactory(nas_dir),
+        installation_service=InstallationService(FakeConfigFactory(nas_dir), nas_dir / "vault"),
+        audit_service=InvalidBlueprintAuditService(),
+        read_vcs_credentials=True,
+        nas_dir=nas_dir,
+        open_kitsu_callback=lambda url: None,
+        open_watchtower_callback=lambda project_dir: None,
+        instance_lock_callback=lambda active: None,
+    )
+
+    status = vm.compute_status({"name": "Broken", "id": "p1"})
+
+    assert status["is_corrupted"] is True
+    assert status["error_code"] == ERROR_INVALID_BLUEPRINT

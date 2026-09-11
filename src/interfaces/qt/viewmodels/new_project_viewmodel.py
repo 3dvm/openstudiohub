@@ -16,8 +16,12 @@ from src.application.credential_vault import CredentialVault
 from src.application.services.project_creation_service import ProjectCreationService
 from src.application.services.production_service import ProductionService
 from src.application.services.vault_service import VaultService
-from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
+from src.interfaces.qt.viewmodels.vcs_credential_gate import (
+    VcsPrompt,
+    ensure_vcs_credentials,
+    vcs_requires_credentials,
+)
 from src.interfaces.qt.workers.new_project_workers import (
     FetchKitsuTemplatesWorker,
     ProjectCreationWorker,
@@ -35,6 +39,7 @@ class NewProjectViewModel(BaseViewModel):
         vault_service: VaultService,
         status_sink: StatusSink | None = None,
         credential_vault: CredentialVault | None = None,
+        vcs_prompt: VcsPrompt | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -43,6 +48,7 @@ class NewProjectViewModel(BaseViewModel):
         self.project_creation_service = ProjectCreationService(config_factory)
         self.vault_data = vault_service.load_inventory()
         self.credential_vault = credential_vault
+        self.vcs_prompt = vcs_prompt
 
         self._worker = None
 
@@ -50,12 +56,28 @@ class NewProjectViewModel(BaseViewModel):
         user, pwd = "", ""
         if self.credential_vault is not None:
             user, pwd = self.credential_vault.get_svn_credentials()
-        return user or DEV_SVN_USER, pwd or DEV_SVN_PASSWORD
+        return user or "", pwd or ""
 
     def load_templates(self) -> None:
         self._templates_worker = FetchKitsuTemplatesWorker(self.production_service)
         self._templates_worker.data_ready.connect(self.templates_loaded.emit)
+        self._templates_worker.finished.connect(self._on_templates_worker_finished)
         self._templates_worker.start()
+
+    def _on_templates_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self._templates_worker = None
+
+    def active_workers(self) -> list:
+        """Return the currently running workers so callers can defer teardown."""
+        workers = []
+        if self._templates_worker is not None and self._templates_worker.isRunning():
+            workers.append(self._templates_worker)
+        if self._worker is not None and self._worker.isRunning():
+            workers.append(self._worker)
+        return workers
 
     def create_project(
         self,
@@ -68,6 +90,19 @@ class NewProjectViewModel(BaseViewModel):
         vcs_pwd: str,
         vcs_enabled: bool = True,
     ) -> None:
+        required = vcs_enabled and vcs_requires_credentials(self.config_factory)
+        creds = ensure_vcs_credentials(
+            required=required,
+            credential_vault=self.credential_vault,
+            prompt=self.vcs_prompt,
+            report_status=self.report_status,
+        )
+        if creds is None:
+            self.creation_finished.emit(False, self.tr("VCS credentials are required to create the project."))
+            return
+        if required:
+            vcs_user, vcs_pwd = creds
+
         self.set_busy(True)
         self._worker = ProjectCreationWorker(
             self.project_creation_service,

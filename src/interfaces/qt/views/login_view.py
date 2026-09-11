@@ -370,8 +370,20 @@ class ViewLogin(QWidget):
         file_path, _ = QFileDialog.getOpenFileName(
             self, self.tr("Select Studio Seed File"), "", self.tr("Seed Files (*.seed);;All Files (*)")
         )
-        if file_path:
-            self.vm.import_seed(Path(file_path))
+        if not file_path:
+            return
+
+        # Future installation wizard: a proto-installer that lets each machine
+        # pick its own local projects folder before provisioning the seed.
+        projects_dir = QFileDialog.getExistingDirectory(
+            self,
+            self.tr("Select your local projects folder"),
+            str(Path.home()),
+        )
+        if not projects_dir:
+            return
+
+        self.vm.import_seed(Path(file_path), Path(projects_dir))
 
     def _open_settings_modal(self, event) -> None:
         dialog = LoginSettingsDialog(self, self.vm.clear_local_config)

@@ -282,3 +282,12 @@ class NewProjectDialog(QDialog):
             self.btn_create.setText(self.tr("Generate Project"))
             self.lbl_status.setText(message)
             self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+
+    def try_safe_delete(self) -> None:
+        """Delete the dialog without destroying a still-running worker thread."""
+        workers = self.vm.active_workers() if hasattr(self.vm, "active_workers") else []
+        if not workers:
+            self.deleteLater()
+            return
+        for worker in workers:
+            worker.finished.connect(self.deleteLater)

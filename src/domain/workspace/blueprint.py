@@ -39,6 +39,39 @@ class ProjectBlueprint:
             topography=WorkspaceTopography.from_dict(data.get("topography_signature") or {}),
         )
 
+    @staticmethod
+    def is_valid(data: Any) -> bool:
+        """Validate the raw blueprint schema. All fields are mandatory."""
+        if not isinstance(data, dict):
+            return False
+
+        version_locking = data.get("version_locking")
+        if version_locking is not None and not isinstance(version_locking, dict):
+            return False
+
+        blender_version = (version_locking or {}).get("blender_version") or data.get("blender_version")
+        dependencies = data.get("dependencies")
+        topography = data.get("topography_signature")
+
+        for field in ("project_name", "kitsu_project_id", "template"):
+            value = data.get(field)
+            if not isinstance(value, str) or not value:
+                return False
+
+        if not isinstance(blender_version, str) or not blender_version:
+            return False
+        if not isinstance(dependencies, dict):
+            return False
+        if not isinstance(topography, dict):
+            return False
+
+        for key in ("vfs_svn", "vfs_shared", "vfs_local", "vfs_pipeline"):
+            value = topography.get(key)
+            if not isinstance(value, str) or not value:
+                return False
+
+        return True
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "project_name": self.project_name,

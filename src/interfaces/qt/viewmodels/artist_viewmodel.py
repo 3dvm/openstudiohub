@@ -22,6 +22,11 @@ from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
+from src.interfaces.qt.viewmodels.vcs_credential_gate import (
+    VcsPrompt,
+    ensure_vcs_credentials,
+    vcs_requires_credentials,
+)
 from src.interfaces.qt.workers.artist_workers import (
     FetchArtistTasksWorker,
     InstallProjectWorker,
@@ -55,6 +60,7 @@ class ArtistViewModel(BaseViewModel):
         installation_service: InstallationService,
         register_instance: Callable[[bool], None],
         status_sink: StatusSink | None = None,
+        vcs_prompt: VcsPrompt | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -64,8 +70,10 @@ class ArtistViewModel(BaseViewModel):
         self.config_factory = config_factory
         self.installation_service = installation_service
         self.register_instance = register_instance
+        self.vcs_prompt = vcs_prompt
 
         self._cards: List[ArtistTaskCardModel] = []
+        self._worker: Optional[FetchArtistTasksWorker] = None
         self._install_worker: Optional[InstallProjectWorker] = None
         self._launch_worker: Optional[LaunchTaskWorker] = None
 
@@ -73,14 +81,23 @@ class ArtistViewModel(BaseViewModel):
     # Data loading
     # ------------------------------------------------------------------
     def load_tasks(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            return
+
         self.report_status("Fetching your assigned tasks from Kitsu...", "yellow")
         self._cards = []
 
         self._worker = FetchArtistTasksWorker(self.production_service)
         self._worker.data_ready.connect(self._on_tasks_fetched)
         self._worker.error_occurred.connect(lambda e: self.report_status(f"Network error: {e}", "red"))
-        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.finished.connect(self._on_worker_finished)
         self._worker.start()
+
+    def _on_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self._worker = None
 
     def _on_tasks_fetched(self, tasks: list) -> None:
         if not tasks:
@@ -140,16 +157,25 @@ class ArtistViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Launch use case
     # ------------------------------------------------------------------
+    def _ensure_vcs_credentials(self) -> Optional[tuple[str, str]]:
+        """Gate VCS-backed actions behind the session credentials prompt."""
+        return ensure_vcs_credentials(
+            required=vcs_requires_credentials(self.config_factory),
+            credential_vault=self.credential_vault,
+            prompt=self.vcs_prompt,
+            report_status=self.report_status,
+        )
+
     def launch(self, card: ArtistTaskCardModel) -> None:
         config_path = card.config_path
         if not config_path or not config_path.exists():
             self.report_status("Config file missing. Reinstall workspace.", "red")
             return
 
-        svn_user, svn_pwd = self.credential_vault.get_svn_credentials()
-        if not self.credential_vault.is_svn_enabled() or not svn_pwd:
-            self.report_status("VCS is disabled or no session credentials set. Open Settings to configure VCS.", "red")
+        creds = self._ensure_vcs_credentials()
+        if creds is None:
             return
+        svn_user, svn_pwd = creds
 
         self.report_status("🚀 Delegating to the DCC orchestrator...", "yellow")
 
@@ -161,6 +187,10 @@ class ArtistViewModel(BaseViewModel):
         kitsu_host = self.config_factory.get_kitsu_api_url()
 
         self.register_instance(True)
+
+        if self._launch_worker is not None and self._launch_worker.isRunning():
+            self.report_status("A launch is already in progress...", "red")
+            return
 
         kwargs = {
             "project_root": card.project_root,
@@ -179,11 +209,18 @@ class ArtistViewModel(BaseViewModel):
 
         self._launch_worker = LaunchTaskWorker(kwargs)
         self._launch_worker.finished_launch.connect(self._on_launch_finished)
+        self._launch_worker.finished.connect(self._on_launch_worker_finished)
         self._launch_worker.start()
 
     def _on_launch_finished(self, success: bool, message: str) -> None:
         self.register_instance(False)
         self.report_status(message, "green" if success else "red")
+
+    def _on_launch_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self._launch_worker = None
 
     # ------------------------------------------------------------------
     # Install use case
@@ -197,11 +234,10 @@ class ArtistViewModel(BaseViewModel):
             self.report_status("Please wait, an installation is already running...", "red")
             return
 
-        vcs_user, vcs_pwd = self.credential_vault.get_svn_credentials()
-        if not vcs_user:
-            vcs_user = self.auth_service.current_user.email if self.auth_service.current_user else "artist"
-        if not vcs_pwd:
-            vcs_pwd = self.auth_service.access_token()
+        creds = self._ensure_vcs_credentials()
+        if creds is None:
+            return
+        vcs_user, vcs_pwd = creds
 
         self._install_worker = InstallProjectWorker(
             project_root=card.project_root,
@@ -212,6 +248,7 @@ class ArtistViewModel(BaseViewModel):
         )
         self._install_worker.progress_updated.connect(self.report_status)
         self._install_worker.finished_install.connect(self._on_install_finished)
+        self._install_worker.finished.connect(self._on_install_worker_finished)
         self._install_worker.start()
 
     def _on_install_finished(self, success: bool, message: str) -> None:
@@ -220,6 +257,12 @@ class ArtistViewModel(BaseViewModel):
             self.load_tasks()
         else:
             self.report_status(f"🔴 Install Error: {message}", "red")
+
+    def _on_install_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self._install_worker = None
 
     # ------------------------------------------------------------------
     # Session VCS settings (RAM-only)

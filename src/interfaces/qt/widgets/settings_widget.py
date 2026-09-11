@@ -182,13 +182,13 @@ class SettingsWidget(QFrame):
         projects_dir = vault_data.get("vcs_engine", {}).get("local_workspace_root", "")
 
         payload["infrastructure_topology"] = vault_data.get("infrastructure_topology", {})
-        payload["vcs_engine"].update({
-            "local_workspace_root": {
-                "windows": projects_dir,
-                "linux": projects_dir,
-                "macos": projects_dir,
-            }
-        })
+
+        existing_roots = self.vm.config_factory.get_raw_config().get("vcs_engine", {}).get("local_workspace_root", {})
+        roots = dict(existing_roots) if isinstance(existing_roots, dict) else {}
+        roots[self._current_os()] = projects_dir
+
+        payload["vcs_engine"].update({"local_workspace_root": roots})
+
         return payload
 
     def _save_configuration(self) -> None:

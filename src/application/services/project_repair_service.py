@@ -28,7 +28,6 @@ from src.application.services.workspace_operations import (
 )
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
-
 class ProjectRepairService:
     def __init__(self, kitsu_manager, nas_manager, config_factory):
         self.kitsu = kitsu_manager
@@ -103,3 +102,27 @@ class ProjectRepairService:
         provisioner.initialize_and_commit(project_name, vfs_svn, vcs_user, vcs_pwd, ignore_patterns)
 
         return True, "Kitsu Orphan repaired: NAS topography and VCS initialized."
+
+    # ------------------------------------------------------------------
+    # Missing/Invalid Blueprint: filesystem + Kitsu exist, project_init.json missing or corrupt
+    # ------------------------------------------------------------------
+    def fix_blueprint(
+        self,
+        project_name: str,
+        kitsu_id: str,
+        blueprint: ProjectBlueprint,
+    ) -> tuple[bool, str]:
+        """Regenerate the lost or corrupted ``project_init.json`` blueprint for an existing project."""
+        project_root = self.nas.resolve_project_dir(project_name)
+        if not project_root:
+            folder_name = project_name.strip().lower().replace(" ", "-")
+            project_root = self.nas.base_dir / folder_name
+
+        blueprint.project_name = project_name
+        blueprint.kitsu_project_id = kitsu_id or blueprint.kitsu_project_id
+
+        # Rebuild any missing structural folders and regenerate the manifest.
+        WorkspaceScaffolder.build_directories(project_root, blueprint)
+        BlueprintGenerator.write_manifests(project_root, blueprint)
+
+        return True, "Blueprint rebuilt: project_init.json regenerated."

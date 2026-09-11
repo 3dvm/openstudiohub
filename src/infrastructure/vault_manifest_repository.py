@@ -14,8 +14,15 @@ from src.domain.vault.manifest import VaultManifest
 
 
 class FileVaultManifestRepository(VaultManifestRepository):
-    def __init__(self, vault_root: Path) -> None:
-        self.vault_root = vault_root
+    def __init__(self, vault_root: Path = None, config_factory=None) -> None:
+        self._vault_root = Path(vault_root) if vault_root else None
+        self._config_factory = config_factory
+
+    @property
+    def vault_root(self) -> Path:
+        if self._config_factory is not None:
+            return self._config_factory.get_vault_path()
+        return self._vault_root
 
     def path(self) -> Path:
         return self.vault_root / "vault_manifest.json"

@@ -26,10 +26,29 @@ from src.infrastructure.vcs.vcs_router import VCSRouter
 class InstallationService:
     def __init__(self, config_factory, vault_root: Path) -> None:
         self.config_factory = config_factory
-        self.vault_root = vault_root
-        self.boveda_addons = self.vault_root / "addons"
-        self.boveda_blender = self.vault_root / "blender_versions"
-        self.boveda_templates = self.vault_root / "project_templates"
+        self._vault_root = vault_root
+
+    @property
+    def vault_root(self) -> Path:
+        """Resolve the vault path dynamically so it follows config changes (seed import)."""
+        getter = getattr(self.config_factory, "get_vault_path", None)
+        if callable(getter):
+            resolved = getter()
+            if resolved is not None:
+                return resolved
+        return Path(self._vault_root)
+
+    @property
+    def boveda_addons(self) -> Path:
+        return self.vault_root / "addons"
+
+    @property
+    def boveda_blender(self) -> Path:
+        return self.vault_root / "blender_versions"
+
+    @property
+    def boveda_templates(self) -> Path:
+        return self.vault_root / "project_templates"
 
     @staticmethod
     def _get_os_info() -> Tuple[str, str]:

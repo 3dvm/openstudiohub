@@ -48,7 +48,7 @@ class SettingsViewModel(BaseViewModel):
         return config_ok, vault_ok
 
     def export_seed(self, config_payload: dict, dest_dir: Path) -> tuple[bool, str]:
-        return self.config_factory.exportar_semilla(config_payload, dest_dir)
+        return self.config_factory.export_seed(config_payload, dest_dir)
 
     # ------------------------------------------------------------------
     # Session VCS credentials (RAM-only, never persisted)

@@ -9,7 +9,7 @@
 from PySide6.QtCore import QThread, Signal
 
 from src.application.services.project_repair_service import ProjectRepairService
-from src.domain.workspace.entities import ERROR_KITSU_ORPHAN, ERROR_NAS_GHOST
+from src.domain.workspace.entities import ERROR_INVALID_BLUEPRINT, ERROR_KITSU_ORPHAN, ERROR_MISSING_BLUEPRINT, ERROR_NAS_GHOST
 
 
 class ProjectRepairWorker(QThread):
@@ -52,6 +52,12 @@ class ProjectRepairWorker(QThread):
                     self.vcs_user,
                     self.vcs_pwd,
                     self.vcs_enabled,
+                )
+            elif self.repair_type in (ERROR_MISSING_BLUEPRINT, ERROR_INVALID_BLUEPRINT):
+                ok, msg = self.service.fix_blueprint(
+                    self.project_name,
+                    self.kitsu_id,
+                    self.blueprint,
                 )
             else:
                 ok, msg = False, f"Unknown repair type: {self.repair_type}"

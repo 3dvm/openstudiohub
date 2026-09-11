@@ -19,11 +19,12 @@ from _version import __version__
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QStackedWidget
 
 from src.domain.identity.value_objects import Role
 from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
+from src.interfaces.qt.components.vcs_credentials_dialog import VcsCredentialsDialog
 from src.interfaces.qt.composition import AppContext
 from src.interfaces.qt.shell.web_context_view import WebContextView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
@@ -64,10 +65,26 @@ class OpenStudioHub(QMainWindow):
         self.setWindowIcon(QIcon("assets/openstudiohub.ico"))
 
         self.blender_instances = 0
+        self._repair_dialogs: list = []
+        self._new_project_dialogs: list = []
 
-        self.ctx = AppContext(Path("settings.json"))
+        self.ctx = AppContext(Path("settings.json"), credential_prompt=self._prompt_vcs_credentials)
 
         self.show_login()
+
+    # ------------------------------------------------------------------
+    # VCS credential gate
+    # ------------------------------------------------------------------
+    def _prompt_vcs_credentials(self) -> tuple[str, str] | None:
+        """Show the modal VCS credentials prompt; return the pair or None on cancel."""
+        default_user, _ = self.ctx.credential_vault.get_svn_credentials()
+        if not default_user and self.ctx.auth_service.current_user is not None:
+            default_user = self.ctx.auth_service.current_user.email
+
+        dialog = VcsCredentialsDialog(self, default_user or "")
+        if dialog.exec() == QDialog.Accepted:
+            return dialog.credentials()
+        return None
 
     # ------------------------------------------------------------------
     # Process guardian
@@ -117,6 +134,8 @@ class OpenStudioHub(QMainWindow):
         studio_name = self.ctx.config_factory.get_studio_name() or "OpenStudio"
         self.setWindowTitle(f"{studio_name} Hub - v{__version__}")
 
+        self._retire_previous_dashboard()
+
         role = self.ctx.auth_service.current_role()
         user = self.ctx.auth_service.current_user
         position = user.position if user else ""
@@ -139,6 +158,22 @@ class OpenStudioHub(QMainWindow):
 
         self.setCentralWidget(self.view_stack)
 
+    def _retire_previous_dashboard(self) -> None:
+        """Keep the outgoing dashboard referenced so its QThreads finish gracefully.
+
+        Replacing the central widget would otherwise drop the last Python
+        reference to the previous dashboard (and its ViewModels/workers), letting
+        the garbage collector destroy a running QThread and abort the process.
+        """
+        view = getattr(self, "current_view", None)
+        if view is None:
+            return
+
+        if not hasattr(self, "_retired_views"):
+            self._retired_views = []
+        self._retired_views.append(view)
+        view.deleteLater()
+
     def _build_project_list_vm(self, nas_dir, read_vcs_credentials: bool) -> ProjectListViewModel:
         return ProjectListViewModel(
             production_service=self.ctx.production_service,
@@ -153,6 +188,7 @@ class OpenStudioHub(QMainWindow):
             instance_lock_callback=self.register_instance,
             status_sink=self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,
+            vcs_prompt=self._prompt_vcs_credentials,
         )
 
     def _build_td_view(self, nas_dir):
@@ -191,6 +227,7 @@ class OpenStudioHub(QMainWindow):
             self.ctx.config_factory,
             self.ctx.credential_vault,
             self.ctx.status_sink,
+            vcs_prompt=self._prompt_vcs_credentials,
         )
 
         return ViewPM(
@@ -213,6 +250,7 @@ class OpenStudioHub(QMainWindow):
             installation_service=self.ctx.installation_service,
             register_instance=self.register_instance,
             status_sink=self.ctx.status_sink,
+            vcs_prompt=self._prompt_vcs_credentials,
         )
 
         return ViewArtist(
@@ -230,9 +268,19 @@ class OpenStudioHub(QMainWindow):
             self.ctx.production_service,
             self.ctx.vault_service,
             credential_vault=self.ctx.credential_vault,
+            vcs_prompt=self._prompt_vcs_credentials,
         )
         dialog = NewProjectDialog(self, vm, on_success_callback=self._on_project_created)
+        # Keep a strong Python reference so the dialog (and its ViewModel's
+        # workers) cannot be garbage-collected while the thread is running.
+        self._new_project_dialogs.append(dialog)
+        dialog.finished.connect(lambda _result, d=dialog: self._release_new_project_dialog(d))
         dialog.show()
+
+    def _release_new_project_dialog(self, dialog) -> None:
+        if dialog in self._new_project_dialogs:
+            self._new_project_dialogs.remove(dialog)
+        dialog.try_safe_delete()
 
     def _open_repair_dialog(self, project_name: str, project_id: str, error_code: str) -> None:
         dialog = RepairProjectDialog(
@@ -246,7 +294,17 @@ class OpenStudioHub(QMainWindow):
             error_code=error_code,
             on_success_callback=self._on_project_created,
         )
+        # Keep a strong Python reference: a parented dialog whose wrapper is
+        # garbage-collected releases its workers, which then get destroyed while
+        # running ("QThread: Destroyed while thread is still running").
+        self._repair_dialogs.append(dialog)
+        dialog.finished.connect(lambda _result, d=dialog: self._release_repair_dialog(d))
         dialog.show()
+
+    def _release_repair_dialog(self, dialog) -> None:
+        if dialog in self._repair_dialogs:
+            self._repair_dialogs.remove(dialog)
+        dialog.try_safe_delete()
 
     def _on_project_created(self) -> None:
         view = getattr(self, "current_view", None)

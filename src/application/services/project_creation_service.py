@@ -33,7 +33,6 @@ from src.application.services.workspace_operations import (
 class ProjectCreationService:
     def __init__(self, config_factory) -> None:
         self.config_factory = config_factory
-        self.base_dir = config_factory.get_workspace_root()
         #self.vault_templates_dir = config_factory.get_vault_path() / "project_templates"
 
     # @property
@@ -63,7 +62,7 @@ class ProjectCreationService:
             return False, _("You must specify a Blender version.")
 
         folder_name = project_name.strip().lower().replace(" ", "-")
-        project_path = self.base_dir / folder_name
+        project_path = self.config_factory.get_workspace_root() / folder_name
 
         if project_path.exists():
             return False, _(f"Folder '{folder_name}' already exists on the NAS.")

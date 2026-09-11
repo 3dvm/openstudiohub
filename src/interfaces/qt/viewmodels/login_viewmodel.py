@@ -53,8 +53,10 @@ class LoginViewModel(BaseViewModel):
             self.host_set.emit(kitsu_url)
         self.config_state_changed.emit(has_config)
 
-    def import_seed(self, seed_path: Path) -> None:
-        ok = self.config_factory.importar_semilla(seed_path)
+    def import_seed(self, seed_path: Path, projects_dir: Path | None = None) -> None:
+        ok = self.config_factory.import_seed(seed_path)
+        if ok and projects_dir is not None:
+            self.config_factory.set_local_workspace_root(projects_dir)
         if ok:
             self.load_config_state()
             self.report_status("✓ Configuration imported successfully. You can now log in.", "green")
@@ -62,7 +64,7 @@ class LoginViewModel(BaseViewModel):
             self.report_status("✗ Failed to load the Seed. The file might be corrupted.", "red")
 
     def clear_local_config(self) -> None:
-        ok = self.config_factory.purgar_configuracion_local()
+        ok = self.config_factory.purge_local_configuration()
         self.load_config_state()
         if ok:
             self.report_status("✓ Local configuration cleared.", "green")

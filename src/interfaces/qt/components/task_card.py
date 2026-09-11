@@ -27,6 +27,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.interfaces.qt.workers.worker_keepalive import keep_worker_alive
+
 
 class ThumbnailWorker(QThread):
     """Background thread for downloading entity thumbnails over HTTP."""
@@ -283,6 +285,7 @@ class TaskCard(QFrame):
         self.worker.image_downloaded.connect(self._on_thumbnail_ready)
         self.worker.error_occurred.connect(self._on_thumbnail_error)
         self.worker.finished.connect(self.worker.deleteLater)
+        keep_worker_alive(self.worker)
         self.worker.start()
 
     def _on_thumbnail_ready(self, img_bytes: bytes) -> None:

@@ -21,6 +21,11 @@ from src.application.credential_vault import CredentialVault
 from src.application.production_manager import ProductionManager
 from src.application.services.production_service import ProductionService
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
+from src.interfaces.qt.viewmodels.vcs_credential_gate import (
+    VcsPrompt,
+    ensure_vcs_credentials,
+    vcs_requires_credentials,
+)
 from src.interfaces.qt.workers.api_queries import (
     FetchAssetsWorker,
     FetchEditStatusWorker,
@@ -51,12 +56,14 @@ class BlendBuilderViewModel(BaseViewModel):
         config_factory,
         credential_vault: CredentialVault,
         status_sink: StatusSink | None = None,
+        vcs_prompt: VcsPrompt | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.production_service = production_service
         self.config_factory = config_factory
         self.credential_vault = credential_vault
+        self.vcs_prompt = vcs_prompt
 
         self.pm_core = ProductionManager(self.config_factory)
         self.current_project_id: Optional[str] = None
@@ -72,11 +79,25 @@ class BlendBuilderViewModel(BaseViewModel):
         return nas_root / folder_name
 
     def inject_credentials(self) -> None:
-        """Expose the transient Kitsu credentials to the headless subprocess."""
+        """Expose the transient Kitsu/VCS credentials to the headless subprocess."""
         if self.credential_vault:
             kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
             os.environ["OPENSTUDIO_KITSU_USER"] = kitsu_user or ""
             os.environ["OPENSTUDIO_KITSU_PWD"] = kitsu_pwd or ""
+
+            svn_user, svn_pwd = self.credential_vault.get_svn_credentials()
+            os.environ["OPENSTUDIO_SVN_USER"] = svn_user or ""
+            os.environ["OPENSTUDIO_SVN_PASSWORD"] = svn_pwd or ""
+
+    def _ensure_vcs_credentials(self) -> bool:
+        """Gate VCS-backed batch spawning behind the session credentials prompt."""
+        creds = ensure_vcs_credentials(
+            required=vcs_requires_credentials(self.config_factory),
+            credential_vault=self.credential_vault,
+            prompt=self.vcs_prompt,
+            report_status=self.report_status,
+        )
+        return creds is not None
 
     # ------------------------------------------------------------------
     # Project loading
@@ -157,6 +178,8 @@ class BlendBuilderViewModel(BaseViewModel):
         if not self.current_project_id:
             self.report_status("Please select a project first.", "yellow")
             return
+        if not self._ensure_vcs_credentials():
+            return
         self.report_status("Spawning Storyboard sequences...", "yellow")
         self.inject_credentials()
 
@@ -172,6 +195,9 @@ class BlendBuilderViewModel(BaseViewModel):
         if not self.current_project_id:
             self.report_status("Please select a project first.", "yellow")
             return
+        if not self._ensure_vcs_credentials():
+            return
+        self.inject_credentials()
         self.spawn_worker = MasterSpawningWorker(
             self.config_factory, self.current_project_name, "EDIT", self.current_project_id
         )
@@ -183,6 +209,8 @@ class BlendBuilderViewModel(BaseViewModel):
     def spawn_batch(self, entities: list, task_types: list) -> None:
         if not self.current_project_id:
             self.report_status("Please select a project first.", "yellow")
+            return
+        if not self._ensure_vcs_credentials():
             return
         self.inject_credentials()
         self.worker_batch = BatchCreationWorker(

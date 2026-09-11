@@ -31,7 +31,12 @@ from PySide6.QtWidgets import (
 )
 
 from src.domain.workspace.blueprint import ProjectBlueprint
-from src.domain.workspace.entities import ERROR_KITSU_ORPHAN, ERROR_NAS_GHOST
+from src.domain.workspace.entities import (
+    ERROR_INVALID_BLUEPRINT,
+    ERROR_KITSU_ORPHAN,
+    ERROR_MISSING_BLUEPRINT,
+    ERROR_NAS_GHOST,
+)
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 from src.interfaces.qt.workers.new_project_workers import FetchKitsuTemplatesWorker
 
@@ -66,10 +71,11 @@ class RepairProjectDialog(QDialog):
         self.vault_data = self.vault_service.load_inventory()
         self.tool_checkboxes = {}
         self.template_group = None
+        self._templates_worker = None
+        self._repair_connected = False
 
         self.setObjectName("ViewLoginBase")
         self._build_ui()
-        self.repair_vm.repair_finished.connect(self._on_repair_finished)
 
         if error_code == ERROR_NAS_GHOST:
             self._load_kitsu_templates()
@@ -103,7 +109,7 @@ class RepairProjectDialog(QDialog):
 
         if self.error_code == ERROR_NAS_GHOST:
             self._build_nas_ghost_fields(main_layout)
-        elif self.error_code == ERROR_KITSU_ORPHAN:
+        else:
             self._build_kitsu_orphan_fields(main_layout)
 
         self.lbl_status = QLabel("")
@@ -176,7 +182,14 @@ class RepairProjectDialog(QDialog):
     def _load_kitsu_templates(self) -> None:
         self._templates_worker = FetchKitsuTemplatesWorker(self.production_service)
         self._templates_worker.data_ready.connect(self._on_templates_loaded)
+        self._templates_worker.finished.connect(self._on_templates_worker_finished)
         self._templates_worker.start()
+
+    def _on_templates_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self._templates_worker = None
 
     def _on_templates_loaded(self, templates: list) -> None:
         self.combo_kitsu_template.clear()
@@ -249,6 +262,12 @@ class RepairProjectDialog(QDialog):
     # Repair dispatch
     # ------------------------------------------------------------------
     def _execute_repair(self) -> None:
+        if self.repair_vm.is_busy():
+            self._set_busy_status(self.tr("Another repair is already in progress..."))
+            return
+
+        self._connect_repair_signal()
+
         if self.error_code == ERROR_NAS_GHOST:
             template_name = self.combo_kitsu_template.currentText().strip()
             self.btn_repair.setEnabled(False)
@@ -257,38 +276,22 @@ class RepairProjectDialog(QDialog):
             self.repair_vm.repair_nas_ghost(self.project_name, template_name)
             return
 
-        if self.error_code == ERROR_KITSU_ORPHAN:
-            version_blender = self.combo_version.currentText().strip()
-            final_dependencies, main_template = {}, None
-            for category, items in self.tool_checkboxes.items():
-                final_dependencies[category] = {}
-                for item_name, data in items.items():
-                    if data["checkbox"].isChecked():
-                        final_dependencies[category][item_name] = data["version"]
-                        if category == "templates":
-                            main_template = item_name
-
-            if not main_template:
-                main_template = "Macuare_Estudio"
-
-            vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
-            vcs_selection = self.combo_vcs.currentIndex()
-            vcs_enabled = True
-            if vcs_selection == 3:
-                vcs_enabled = False
-            elif vcs_selection == 0:
-                if vcs_config.get("active_adapter", "svn") == "none":
-                    vcs_enabled = False
-
-            blueprint = ProjectBlueprint(
-                project_name=self.project_name,
-                kitsu_project_id=self.project_id,
-                blender_version=version_blender,
-                template=main_template,
-                dependencies=final_dependencies,
-                topography=self.config_factory.get_topography(),
-                vcs_enabled=vcs_enabled,
+        if self.error_code in (ERROR_MISSING_BLUEPRINT, ERROR_INVALID_BLUEPRINT):
+            blueprint = self._collect_blueprint()
+            self.btn_repair.setEnabled(False)
+            self.btn_repair.setText(self.tr("Repairing..."))
+            self._set_busy_status(self.tr("Rebuilding the blueprint..."))
+            self.repair_vm.repair_blueprint(
+                self.project_name,
+                self.project_id,
+                blueprint,
+                error_code=self.error_code,
             )
+            return
+
+        if self.error_code == ERROR_KITSU_ORPHAN:
+            blueprint = self._collect_blueprint()
+            vcs_enabled = self._resolve_vcs_enabled()
 
             self.btn_repair.setEnabled(False)
             self.btn_repair.setText(self.tr("Repairing..."))
@@ -300,12 +303,75 @@ class RepairProjectDialog(QDialog):
                 vcs_enabled=vcs_enabled,
             )
 
+    def _collect_blueprint(self) -> ProjectBlueprint:
+        version_blender = self.combo_version.currentText().strip()
+        final_dependencies, main_template = {}, None
+        for category, items in self.tool_checkboxes.items():
+            final_dependencies[category] = {}
+            for item_name, data in items.items():
+                if data["checkbox"].isChecked():
+                    final_dependencies[category][item_name] = data["version"]
+                    if category == "templates":
+                        main_template = item_name
+
+        if not main_template:
+            main_template = "Macuare_Estudio"
+
+        return ProjectBlueprint(
+            project_name=self.project_name,
+            kitsu_project_id=self.project_id,
+            blender_version=version_blender,
+            template=main_template,
+            dependencies=final_dependencies,
+            topography=self.config_factory.get_topography(),
+            vcs_enabled=True,
+        )
+
+    def _resolve_vcs_enabled(self) -> bool:
+        vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
+        vcs_selection = self.combo_vcs.currentIndex()
+        if vcs_selection == 3:
+            return False
+        if vcs_selection == 0:
+            return vcs_config.get("active_adapter", "svn") != "none"
+        return True
+
     def _set_busy_status(self, message: str) -> None:
         self.lbl_status.setText(message)
         self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
         self.lbl_status.show()
 
+    # ------------------------------------------------------------------
+    # Signal lifecycle / safe teardown
+    # ------------------------------------------------------------------
+    def _connect_repair_signal(self) -> None:
+        """Subscribe to the shared repair VM only for the duration of this repair."""
+        if not self._repair_connected:
+            self.repair_vm.repair_finished.connect(self._on_repair_finished)
+            self._repair_connected = True
+
+    def _disconnect_repair_signal(self) -> None:
+        if self._repair_connected:
+            try:
+                self.repair_vm.repair_finished.disconnect(self._on_repair_finished)
+            except (RuntimeError, TypeError):
+                pass
+            self._repair_connected = False
+
+    def try_safe_delete(self) -> None:
+        """Delete the dialog without destroying a still-running worker thread."""
+        worker = self._templates_worker
+        if worker is not None and worker.isRunning():
+            worker.finished.connect(self.deleteLater)
+        else:
+            self.deleteLater()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        self._disconnect_repair_signal()
+        super().closeEvent(event)
+
     def _on_repair_finished(self, success: bool, message: str) -> None:
+        self._disconnect_repair_signal()
         if success:
             self.lbl_status.setText(message)
             self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold;")

@@ -42,6 +42,9 @@ class InfrastructureViewModel(BaseViewModel):
         self.infra_dir = self.config_factory.get_workspace_root() / ".openstudio_infra"
         self.infra_dir.mkdir(parents=True, exist_ok=True)
 
+        self.seeder_worker = None
+        self.worker = None
+
     # ------------------------------------------------------------------
     # SVN lifecycle
     # ------------------------------------------------------------------
@@ -114,17 +117,35 @@ SECRET_KEY={DEV_KITSU_SECRET_KEY}
     # Database seeders
     # ------------------------------------------------------------------
     def run_seeder(self, action: str) -> None:
+        if self.seeder_worker is not None and self.seeder_worker.isRunning():
+            self.report_status("A seeder is already running...", "red")
+            return
         self.report_status("Running Seeder against the Database...", "yellow")
         self.seeder_worker = KitsuSeederWorker(self.production_service, action)
         self.seeder_worker.finished_signal.connect(self._on_worker_finished)
-        self.seeder_worker.finished.connect(self.seeder_worker.deleteLater)
+        self.seeder_worker.finished.connect(self._on_seeder_worker_finished)
         self.seeder_worker.start()
 
+    def _on_seeder_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self.seeder_worker = None
+
     def _run_docker_worker(self, command: list, cwd: Path | None = None) -> None:
+        if self.worker is not None and self.worker.isRunning():
+            self.report_status("A docker operation is already running...", "red")
+            return
         self.worker = DockerWorker(command, cwd)
         self.worker.finished_signal.connect(self._on_worker_finished)
-        self.worker.finished.connect(self.worker.deleteLater)
+        self.worker.finished.connect(self._on_docker_worker_finished)
         self.worker.start()
+
+    def _on_docker_worker_finished(self) -> None:
+        worker = self.sender()
+        if worker is not None:
+            worker.deleteLater()
+        self.worker = None
 
     def _on_worker_finished(self, success: bool, message: str) -> None:
         color = "green" if success else "red"

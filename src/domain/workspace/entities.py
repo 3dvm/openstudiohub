@@ -11,8 +11,10 @@ from src.domain.production.entities import Project as KitsuProject
 from src.domain.workspace.blueprint import ProjectBlueprint
 
 # Repair error codes shared across layers.
-ERROR_NAS_GHOST = "nas_ghost"        # filesystem exists, Kitsu project missing
-ERROR_KITSU_ORPHAN = "kitsu_orphan"  # Kitsu project exists, filesystem missing
+ERROR_NAS_GHOST = "nas_ghost"                # filesystem exists, Kitsu project missing
+ERROR_KITSU_ORPHAN = "kitsu_orphan"          # Kitsu project exists, filesystem missing
+ERROR_MISSING_BLUEPRINT = "missing_blueprint"  # filesystem + Kitsu exist, project_init.json missing
+ERROR_INVALID_BLUEPRINT = "invalid_blueprint"  # project_init.json exists but has an invalid format
 
 @dataclass
 class ProjectHealth:
@@ -21,13 +23,14 @@ class ProjectHealth:
     is_installed_locally: bool = False
     missing_critical_folders: List[str] = field(default_factory=list)
     has_blueprint: bool = False
+    has_valid_blueprint: bool = False
     has_kitsu_project: bool = False
 
     @property
     def is_healthy(self) -> bool:
         return (self.is_accessible_on_nas and
                 len(self.missing_critical_folders) == 0 and
-                self.has_blueprint and
+                self.has_valid_blueprint and
                 self.has_kitsu_project)
 
 @dataclass
