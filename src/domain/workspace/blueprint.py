@@ -1,0 +1,88 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Module: src/domain/workspace/blueprint.py
+# Architectural role: Workspace aggregate (ProjectBlueprint)
+# =========================================================================================
+
+"""Project blueprint (the ``project_init.json`` aggregate).
+
+Written by ``ProjectBuilder`` and read by ``LocalInstaller`` / ``env_launcher``
+to know a project's Blender version, template, dependencies, and topography.
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Dict
+
+from .topography import WorkspaceTopography
+
+
+@dataclass
+class ProjectBlueprint:
+    project_name: str = ""
+    kitsu_project_id: str = ""
+    blender_version: str = ""
+    template: str = ""
+    dependencies: Dict[str, Any] = field(default_factory=dict)
+    topography: WorkspaceTopography = field(default_factory=WorkspaceTopography)
+    vcs_enabled: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ProjectBlueprint":
+        data = data or {}
+        version_locking = data.get("version_locking") or {}
+        return cls(
+            project_name=data.get("project_name") or "",
+            kitsu_project_id=data.get("kitsu_project_id") or "",
+            blender_version=version_locking.get("blender_version") or data.get("blender_version") or "",
+            template=data.get("template") or "",
+            dependencies=data.get("dependencies") or {},
+            topography=WorkspaceTopography.from_dict(data.get("topography_signature") or {}),
+        )
+
+    @staticmethod
+    def is_valid(data: Any) -> bool:
+        """Validate the raw blueprint schema. All fields are mandatory."""
+        if not isinstance(data, dict):
+            return False
+
+        version_locking = data.get("version_locking")
+        if version_locking is not None and not isinstance(version_locking, dict):
+            return False
+
+        blender_version = (version_locking or {}).get("blender_version") or data.get("blender_version")
+        dependencies = data.get("dependencies")
+        topography = data.get("topography_signature")
+
+        for field in ("project_name", "kitsu_project_id", "template"):
+            value = data.get(field)
+            if not isinstance(value, str) or not value:
+                return False
+
+        if not isinstance(blender_version, str) or not blender_version:
+            return False
+        if not isinstance(dependencies, dict):
+            return False
+        if not isinstance(topography, dict):
+            return False
+
+        for key in ("vfs_svn", "vfs_shared", "vfs_local", "vfs_pipeline"):
+            value = topography.get(key)
+            if not isinstance(value, str) or not value:
+                return False
+
+        return True
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "project_name": self.project_name,
+            "kitsu_project_id": self.kitsu_project_id,
+            "blender_version": self.blender_version,
+            "template": self.template,
+            "dependencies": self.dependencies,
+            "topography_signature": {
+                "vfs_svn": self.topography.vfs_svn,
+                "vfs_shared": self.topography.vfs_shared,
+                "vfs_local": self.topography.vfs_local,
+                "vfs_pipeline": self.topography.vfs_pipeline,
+            },
+        }

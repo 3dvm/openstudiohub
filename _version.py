@@ -11,7 +11,7 @@
 # =========================================================================================
 
 # Tupla para comparaciones lógicas internas
-VERSION_INFO = (0, 6, 5)
+VERSION_INFO = (0, 7, 0)
 
 # String en formato Semantic Versioning (SemVer)
 __version__ = ".".join(map(str, VERSION_INFO))

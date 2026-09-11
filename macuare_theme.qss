@@ -89,6 +89,15 @@ QWidget#HeroPanel {
     border-left: 1px solid #1F2531; 
 }
 
+QScrollArea#InvisibleScrollArea {
+    border: none;
+    background: transparent;
+}
+
+QWidget#TransparentGridContainer {
+    background: transparent;
+}
+
 QFrame#FloatingCard, QDialog#FloatingCard {
     background-color: #1F2531;
     border: 1px solid #141820;
@@ -104,6 +113,8 @@ QLabel#H2Title {
     font-size: 16px;
     font-weight: bold;
 }
+
+
 
 /* ---------------------------------------------------------
    INPUTS & FORMS

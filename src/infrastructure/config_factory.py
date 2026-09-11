@@ -1,0 +1,259 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/config_factory.py
+# Rol Arquitectónico: Configuration Manager & Crypto Engine (Bidirectional CRUD)
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+#
+# Autor: Ernesto Del Valle Macuare
+# Versión del archivo: 0.9.0 (Encapsulation & Default Fallbacks)
+# =========================================================================================
+
+"""
+Bidirectional parser and persistent CRUD engine for the settings.json file.
+Manages atomic injection of NAS paths, API endpoints, and Semantic Topography.
+Implements the B2B Provisioning Engine (Seed Generator/Importer) via zlib and base64.
+Strictly encapsulates Fallback logic (Defaults) to keep UI components decoupled.
+"""
+
+import json
+import platform
+from pathlib import Path
+
+from src.domain.workspace.topography import WorkspaceTopography
+from src.infrastructure.seed_engine import StudioSeedService
+
+class ConfigFactory:
+    def __init__(self, config_path: Path):
+        self.config_path = config_path
+        self._config = {}
+        self._volatile_identity = {}  # Volatile RAM cache for Kitsu identity
+        self._seed_service = StudioSeedService(self)
+        self._load_config()
+
+    def _load_config(self):
+        """Reads and parses the master B2B file if it exists."""
+        if self.config_path.exists():
+            try:
+                with open(self.config_path, 'r', encoding='utf-8') as f:
+                    self._config = json.load(f)
+            except Exception as e:
+                print(f"[CONFIG FACTORY ERROR] Corrupted or unreadable file: {e}")
+                self._config = {}
+        else:
+            self._config = {}
+
+    def get_raw_config(self) -> dict:
+        """Returns the full dictionary for unmapped queries."""
+        return self._config
+
+    # ---------------------------------------------------------
+    # PROVISIONING ENGINE (STUDIO SEED)
+    # ---------------------------------------------------------
+
+    def export_seed(self, payload: dict, destino_dir: Path) -> tuple[bool, str]:
+        """DEPRECATED: delegates to StudioSeedService."""
+        return self._seed_service.export_seed(payload, destino_dir)
+
+    def import_seed(self, seed_path: Path) -> bool:
+        """DEPRECATED: delegates to StudioSeedService."""
+        return self._seed_service.import_seed(seed_path)
+
+    def purge_local_configuration(self) -> bool:
+        """Destroys local settings.json returning the Hub to Day 0 state."""
+        try:
+            if self.config_path.exists():
+                self.config_path.unlink()
+            self._config = {}
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to purge configuration: {e}")
+            return False
+
+    # ---------------------------------------------------------
+    # ATOMIC PERSISTENCE (CRUD ENGINE)
+    # ---------------------------------------------------------
+
+    def _persist(self) -> None:
+        """Atomically write the in-memory config to disk and reload it."""
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(self._config, f, indent=4, ensure_ascii=False)
+        self._load_config()
+
+    def save_configuration(self, datos_dict: dict, from_seed: bool = False) -> bool:
+        """
+        Public API: Receives a structured payload, injects semantic validations,
+        and atomically writes data to disk.
+        """
+        if not datos_dict:
+            return False
+
+        try:
+            # 1. Extraction and Normalization
+            kitsu_url = datos_dict.get("kitsu_production", {}).get("api_url", "").strip()
+
+            vcs_data = datos_dict.get("vcs_engine", {})
+            vcs_sys = vcs_data.get("active_adapter", "svn").strip()
+            vendor_sparse = bool(vcs_data.get("enable_vendor_sparse_checkout", True))
+            repo_url = vcs_data.get("repository_url", "").strip()
+
+            topo_data = datos_dict.get("project_topography", {})
+            infra_data = datos_dict.get("infrastructure_topology", {})
+
+            # 2. B2B Schema Scaffolding
+            if "studio_profile" not in self._config: self._config["studio_profile"] = {}
+            if "vcs_engine" not in self._config: self._config["vcs_engine"] = {}
+            if "kitsu_production" not in self._config: self._config["kitsu_production"] = {}
+            if "macuare_services" not in self._config: self._config["macuare_services"] = {}
+            if "project_topography" not in self._config: self._config["project_topography"] = {}
+            if "infrastructure_topology" not in self._config: self._config["infrastructure_topology"] = {}
+
+            # 3. Semantic Validations & Injection
+            if "local_workspace_root" not in self._config["vcs_engine"]:
+                self._config["vcs_engine"]["local_workspace_root"] = {}
+
+            # Multi-OS Mapping
+            if "local_workspace_root" in vcs_data:
+                self._config["vcs_engine"]["local_workspace_root"] = vcs_data["local_workspace_root"]
+
+            if kitsu_url:
+                self._config["kitsu_production"]["api_url"] = kitsu_url
+
+            studio_name = datos_dict.get("studio_profile", {}).get("name", "").strip()
+            if studio_name:
+                self._config["studio_profile"]["name"] = studio_name
+
+            # Topography Mapping
+            if topo_data:
+                self._config["project_topography"]["vfs_svn"] = topo_data.get("vfs_svn", "svn")
+                self._config["project_topography"]["vfs_shared"] = topo_data.get("vfs_shared", "shared")
+                self._config["project_topography"]["vfs_local"] = topo_data.get("vfs_local", "local")
+                self._config["project_topography"]["vfs_pipeline"] = topo_data.get("vfs_pipeline", "pipeline")
+                self._config["project_topography"]["custom_dirs"] = topo_data.get("custom_dirs", [])
+
+            # Infrastructure & Vault Mapping
+            if infra_data:
+                self._config["infrastructure_topology"]["vault_path"] = infra_data.get("vault_path", "")
+
+            # Parametric Adapter Selection
+            vcs_clean = vcs_sys.lower()
+            if "svn" in vcs_clean and "git" in vcs_clean:
+                self._config["vcs_engine"]["active_adapter"] = "git-svn"
+            elif "git" in vcs_clean:
+                self._config["vcs_engine"]["active_adapter"] = "git-lfs"
+            elif "none" in vcs_clean:
+                self._config["vcs_engine"]["active_adapter"] = "none"
+            else:
+                self._config["vcs_engine"]["active_adapter"] = "svn"
+
+            self._config["vcs_engine"]["enable_vendor_sparse_checkout"] = vendor_sparse
+            self._config["vcs_engine"]["repository_url"] = repo_url
+
+            # 4. Atomic Disk Write
+            self._persist()
+            return True
+
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Critical error during atomic write: {e}")
+            return False
+
+    def set_local_workspace_root(self, path: Path) -> bool:
+        """Persist the projects base folder for the CURRENT OS only (per-machine override)."""
+        try:
+            os_key = self._get_current_os()
+            vcs = self._config.setdefault("vcs_engine", {})
+            roots = vcs.setdefault("local_workspace_root", {})
+            roots[os_key] = str(path)
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to persist workspace root: {e}")
+            return False
+
+    # ---------------------------------------------------------
+    # VOLATILE IDENTITY (SSO & B2B Branding)
+    # ---------------------------------------------------------
+
+    def set_volatile_studio_identity(self, identity_data: dict):
+        self._volatile_identity = identity_data
+
+    def get_studio_name(self) -> str:
+        name = self._volatile_identity.get("name") or self._volatile_identity.get("studio_name")
+        if name: return name
+        return self._config.get("studio_profile", {}).get("name", "OPENSTUDIO HUB")
+
+    def get_user_avatar_path(self) -> str | None:
+        return self._volatile_identity.get("avatar_path")
+
+    # ---------------------------------------------------------
+    # SYSTEM ROUTING & TOPOGRAPHY GETTERS
+    # ---------------------------------------------------------
+
+    def _get_current_os(self) -> str:
+        system = platform.system().lower()
+        if system == "windows": return "windows"
+        elif system == "darwin": return "macos"
+        else: return "linux"
+
+    def get_workspace_root(self) -> Path:
+        """Returns the base projects directory. Implements Day-0 Fallbacks."""
+        os_key = self._get_current_os()
+        vcs_config = self._config.get("vcs_engine", {})
+        roots = vcs_config.get("local_workspace_root", {})
+
+        root_str = roots.get(os_key)
+        if not root_str:
+            # Fallback seguro en lugar de romper la app con ValueError
+            return Path.home() / "openstudio_projects"
+
+        return Path(root_str)
+
+    def get_vault_path(self) -> Path:
+        """
+        Returns the absolute path to the Vault.
+        Calculates dynamic fallback based on workspace_root if unconfigured.
+        """
+        vault_str = self._config.get("infrastructure_topology", {}).get("vault_path", "")
+        if vault_str:
+            return Path(vault_str)
+
+        # Fallback dinámico
+        return self.get_workspace_root() / "openstudio_vault"
+
+    def get_vcs_adapter_type(self) -> str:
+        return self._config.get("vcs_engine", {}).get("active_adapter", "svn")
+
+    def get_vcs_repository_url(self) -> str:
+        return self._config.get("vcs_engine", {}).get("repository_url", "")
+
+    def is_vendor_sparse_enabled(self) -> bool:
+        return self._config.get("vcs_engine", {}).get("enable_vendor_sparse_checkout", True)
+
+    def get_kitsu_api_url(self) -> str:
+        return self._config.get("kitsu_production", {}).get("api_url", "")
+
+    # --- TOPOGRAPHY ENGINE ---
+
+    def get_topography(self) -> WorkspaceTopography:
+        """Return the semantic VFS topography as a domain value object."""
+        return WorkspaceTopography.from_dict(self._config.get("project_topography", {}))
+
+    def get_vfs_svn_name(self) -> str:
+        return self.get_topography().vfs_svn
+
+    def get_vfs_shared_name(self) -> str:
+        return self.get_topography().vfs_shared
+
+    def get_vfs_local_name(self) -> str:
+        return self.get_topography().vfs_local
+
+    def get_vfs_pipeline_name(self) -> str:
+        return self.get_topography().vfs_pipeline
+
+    def get_custom_dirs(self) -> list:
+        return list(self.get_topography().custom_dirs)
+
+    def get_production_folder_name(self) -> str:
+        """DEPRECATED ALIAS: Routes to get_vfs_svn_name() to prevent breaking legacy components."""
+        return self.get_vfs_svn_name()

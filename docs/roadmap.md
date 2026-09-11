@@ -17,11 +17,11 @@ We have successfully established the foundational sandboxing, dynamic context in
 
 ---
 
-## v0.7.0 - Core Architecture Refactor & Stability (Feature Freeze)
+## v0.7.0 - Core Architecture Refactor & Stability (Feature Freeze) — ✅ DONE
 *Taking a step back to leap forward.* Before we introduce advanced AI features and render farm orchestration, we are dedicating an entire milestone to technical excellence.
-- **MVC Decoupling:** Completely separating our UI layers (PySide6) from backend operations for a faster, glitch-free experience.
-- **Test Coverage:** Introducing comprehensive unit testing and functional testing across all modules to guarantee refactoring ease.
-- **Type Hinting & Tech Debt:** Enforcing strict Python typing and purging prototype code to guarantee long-term maintainability.
+- **Domain-Driven Design (DDD):** Restructured into `src/domain` (identity, production, workspace, vault, QA), `src/application` (services, ports, bus), `src/infrastructure` (Kitsu ACL + repositories, VCS, sandbox, filesystem) and `src/interfaces/qt` (PySide6). Extracted the god objects (`AuthManager`, `ConfigFactory`, `VaultManager`, `ProjectBuilder`, `LocalInstaller`, `env_launcher`) into application services and domain aggregates, and consolidated the duplicated path/manifest/addon/version rules into single sources of truth.
+- **Test Coverage:** 60 unit tests across the bounded contexts (identity, auth, production, vault, workspace, jailing, seed, env contract, provisioning, QA).
+- **Type Hinting & Tech Debt:** Purged dead code, hardcoded credentials (centralized into `dev_defaults`), stray `breakpoint()`s, and the duplicated workers; wired the typed `SandboxEnvironment` contract through the launch/spawn paths.
 
 ## v0.8.0 - Core Telemetry & Artist QoL
 *Empowering studios with passive data.* No more manual timesheets or lost work.
