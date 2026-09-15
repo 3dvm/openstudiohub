@@ -112,7 +112,7 @@ class ProjectCard(QFrame):
         parent: QWidget,
         project_data: dict,
         user_role: str,
-        status: dict,
+        status: Optional[dict],
         token: str,
         host: str,
         thumbnail_fetcher: Callable,
@@ -141,8 +141,9 @@ class ProjectCard(QFrame):
         self.on_open_wizard = on_open_wizard
         self.on_repair = on_repair
 
-        self.project_dir = status["project_dir"]
-        self.is_installed = status["is_installed"]
+        self.status = dict(status) if status else {}
+        self.project_dir = self.status.get("project_dir")
+        self.is_installed = self.status.get("is_installed", False)
 
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 330)
@@ -153,7 +154,10 @@ class ProjectCard(QFrame):
         """)
 
         self._build_ui()
-        self._apply_status(status)
+        if status is not None:
+            self.apply_status(status)
+        else:
+            self.btn_primary_action.setEnabled(False)
         self._load_thumbnail()
 
     def _build_ui(self) -> None:
@@ -280,6 +284,7 @@ class ProjectCard(QFrame):
         self.btn_primary_action = QPushButton()
         self.btn_primary_action.setFixedHeight(35)
         self.btn_primary_action.setCursor(Qt.PointingHandCursor)
+        self.btn_primary_action.clicked.connect(self._on_primary_action)
 
         if self.user_role == "td":
             self.btn_kitsu_dropdown.setText("Open in Kitsu ▼")
@@ -335,48 +340,47 @@ class ProjectCard(QFrame):
             else:
                 self.btn_watchtower.hide()
 
-    def _apply_status(self, status: dict) -> None:
-        """Update the sync badge and primary action button from computed state."""
+    def apply_status(self, status: dict) -> None:
+        """Update the sync badge and primary action button from computed state.
+
+        Called once with the pending status (if any) and again when the
+        asynchronous audit resolves. It only mutates state and visuals; the
+        primary action is wired once in ``_build_ui`` to ``_on_primary_action``.
+        """
+        self.status = dict(status)
+        self.project_dir = status.get("project_dir")
+        self.is_installed = status.get("is_installed", False)
 
         if status.get("is_corrupted"):
             error_msg = status.get("error_type", "Unknown Error")
             self.lbl_sync_status.setText(self.tr(f"Corrupted: {error_msg}"))
             self.lbl_badge.setText(self.tr("Error"))
-            self.btn_primary_action.setEnabled(False)
             self.btn_primary_action.setText(self.tr("Repair Project"))
 
             if self.user_role == "td" and self.on_repair:
-                self.actions_layout.addWidget(self.btn_primary_action)
+                self._show_primary_action()
                 self.btn_primary_action.setEnabled(True)
                 self.btn_primary_action.setStyleSheet(
                     "background-color: #EF4444; color: white; font-weight: bold; border-radius: 6px; border: none;"
                 )
-                self.btn_primary_action.clicked.connect(
-                    lambda: self.on_repair(
-                        self.project_name,
-                        self.project_data.get("id", ""),
-                        status.get("error_code"),
-                    )
-                )
-                self.btn_primary_action.show()
+            else:
+                self.btn_primary_action.setEnabled(False)
 
             return
 
-        if status["is_installed"] and self.project_dir:
+        self.btn_primary_action.setEnabled(True)
+
+        if status.get("is_installed") and self.project_dir:
             self.lbl_sync_status.setText(self.tr("🗄️ 🟢 Ready on Disk"))
             self.lbl_sync_status.setStyleSheet("color: #10B981; font-size: 12px; font-weight: bold;")
-            self.lbl_badge.setText(status["badge_text"])
+            self.lbl_badge.setText(status.get("badge_text", ""))
 
-            if self.user_role != "td":
-                if self.user_role == "manager":
-                    self.btn_primary_action.setText(self.tr("Pipeline Wizard"))
-                    self.btn_primary_action.setStyleSheet("background-color: #F59E0B; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
-                    if self.on_open_wizard:
-                        self.btn_primary_action.clicked.connect(lambda: self.on_open_wizard(self.project_name))
-                else:
-                    self.btn_primary_action.setText(self.tr("Launch Project"))
-                    self.btn_primary_action.setStyleSheet("background-color: #3B82F6; color: white; font-weight: bold; border-radius: 6px; border: none;")
-                    self.btn_primary_action.clicked.connect(lambda: self.on_launch(self.project_dir))
+            if self.user_role == "manager":
+                self.btn_primary_action.setText(self.tr("Pipeline Wizard"))
+                self.btn_primary_action.setStyleSheet("background-color: #F59E0B; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
+            elif self.user_role != "td":
+                self.btn_primary_action.setText(self.tr("Launch Project"))
+                self.btn_primary_action.setStyleSheet("background-color: #3B82F6; color: white; font-weight: bold; border-radius: 6px; border: none;")
         else:
             self.lbl_sync_status.setText(self.tr("🗄️ ⚪ Cloud Only"))
             self.lbl_sync_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
@@ -385,7 +389,34 @@ class ProjectCard(QFrame):
             if self.user_role != "td":
                 self.btn_primary_action.setText(self.tr("Install Workspace ↓"))
                 self.btn_primary_action.setStyleSheet("background-color: #10B981; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
-                self.btn_primary_action.clicked.connect(lambda: self._request_install(self.project_dir))
+
+    def _show_primary_action(self) -> None:
+        """Ensure the primary action button is part of the TD actions layout."""
+        if self.actions_layout.indexOf(self.btn_primary_action) == -1:
+            self.actions_layout.addWidget(self.btn_primary_action)
+        self.btn_primary_action.show()
+
+    def _on_primary_action(self) -> None:
+        """Dispatch the primary button click based on the latest audited status."""
+        if self.status.get("is_corrupted"):
+            if self.on_repair:
+                self.on_repair(
+                    self.project_name,
+                    self.project_data.get("id", ""),
+                    self.status.get("error_code"),
+                )
+            return
+
+        if self.status.get("is_installed") and self.project_dir:
+            if self.user_role == "manager":
+                if self.on_open_wizard:
+                    self.on_open_wizard(self.project_name)
+            elif self.user_role != "td":
+                self.on_launch(self.project_dir)
+            return
+
+        if self.user_role != "td":
+            self._request_install(self.project_dir)
 
     def _request_install(self, project_dir) -> None:
         self.btn_primary_action.setEnabled(False)
