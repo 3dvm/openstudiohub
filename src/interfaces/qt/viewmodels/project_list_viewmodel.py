@@ -127,13 +127,18 @@ class ProjectListViewModel(BaseViewModel):
         self.projects_loaded.emit(projects)
 
     def compute_status(self, project_data: dict) -> dict:
-        """Resolve the filesystem-backed status rendered by a project card."""
-        project_name = project_data.get("name", "")
-        project_code = project_data.get("code", "")
-        project_id = project_data.get("id", "")
-        project_dir = self.nas_manager.resolve_project_dir(project_name, project_code)
+        """Resolve the filesystem-backed status rendered by a project card.
 
+        Synchronous convenience wrapper kept for tests and any synchronous
+        caller. The grid uses the asynchronous audit flow instead.
+        """
+        project_name = project_data.get("name", "")
+        project_id = project_data.get("id", "")
         hub_project = self.audit_service.audit_project(project_name, project_id)
+        return self.status_from_hub_project(project_name, hub_project)
+
+    def status_from_hub_project(self, project_name: str, hub_project) -> dict:
+        """Flatten an audited ``HubProject`` into the plain status dict the card renders."""
         health = hub_project.health
 
         is_corrupted = False
@@ -159,19 +164,6 @@ class ProjectListViewModel(BaseViewModel):
 
         project_dir = self.nas_manager.resolve_project_dir(project_name)
         is_installed = health.is_installed_locally if health.has_valid_blueprint else False
-
-        # is_installed = False
-        # if self.config_factory and project_dir:
-        #     is_installed = self.installation_service.verify_installation(project_dir)
-        #
-        # if is_installed and project_dir:
-        #     blueprint = self.nas_manager.get_project_blueprint(project_dir)
-        #     return {
-        #         "project_dir": project_dir,
-        #         "is_installed": True,
-        #         "badge_text": blueprint.get("blender_version", "Blender"),
-        #         "sync_text": "🗄️ 🟢 Ready on Disk",
-        #     }
 
         status = {
             "project_dir": project_dir,

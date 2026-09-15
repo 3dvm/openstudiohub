@@ -234,6 +234,8 @@ class OpenStudioHub(QMainWindow):
             parent=self,
             project_list_vm=project_list_vm,
             blend_builder_vm=blend_builder_vm,
+            audit_vm=self.ctx.audit_viewmodel,
+            repair_vm=self.ctx.repair_viewmodel,
             auth_service=self.ctx.auth_service,
             config_factory=self.ctx.config_factory,
             on_logout=self.ejecutar_logout,

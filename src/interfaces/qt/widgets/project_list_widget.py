@@ -57,8 +57,10 @@ class ProjectListWidget(QFrame):
 
         self._project_widgets = []
         self._cards_by_dir = {}
+        self._cards_by_id = {}
         self._corrupted_projects = []
         self._current_cols = 0
+        self._audit_generation = 0
 
         self.setObjectName("ProjectListWidgetBase")
 
@@ -123,6 +125,7 @@ class ProjectListWidget(QFrame):
         self.vm.install_finished.connect(self._on_install_finished)
         self.vm.delete_warning.connect(lambda msg: QMessageBox.warning(self, self.tr("Warning"), msg))
         self.vm.delete_completed.connect(lambda msg: QMessageBox.information(self, self.tr("Deleted"), msg))
+        self.audit_vm.audit_completed.connect(self._on_project_audited)
 
     # ------------------------------------------------------------------
     # Public
@@ -188,27 +191,22 @@ class ProjectListWidget(QFrame):
         self._clear_grid()
         self.btn_refresh.setEnabled(True)
 
+        # A new render invalidates any in-flight audit: bump the generation so
+        # stale results are discarded, and re-audit every card from scratch.
+        self._audit_generation += 1
+        audit_token = self._audit_generation
+
         token = self.vm.token
         host = self.vm.host
 
         for project_data in projects:
             project_id = project_data.get("id", "")
-            status = self.vm.compute_status(project_data)
-            project_dir = status["project_dir"]
-
-            if status.get("is_corrupted"):
-                self._corrupted_projects.append({
-                    "name": project_data.get("name", ""),
-                    "id": project_id,
-                    "error_code": status.get("error_code"),
-                    "error_type": status.get("error_type"),
-                })
 
             card = ProjectCard(
                 parent=self.grid_widget,
                 project_data=project_data,
                 user_role=self.user_role,
-                status=status,
+                status=None,
                 token=token,
                 host=host,
                 thumbnail_fetcher=self.vm.thumbnail_fetcher,
@@ -218,15 +216,41 @@ class ProjectListWidget(QFrame):
                 on_open_kitsu=lambda sub_path, pid=project_id: self.vm.open_kitsu(pid, sub_path),
                 on_watchtower=self.vm.open_watchtower,
                 on_open_wizard=self.on_open_wizard_callback,
-                on_repair=lambda name, pid=project_id, ec=status.get("error_code"): self._request_repair(name, pid, ec),
+                on_repair=self._request_repair,
             )
 
             self._project_widgets.append(card)
-            if project_dir is not None:
-                self._cards_by_dir[str(project_dir)] = card
+            self._cards_by_id[project_id] = card
 
         self._current_cols = 0
         self._rearrange_grid()
+
+        self.audit_vm.audit_projects(projects, token=audit_token)
+
+    def _on_project_audited(self, token: int, project_data: dict, hub_project) -> None:
+        """Apply an audited ``HubProject`` to its card once the background audit resolves."""
+        if token != self._audit_generation:
+            return
+
+        project_id = project_data.get("id", "")
+        card = self._cards_by_id.get(project_id)
+        if card is None:
+            return
+
+        status = self.vm.status_from_hub_project(project_data.get("name", ""), hub_project)
+        card.apply_status(status)
+
+        project_dir = status.get("project_dir")
+        if project_dir is not None:
+            self._cards_by_dir[str(project_dir)] = card
+
+        if status.get("is_corrupted"):
+            self._corrupted_projects.append({
+                "name": project_data.get("name", ""),
+                "id": project_id,
+                "error_code": status.get("error_code"),
+                "error_type": status.get("error_type"),
+            })
 
     def _clear_grid(self) -> None:
         for widget in self._project_widgets:
@@ -234,6 +258,7 @@ class ProjectListWidget(QFrame):
             widget.deleteLater()
         self._project_widgets.clear()
         self._cards_by_dir.clear()
+        self._cards_by_id.clear()
         self._corrupted_projects.clear()
 
         while self.grid_layout.count():

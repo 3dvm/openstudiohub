@@ -16,7 +16,9 @@ from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
 from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderViewModel
+from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
+from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 from src.interfaces.qt.widgets.blend_builder_widget import BlendBuilderWidget
 from src.interfaces.qt.widgets.project_list_widget import ProjectListWidget
 
@@ -27,6 +29,8 @@ class ViewPM(BaseDashboardView):
         parent,
         project_list_vm: ProjectListViewModel,
         blend_builder_vm: BlendBuilderViewModel,
+        audit_vm: ProjectAuditViewModel,
+        repair_vm: ProjectRepairViewModel,
         auth_service,
         config_factory,
         on_logout,
@@ -38,6 +42,8 @@ class ViewPM(BaseDashboardView):
 
         self.project_list_vm = project_list_vm
         self.blend_builder_vm = blend_builder_vm
+        self.audit_vm = audit_vm
+        self.repair_vm = repair_vm
         self.credential_vault = credential_vault
 
         self.setObjectName("ViewPMBase")
@@ -54,6 +60,8 @@ class ViewPM(BaseDashboardView):
         self.project_list = ProjectListWidget(
             parent=self.stacked_content,
             viewmodel=self.project_list_vm,
+            audit_vm=self.audit_vm,
+            repair_vm=self.repair_vm,
             on_open_wizard_callback=self._open_wizard_for_project,
         )
         self.stacked_content.addWidget(self.project_list)
