@@ -1,5 +1,12 @@
 """Unit tests for the Workspace bounded context."""
 
+from src.domain.shared_kernel.addon_contract import (
+    AddonConfiguration,
+    default_addon_configuration,
+    parse_addon_configuration,
+    resolve_addon_entry,
+    serialize_addon_configuration,
+)
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.domain.workspace.topography import WorkspaceTopography
 
@@ -96,4 +103,100 @@ def test_is_valid_rejects_invalid_topography():
 def test_is_valid_rejects_invalid_dependencies():
     data = _valid_blueprint_dict()
     data["dependencies"] = "not-a-dict"
+    assert ProjectBlueprint.is_valid(data) is False
+
+
+def _addon_config_payload() -> dict:
+    return {
+        "blender_kitsu": {
+            "enabled": True,
+            "module_match": "blender_kitsu",
+            "settings": {"shot_dir_name": "shots"},
+            "behaviors": ["activate", "authenticate"],
+        }
+    }
+
+
+def test_addon_configuration_roundtrip():
+    blueprint = ProjectBlueprint.from_dict(
+        {
+            "project_name": "Neon",
+            "kitsu_project_id": "p1",
+            "blender_version": "5.1.2",
+            "template": "standard",
+            "dependencies": {},
+            "addon_configuration": _addon_config_payload(),
+            "topography_signature": {
+                "vfs_svn": "svn",
+                "vfs_shared": "shared",
+                "vfs_local": "local",
+                "vfs_pipeline": "pipeline",
+            },
+        }
+    )
+
+    kitsu = blueprint.addon_configuration["blender_kitsu"]
+    assert kitsu.enabled is True
+    assert kitsu.settings["shot_dir_name"] == "shots"
+    assert kitsu.behaviors == ["activate", "authenticate"]
+
+    restored = ProjectBlueprint.from_dict(blueprint.to_dict())
+    assert restored.addon_configuration["blender_kitsu"].settings["shot_dir_name"] == "shots"
+
+
+def test_legacy_blueprint_derives_addon_configuration_from_dependencies():
+    restored = ProjectBlueprint.from_dict(
+        {
+            "project_name": "Neon",
+            "kitsu_project_id": "p1",
+            "blender_version": "5.1.2",
+            "template": "standard",
+            "dependencies": {"addons": {"blender_kitsu": "1.5.0"}},
+            "topography_signature": {
+                "vfs_svn": "svn",
+                "vfs_shared": "shared",
+                "vfs_local": "local",
+                "vfs_pipeline": "pipeline",
+            },
+        }
+    )
+    assert set(restored.addon_configuration.keys()) == {"blender_kitsu"}
+    assert restored.addon_configuration["blender_kitsu"].enabled is True
+
+
+def test_parse_and_serialize_addon_configuration():
+    parsed = parse_addon_configuration(_addon_config_payload())
+    assert isinstance(parsed["blender_kitsu"], AddonConfiguration)
+    assert serialize_addon_configuration(parsed)["blender_kitsu"]["behaviors"] == [
+        "activate",
+        "authenticate",
+    ]
+
+
+def test_default_addon_configuration_handles_missing_dependencies():
+    assert default_addon_configuration(None) == {}
+    assert default_addon_configuration({"addons": "not-a-dict"}) == {}
+
+
+def test_resolve_addon_entry_falls_back_to_catalog():
+    entry = resolve_addon_entry("blender_kitsu", {"version": "1.5.0"})
+    assert entry["version"] == "1.5.0"
+    assert "shot_dir_name" in entry["config_schema"]
+    assert "activate" in entry["default_config"]["behaviors"]
+
+
+def test_resolve_addon_entry_manifest_wins():
+    custom = {"config_schema": {"custom_field": {"type": "str"}}, "default_config": {"behaviors": []}}
+    entry = resolve_addon_entry("blender_kitsu", custom)
+    assert set(entry["config_schema"].keys()) == {"custom_field"}
+    assert entry["default_config"]["behaviors"] == []
+
+
+def test_is_valid_accepts_optional_addon_configuration():
+    data = _valid_blueprint_dict()
+    data["addon_configuration"] = _addon_config_payload()
+    assert ProjectBlueprint.is_valid(data) is True
+
+    data = _valid_blueprint_dict()
+    data["addon_configuration"] = "not-a-dict"
     assert ProjectBlueprint.is_valid(data) is False

@@ -1,0 +1,81 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/templates/addons/cfg_openstudio_toolkit.py
+# Rol Arquitectónico: DCC Scripting / Add-on startup configuration (AUTO-GENERADO)
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+# =========================================================================================
+#
+# Generado por AddonConfigGenerator. NO EDITAR MANUALMENTE.
+# Plantilla de referencia que demuestra cómo un addon distinto de Kitsu se
+# configura de forma agnóstica: un template por addon, cero cambios en el core.
+# =========================================================================================
+
+"""Configuración de arranque del addon OpenStudio Toolkit."""
+
+import sys
+from pathlib import Path
+
+import bpy
+import addon_utils
+
+_ADDON_CONFIG = __ADDON_CONFIG_JSON__
+_CONFIG_SETTINGS = dict(_ADDON_CONFIG.get("settings") or {})
+_CONFIG_BEHAVIORS = list(_ADDON_CONFIG.get("behaviors") or [])
+
+_VFS_LOCAL = Path(__file__).resolve().parents[3]
+if str(_VFS_LOCAL) not in sys.path:
+    sys.path.insert(0, str(_VFS_LOCAL))
+
+_ADDON_MATCH = _ADDON_CONFIG.get("module_match") or "openstudio_toolkit"
+_REGISTRATION_KEY = "openstudio_cfg_openstudio_toolkit_registered"
+
+
+def _get_addon_key():
+    for key in bpy.context.preferences.addons.keys():
+        if _ADDON_MATCH in key:
+            return key
+    for module in addon_utils.modules():
+        if _ADDON_MATCH in module.__name__:
+            return module.__name__
+    return _ADDON_MATCH
+
+
+def activate():
+    key = _get_addon_key()
+    if key in bpy.context.preferences.addons:
+        return key
+    try:
+        bpy.ops.preferences.addon_enable(module=key)
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HUB] Advertencia al activar {key}: {error}")
+    return key
+
+
+_BEHAVIORS = {"activate": activate}
+_DEFAULT_BEHAVIORS = ["activate"]
+
+
+def register():
+    if bpy.app.driver_namespace.get(_REGISTRATION_KEY):
+        return
+    bpy.app.driver_namespace[_REGISTRATION_KEY] = True
+
+    for name in (_CONFIG_BEHAVIORS or _DEFAULT_BEHAVIORS):
+        behavior = _BEHAVIORS.get(name)
+        if behavior is None:
+            print(f"[OPENSTUDIO_HUB] Toolkit: behavior desconocido '{name}'.")
+            continue
+        try:
+            behavior()
+        except Exception as error:  # noqa: BLE001
+            print(f"[OPENSTUDIO_HUB] Toolkit: behavior '{name}' falló: {error}")
+
+
+def on_file_opened():
+    pass
+
+
+def get_addon_module():
+    return sys.modules.get(_get_addon_key())

@@ -19,6 +19,7 @@ import zipfile
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.application.sparse_manager import SparseManager
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
@@ -97,6 +98,7 @@ class InstallationService:
             blender_version = init_data.get("blender_version", "4.2.0")
             dependencies = init_data.get("dependencies", {})
             template_name = init_data.get("template", "")
+            addon_configuration = init_data.get("addon_configuration", {})
 
             checkout_ok = self._gestionar_vcs(project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata)
             if not checkout_ok:
@@ -109,6 +111,14 @@ class InstallationService:
 
             status_callback("Deploying project extensions...", "yellow")
             self._sincronizar_addons(project_root, vfs_local, dependencies, status_callback)
+
+            status_callback("Generating add-on startup configuration...", "yellow")
+            AddonConfigGenerator(self.config_factory).generate(
+                project_root,
+                addon_configuration,
+                self.config_factory.get_topography(),
+                status_callback=status_callback,
+            )
 
             status_callback("Configuring production VFS symlinks...", "yellow")
             self._crear_symlinks(project_path=project_root, vfs_svn=vfs_svn, vfs_shared=vfs_shared)

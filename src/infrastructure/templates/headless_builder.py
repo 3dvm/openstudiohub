@@ -1,110 +1,128 @@
 # =========================================================================================
 # OPENSTUDIOHUB
 # Módulo: core/templates/headless_builder.py
-# Rol Arquitectónico: DCC Scripting / Creador Maestro de Archivos (VFS & Kitsu)
+# Rol Arquitectónico: DCC Scripting / Creador Maestro de Archivos (VFS)
 # =========================================================================================
 # Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
 # Licencia: GNU General Public License v3.0 (GPLv3)
 # =========================================================================================
 
 """
-Script ejecutado en modo Headless (background) por el ProjectBuilder o el ProductionManager.
-Recibe órdenes mediante variables de entorno para ensamblar archivos .blend desde cero
-utilizando los operadores nativos del add-on de Blender Kitsu.
+Script ejecutado en modo Headless (background) por el ProjectBuilder o el
+ProductionManager. Recibe órdenes mediante variables de entorno para ensamblar
+archivos .blend desde cero.
+
+La **configuración de add-ons** (activación, autenticación, monkey patches,
+restauración de contexto) se delega a los scripts ``cfg_<addon>.py``
+autogenerados y se invoca a través de ``addon_runtime``. Este script solo
+conserva la orquestación de construcción (forjado) de archivos.
 """
 
-import bpy
-import os
 import sys
-import importlib
 from pathlib import Path
 
+import bpy
+
 # =================================================================
-# 0. BOOTSTRAP: Hacer importable el paquete 'src' del Hub
-#    (este script se ejecuta con el Python EMBEBIDO de Blender, donde
-#    el root del repositorio no está en sys.path por defecto).
+# 0. BOOTSTRAP: Hacer importables el paquete 'src' del Hub y el
+#    addon_runtime desplegado en el sandbox.
 # =================================================================
 _HUB_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_HUB_ROOT) not in sys.path:
     sys.path.insert(0, str(_HUB_ROOT))
 
+_TEMPLATES_DIR = Path(__file__).resolve().parent
+if str(_TEMPLATES_DIR) not in sys.path:
+    sys.path.insert(0, str(_TEMPLATES_DIR))
+
+import addon_runtime
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
+
 _ENV = SandboxEnvironment.from_os_environ()
 
-# =================================================================
-# 1. RESOLUCIÓN DINÁMICA DE EXTENSIONES (Paridad con bootstrap.py)
-# =================================================================
-def _get_kitsu_addon_key() -> str:
-    """Encuentra la clave exacta de Kitsu en el nuevo sistema de extensiones (v4.2+)."""
-    # 1. Buscar en preferencias activas
-    for key in bpy.context.preferences.addons.keys():
-        if "blender_kitsu" in key:
-            return key
-            
-    # 2. Si no está activa, buscar en la lista de módulos instalados
-    import addon_utils
-    for mod in addon_utils.modules():
-        if "blender_kitsu" in mod.__name__:
-            return mod.__name__
-            
-    return "blender_kitsu" # Fallback legacy
 
-def _get_kitsu_module():
-    """Devuelve el módulo cargado en memoria de Kitsu."""
-    addon_key = _get_kitsu_addon_key()
-    return sys.modules.get(addon_key)
+# =================================================================
+# 1. ACCESO A LOS ADD-ONS (delegado a los scripts autogenerados)
+# =================================================================
+def _kitsu_cfg():
+    """Devuelve el módulo de configuración generado para Blender Kitsu."""
+    return addon_runtime.load("blender_kitsu")
 
-def despertar_kitsu_module():
-    """Busca y activa el módulo usando el operador oficial de Blender asegurando inicialización RNA."""
-    addon_key = _get_kitsu_addon_key()
-    
-    try:
-        bpy.ops.preferences.addon_enable(module=addon_key)
-    except Exception as e:
-        print(f"[HeadlessBuilder] Advertencia al habilitar {addon_key}: {e}")
-        
-    # Forzar la importación a sys.modules
-    importlib.import_module(addon_key)
-    return sys.modules.get(addon_key), addon_key
+
+def _kitsu_module():
+    """Devuelve el módulo real del addon Blender Kitsu cargado en memoria."""
+    config_module = _kitsu_cfg()
+    if config_module is not None and hasattr(config_module, "get_addon_module"):
+        module = config_module.get_addon_module()
+        if module is not None:
+            return module
+    return sys.modules.get("blender_kitsu")
+
+
+def _reapply_addon_context():
+    """Restaura sesión/preferencias del addon tras una operación destructiva."""
+    config_module = _kitsu_cfg()
+    if config_module is not None and hasattr(config_module, "on_file_opened"):
+        config_module.on_file_opened()
 
 
 # =================================================================
-# 2. MECANISMOS DE PROTECCIÓN
+# 2. MECANISMOS DE PROTECCIÓN (build-specific)
 # =================================================================
 def inyectar_parche_proteccion_memoria():
     """
-    Evita el crash de RNA desactivando la carga de archivos .blend 
-    DENTRO de los operadores de Kitsu. Cargar archivos destruye 
+    Evita el crash de RNA desactivando la carga de archivos .blend
+    DENTRO de los operadores de Kitsu. Cargar archivos destruye
     la instancia `self` del operador en modo Headless.
     """
     try:
-        kitsu_module = _get_kitsu_module()
-        if not kitsu_module: return
+        kitsu_module = _kitsu_module()
+        if not kitsu_module:
+            return
 
         # Interceptamos la referencia directamente en el módulo 'ops' donde se usa
         kitsu_ops = kitsu_module.shot_builder.ops
-        
+
         def parche_open_template(task_type_name):
             print(f"[HeadlessBuilder] 🛡️ Bypass de plantilla '{task_type_name}' ejecutado para proteger memoria RNA.")
             pass
-            
+
         kitsu_ops.open_template_as_homefile = parche_open_template
         print("[HeadlessBuilder] ✓ Parche de protección de memoria RNA inyectado.")
-        
-    except Exception as e:
-        print(f"[HeadlessBuilder] ⚠️ Advertencia: No se pudo inyectar protección de memoria: {e}")
+
+    except Exception as error:  # noqa: BLE001
+        print(f"[HeadlessBuilder] ⚠️ Advertencia: No se pudo inyectar protección de memoria: {error}")
+
+
+def _inyectar_parche_guardado_sincrono():
+    """Sobrescribe el guardado de Kitsu para que sea síncrono (Anti-Timer)."""
+    kitsu_module = _kitsu_module()
+    if not kitsu_module:
+        return
+    try:
+        kitsu_file_save = kitsu_module.shot_builder.file_save
+
+        def save_shot_sync(file_path: str) -> bool:
+            path_obj = Path(file_path)
+            if path_obj.exists():
+                print(f"[HeadlessBuilder] ⚠️ El archivo ya existe: {path_obj.name}")
+                return False
+
+            path_obj.parent.mkdir(parents=True, exist_ok=True)
+            bpy.ops.wm.save_mainfile(filepath=str(path_obj), relative_remap=True)
+            print(f"[HeadlessBuilder] 💾 Archivo físico escrito síncronamente: {path_obj.name}")
+            return True
+
+        kitsu_file_save.save_shot_builder_file = save_shot_sync
+        print("[HeadlessBuilder] ✓ Parche de guardado síncrono (Anti-Timer) inyectado exitosamente.")
+    except AttributeError as attr_err:
+        print(f"[HeadlessBuilder] ⚠️ No se pudo inyectar el parche Anti-Timer: {attr_err}")
+
 
 def cargar_plantilla_segura(task_type_name: str = None, app_template: str = None):
-    """Carga el template y restaura el contexto de Kitsu borrado por Blender."""
-    kitsu_module = _get_kitsu_module()
-    addon_key = _get_kitsu_addon_key()
-    
-    # 1. EXTRACCIÓN DE SALVAVIDAS (Antes de destruir la memoria de la escena)
-    project_id = ""
-    if kitsu_module and addon_key in bpy.context.preferences.addons:
-        prefs = bpy.context.preferences.addons[addon_key].preferences
-        project_id = getattr(prefs, "project_active_id", "")
-        
+    """Carga el template y delega la restauración de contexto al add-on."""
+    kitsu_module = _kitsu_module()
+
     try:
         if app_template:
             print(f"[HeadlessBuilder] 🎬 Cargando App-Template '{app_template}' en contexto seguro...")
@@ -114,124 +132,12 @@ def cargar_plantilla_segura(task_type_name: str = None, app_template: str = None
             if template_path and template_path.exists():
                 print(f"[HeadlessBuilder] 🎬 Cargando plantilla '{task_type_name}' en contexto seguro...")
                 bpy.ops.wm.open_mainfile(filepath=str(template_path), load_ui=False)
-    except Exception as e:
-        print(f"[HeadlessBuilder] Info: Omitiendo plantilla ({e})")
-        
-    # 2. REINYECCIÓN DEL CONTEXTO Y AUTENTICACIÓN
-    if kitsu_module and project_id:
-        print("[HeadlessBuilder] 🔑 Re-autenticando sesión (Bypass de amnesia de seguridad)...")
-        # Forzamos el login nuevamente para reconstruir el token de Gazu borrado al abrir el archivo
-        bpy.ops.kitsu.session_start('EXEC_DEFAULT')
-        
-        print(f"[HeadlessBuilder] ♻️ Restaurando contexto Kitsu en la nueva escena (Project ID: {project_id})")
-        kitsu_module.cache.project_active_set_by_id(bpy.context, project_id)
+    except Exception as error:  # noqa: BLE001
+        print(f"[HeadlessBuilder] Info: Omitiendo plantilla ({error})")
 
-        # =======================================================
-        # 3. REINYECCIÓN DEL MONKEY PATCH VFS
-        # =======================================================
-        vfs_svn = (_ENV.production_folder or "svn")
-        try:
-            kitsu_prefs_mod = importlib.import_module(f"{kitsu_module.__name__}.prefs")
-            
-            # 1. Parche a nivel de módulo (Legacy)
-            def custom_root_dir_get(context):
-                pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
-                return Path(pref_instance.project_root_dir) / vfs_svn
-                
-            kitsu_prefs_mod.project_root_dir_get = custom_root_dir_get
-            
-            # 2. NUEVO: Parche profundo a nivel de clase para eliminar 'project_files'
-            if hasattr(kitsu_prefs_mod, "KITSU_addon_preferences"):
-                def custom_project_root_path(self):
-                    # 'self' es la instancia de preferencias. Devolvemos la ruta limpia.
-                    return Path(self.project_root_dir) / vfs_svn
-                
-                # Inyectamos el método directamente en la clase original del add-on
-                kitsu_prefs_mod.KITSU_addon_preferences.project_root_path = custom_project_root_path
-                
-            print(f"[HeadlessBuilder] 🛡️ Monkey patch VFS ({vfs_svn}) inyectado (Bypass 'project_files').")
-        except Exception as e:
-            print(f"[HeadlessBuilder] ⚠️ Advertencia: Fallo al inyectar Monkey Patch VFS: {e}")
-
-        # =======================================================
-        # 4. PARCHE DE GUARDADO SÍNCRONO (Anti-Timer)
-        # =======================================================
-        try:
-            kitsu_file_save = kitsu_module.shot_builder.file_save
-            
-            def save_shot_sync(file_path: str) -> bool:
-                path_obj = Path(file_path)
-                if path_obj.exists(): 
-                    print(f"[HeadlessBuilder] ⚠️ El archivo ya existe: {path_obj.name}")
-                    return False
-                    
-                path_obj.parent.mkdir(parents=True, exist_ok=True)
-                
-                # Guardado instantáneo, bloqueando el hilo principal hasta terminar
-                bpy.ops.wm.save_mainfile(filepath=str(path_obj), relative_remap=True)
-                print(f"[HeadlessBuilder] 💾 Archivo físico escrito síncronamente: {path_obj.name}")
-                return True
-                
-            # Sobrescribimos la función original
-            kitsu_file_save.save_shot_builder_file = save_shot_sync
-            print("[HeadlessBuilder] ✓ Parche de guardado síncrono (Anti-Timer) inyectado exitosamente.")
-        except AttributeError as attr_err:
-            print(f"[HeadlessBuilder] ⚠️ No se pudo inyectar el parche Anti-Timer: {attr_err}")
-
-
-# =======================================================
-# 3. FUNCIÓN MAESTRA DE I/O Y AUTENTICACIÓN
-# =======================================================
-def autenticar_kitsu_headless(kitsu_module, mod_name):
-    """
-    Inyecta el Host y las credenciales (provistas por EnvLauncher a través del OS env)
-    dentro del addon de Kitsu e inicia sesión de forma estricta.
-    Resuelve el problema de Gazu intentando conectar a 'gazu.change.serverhost'.
-    """
-    hub_host = (_ENV.kitsu_host or "http://localhost:8080/api")
-    hub_user = (_ENV.kitsu_user or "")
-    hub_pwd = (_ENV.kitsu_pwd or "")
-    project_id = (_ENV.kitsu_project_id or "")
-    project_root = (_ENV.project_root or "")
-    
-    if not (hub_user and hub_pwd):
-        print(f"[HeadlessBuilder] ⚠️ Advertencia: No se proporcionaron credenciales completas para {hub_host}")
-        return False
-
-    print(f"[HeadlessBuilder] 🔒 Autenticando estricto en RAM como: {hub_user} en {hub_host}")
-    
-    prefs = bpy.context.preferences.addons[mod_name].preferences
-    prefs.host = hub_host
-    prefs.email = hub_user
-    prefs.passwd = hub_pwd
-    
-    if project_root:
-        prefs.project_root_dir = project_root
-
-    try:
-        bpy.ops.kitsu.session_start('EXEC_DEFAULT')
-    except Exception as e:
-        print(f"[HeadlessBuilder] ❌ Error de autenticación con Kitsu API: {e}")
-        return False
-    
-    if project_id:
-        print(f"[HeadlessBuilder] ♻️ Fijando proyecto activo global (ID: {project_id})")
-        kitsu_module.cache.project_active_set_by_id(bpy.context, project_id)
-        prefs.project_active_id = project_id
-
-    # Inyectar el Monkey Patch VFS Inicial
-    vfs_svn = (_ENV.production_folder or "svn")
-    try:
-        kitsu_prefs_mod = importlib.import_module(f"{kitsu_module.__name__}.prefs")
-        def custom_root_dir_get(context):
-            pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
-            return Path(pref_instance.project_root_dir) / vfs_svn
-            
-        kitsu_prefs_mod.project_root_dir_get = custom_root_dir_get
-    except Exception as e:
-        print(f"[HeadlessBuilder] ⚠️ Advertencia: Fallo al inyectar Monkey Patch VFS inicial: {e}")
-
-    return True
+    # Reinyectar contexto/preferencias/sesión del add-on tras cargar el archivo.
+    _reapply_addon_context()
+    _inyectar_parche_guardado_sincrono()
 
 
 def _guardar_entidad_forjada(filepath_str: str, debug_label: str = "ENTIDAD"):
@@ -241,8 +147,6 @@ def _guardar_entidad_forjada(filepath_str: str, debug_label: str = "ENTIDAD"):
     """
     out_path = Path(filepath_str)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Guardado manual forzado (Síncrono y bloqueante)
     bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
     print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO DE {debug_label} EXITOSO EN: {out_path}")
     return out_path
@@ -254,227 +158,218 @@ def _guardar_entidad_forjada(filepath_str: str, debug_label: str = "ENTIDAD"):
 def forjar_storyboard():
     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Storyboard...")
     inyectar_parche_proteccion_memoria()
-    
-    # Para consistencia y evitar sorpresas, despertamos y autenticamos
-    kitsu_module, mod_name = despertar_kitsu_module()
-    if kitsu_module:
-        autenticar_kitsu_headless(kitsu_module, mod_name)
-    
+    _reapply_addon_context()
+
     # 1. Cargamos la plantilla nativa de Blender para Storyboard (2D Animation)
     try:
         print("[HeadlessBuilder] 🎬 Cargando plantilla nativa 'Storyboarding'...")
         cargar_plantilla_segura(app_template="Storyboarding")
-    except Exception as e:
-        print(f"[HeadlessBuilder] ⚠️ Plantilla Storyboarding no encontrada, usando default. Error: {e}")
+    except Exception as error:  # noqa: BLE001
+        print(f"[HeadlessBuilder] ⚠️ Plantilla Storyboarding no encontrada, usando default. Error: {error}")
         bpy.ops.wm.read_homefile()
-        
+
     try:
         # 2. Extraer contexto inyectado por el Hub
         project_root = Path((_ENV.project_root or ""))
         vfs_svn = (_ENV.production_folder or "svn")
         seq_name = (_ENV.target_sequence or "SQ000").lower()
-        
+
         # 3. Construir la ruta (En la carpeta de edición, tal como lo definimos)
         out_path = project_root / vfs_svn / "edit" / "storyboards" / f"{seq_name}-storyboard.blend"
-        
+
         # 4. Guardado manual forzado (Síncrono y bloqueante)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
-        
+
         print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO FORZADO EXITOSO EN: {out_path}")
-        
-    except Exception as e:
-        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo de Storyboard: {e}")
+
+    except Exception as error:  # noqa: BLE001
+        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo de Storyboard: {error}")
 
 
 def forjar_edit_master():
     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Edición...")
     inyectar_parche_proteccion_memoria()
-    
-    # 0. DESPERTAR EL MÓDULO (Nos devuelve el módulo y su nombre oficial)
-    kitsu_module, mod_name = despertar_kitsu_module()
-    if not kitsu_module: return
-    
-    # 1. AUTENTICACIÓN CENTRALIZADA
-    autenticar_kitsu_headless(kitsu_module, mod_name)
 
-    # 2. DISPARAR LA CREACIÓN DEL EDIT
+    kitsu_module = _kitsu_module()
+    if not kitsu_module:
+        return
+    _reapply_addon_context()
+
+    # 1. DISPARAR LA CREACIÓN DEL EDIT
     try:
         print("[HeadlessBuilder] 🎬 Ejecutando kitsu.create_edit_file()...")
         bpy.ops.kitsu.create_edit_file(create_kitsu_edit=True, save_file=False)
         print("[HeadlessBuilder] ✓ Archivo Maestro de Edición configurado en memoria por Kitsu.")
 
-        # 3. EXTRACCIÓN DE LA RUTA Y GUARDADO FÍSICO
+        # 2. EXTRACCIÓN DE LA RUTA Y GUARDADO FÍSICO
         edit_entity = kitsu_module.cache.edit_default_get(episode_id=bpy.context.scene.kitsu.episode_active_id)
         filepath_str = edit_entity.get_filepath(bpy.context)
-        
+
         _guardar_entidad_forjada(filepath_str, "EDIT MASTER")
-        
-    except Exception as e:
+
+    except Exception as error:  # noqa: BLE001
         import traceback
-        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo Edit: {e}")
+
+        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo Edit: {error}")
         traceback.print_exc()
 
 
 def forjar_shot():
     print("[HeadlessBuilder] Iniciando forjado de Shot (Toma)...")
     inyectar_parche_proteccion_memoria()
-    
+
     try:
-        kitsu_module, mod_name = despertar_kitsu_module()
-        if not kitsu_module: return
+        kitsu_module = _kitsu_module()
+        if not kitsu_module:
+            return
+        _reapply_addon_context()
 
-        # 1. AUTENTICACIÓN CENTRALIZADA
-        autenticar_kitsu_headless(kitsu_module, mod_name)
-
-        # 2. EXTRAER NOMBRES DESDE LAS VARIABLES DE ENTORNO
+        # 1. EXTRAER NOMBRES DESDE LAS VARIABLES DE ENTORNO
         seq_name = (_ENV.kitsu_sequence_name or "")
         shot_name = (_ENV.kitsu_entity_name or "")
         task_type_name = (_ENV.kitsu_task_type_name or "Layout")
-        
-        # 3. PREPARAR PLANTILLA USANDO LA TAREA
-        # task_type = kitsu_module.cache.task_type_active_get()
-        # if task_type:
-        #     cargar_plantilla_segura(task_type_name=task_type.name)
-        # else:
-        #     cargar_plantilla_segura()
-        # 4. INYECTAR VARIABLES EN LA ESCENA ACTUAL (SIMULANDO CLICS EN LA UI)
+
+        # 2. INYECTAR VARIABLES EN LA ESCENA ACTUAL (SIMULANDO CLICS EN LA UI)
         if seq_name:
             print(f"[HeadlessBuilder] ♻️ Fijando Secuencia en Escena: {seq_name}")
             bpy.context.scene.kitsu.sequence_active_name = seq_name
-            
+
         if shot_name:
             print(f"[HeadlessBuilder] ♻️ Fijando Shot en Escena: {shot_name}")
             bpy.context.scene.kitsu.shot_active_name = shot_name
 
         if task_type_name:
             print(f"[HeadlessBuilder] ♻️ Fijando Task Type en Escena: {task_type_name}")
-            bpy.context.scene.kitsu.task_type_active_name = task_type_name 
+            bpy.context.scene.kitsu.task_type_active_name = task_type_name
 
-        # 5. FORJAR EL ARCHIVO
+        # 3. FORJAR EL ARCHIVO
         print("[HeadlessBuilder] 🎬 Ejecutando kitsu.build_new_shot()...")
         bpy.ops.kitsu.build_new_shot(save_file=False)
-        
-        # 6. EXTRACCIÓN DE LA RUTA Y GUARDADO
+
+        # 4. EXTRACCIÓN DE LA RUTA Y GUARDADO
         task_type = kitsu_module.cache.task_type_active_get()
         shot = kitsu_module.cache.shot_active_get()
         filepath_str = shot.get_filepath(bpy.context, task_type.get_short_name() if task_type else "")
-        
+
         out_path = _guardar_entidad_forjada(filepath_str, "SHOT")
-        
+
         # ==========================================================
-        # 7. REGISTRAR RUTA EN EL CUSTOM FIELD DE LA TAREA EN KITSU
+        # 5. REGISTRAR RUTA EN EL CUSTOM FIELD DE LA TAREA EN KITSU
         # ==========================================================
         try:
             from src.infrastructure.kitsu_manager import KitsuManager
+
             kitsu_mgr = KitsuManager()
-            # EXTRAEMOS LOS IDs CRUDOS (.id) DE LOS OBJETOS DE BLENDER_KITSU
             shot_id = shot.id
             tt_id = task_type.id
-            
-            # Usamos los IDs en formato texto para buscar en gazu
+
             task = kitsu_mgr.get_task_by_entity(shot_id, tt_id)
-            
+
             if task:
-                # Calculamos la ruta relativa al VFS (Ej: pro/shots/01/010/010-layout.blend)
                 vfs_root = Path((_ENV.project_root or "")) / (_ENV.production_folder or "svn")
                 rel_path = out_path.relative_to(vfs_root).as_posix()
-                
-                # Preparamos e inyectamos los datos en Kitsu
+
                 task_data = task.get("data")
-                if not task_data: 
+                if not task_data:
                     task_data = {}
-                    
+
                 task_data["filepath"] = rel_path
                 task["data"] = task_data
-                #gazu.task.update_task(task["id"], task_data)
                 kitsu_mgr.update_task(task)
-                
+
                 print(f"[HeadlessBuilder] ✓ Metadata guardada en Kitsu Task ({task_type.name}): {rel_path}")
             else:
                 print(f"[HeadlessBuilder] ⚠️ Tarea {task_type.name} no encontrada en Kitsu para actualizar metadatos.")
-        except Exception as api_e:
+        except Exception as api_e:  # noqa: BLE001
             print(f"[HeadlessBuilder] ❌ Error actualizando la Tarea en Kitsu: {api_e}")
         # ==========================================================
 
-    except Exception as e:
+    except Exception as error:  # noqa: BLE001
         import traceback
-        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Shot: {e}")
+
+        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Shot: {error}")
         traceback.print_exc()
+
 
 def forjar_asset():
     print("[HeadlessBuilder] Iniciando forjado de Asset (Recurso)...")
     inyectar_parche_proteccion_memoria()
-    
+
     try:
-        kitsu_module, mod_name = despertar_kitsu_module()
-        if not kitsu_module: return
+        kitsu_module = _kitsu_module()
+        if not kitsu_module:
+            return
+        _reapply_addon_context()
 
-        # 1. AUTENTICACIÓN CENTRALIZADA
-        autenticar_kitsu_headless(kitsu_module, mod_name)
-
-        # 2. RECUPERAR IDs DEL ENTORNO
+        # 1. RECUPERAR IDs DEL ENTORNO
         target_id = (_ENV.target_entity_id or "")
         asset_type_id = (_ENV.kitsu_asset_type_id or "")
 
-        # --- DEBUG TEMPORAL ---
         print(f"[DEBUG Headless] TARGET_ID recibido: '{target_id}'")
         print(f"[DEBUG Headless] ASSET_TYPE_ID recibido: '{asset_type_id}'")
-        # ----------------------
-        
-        # 3. EXTRAER NOMBRES DIRECTAMENTE VÍA ID DE Kitsu/Gazu
+
+        # 2. EXTRAER NOMBRES DIRECTAMENTE VÍA ID DE Kitsu/Gazu
         from src.infrastructure.kitsu_manager import KitsuManager
+
         kitsu_mgr = KitsuManager()
         asset_type_name = ""
         asset_name = ""
-        
+
         if asset_type_id:
             try:
                 at_data = kitsu_mgr.get_asset_type(asset_type_id)
                 asset_type_name = at_data.get("name", "") if at_data else ""
-            except Exception as e:
-                print(f"[HeadlessBuilder] Error obteniendo Asset Type: {e}")
-                
+            except Exception as error:  # noqa: BLE001
+                print(f"[HeadlessBuilder] Error obteniendo Asset Type: {error}")
+
         if target_id:
             try:
                 asset_data = kitsu_mgr.get_asset(target_id)
                 asset_name = asset_data.get("name", "") if asset_data else ""
-            except Exception as e:
-                print(f"[HeadlessBuilder] Error obteniendo Asset: {e}")
+            except Exception as error:  # noqa: BLE001
+                print(f"[HeadlessBuilder] Error obteniendo Asset: {error}")
 
-        # 4. INYECTAR VARIABLES EN LA ESCENA ACTUAL ANTES DEL OPERADOR
+        # 3. INYECTAR VARIABLES EN LA ESCENA ACTUAL ANTES DEL OPERADOR
         if asset_type_name:
             print(f"[HeadlessBuilder] ♻️ Fijando Asset Type en Escena: {asset_type_name}")
             bpy.context.scene.kitsu.asset_type_active_name = asset_type_name
-            
+
         if asset_name:
             print(f"[HeadlessBuilder] ♻️ Fijando Asset en Escena: {asset_name}")
             bpy.context.scene.kitsu.asset_active_name = asset_name
 
-        # 5. FORJAR EL ARCHIVO (El operador carga la plantilla internamente)
+        # 4. FORJAR EL ARCHIVO (El operador carga la plantilla internamente)
         print("[HeadlessBuilder] 🎬 Ejecutando kitsu.build_new_asset()...")
         bpy.ops.kitsu.build_new_asset(save_file=False)
-        
-        # 6. EXTRACCIÓN DE LA RUTA Y GUARDADO
+
+        # 5. EXTRACCIÓN DE LA RUTA Y GUARDADO
         asset = kitsu_module.cache.asset_active_get()
         filepath_str = asset.get_filepath(bpy.context)
-        
+
         _guardar_entidad_forjada(filepath_str, "ASSET")
-        
-    except Exception as e:
+
+    except Exception as error:  # noqa: BLE001
         import traceback
-        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Asset: {e}")
+
+        print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Asset: {error}")
         traceback.print_exc()
+
 
 # =======================================================
 # MAIN ORCHESTRATOR
 # =======================================================
 def main():
-    print("\n" + "="*50)
+    print("\n" + "=" * 50)
     print("[OPENSTUDIO HUB] Iniciando Constructor Headless...")
-    
+
+    # Delegar la configuración de add-ons a los scripts autogenerados.
+    registered = addon_runtime.register_all()
+    if registered:
+        print(f"[HeadlessBuilder] Add-ons configurados: {', '.join(registered)}")
+
     build_target = (_ENV.build_target or "STORYBOARD").upper()
-    
+
     if build_target == "STORYBOARD":
         forjar_storyboard()
     elif build_target == "EDIT":
@@ -487,9 +382,10 @@ def main():
         print(f"[HeadlessBuilder] ❌ Error: Objetivo de construcción desconocido -> {build_target}")
 
     print("[OPENSTUDIO HUB] Constructor Headless Finalizado.")
-    print("="*50 + "\n")
-    
+    print("=" * 50 + "\n")
+
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

@@ -21,6 +21,10 @@ from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
+from src.domain.shared_kernel.addon_contract import (
+    default_addon_configuration,
+    parse_addon_configuration,
+)
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.application.services.workspace_operations import (
     WorkspaceScaffolder,
@@ -53,7 +57,8 @@ class ProjectCreationService:
         vcs_user: str = "",
         vcs_pwd: str = "",
         topography=None,
-        vcs_enabled: bool = True
+        vcs_enabled: bool = True,
+        addon_configuration: dict | None = None,
     ) -> tuple[bool, str]:
 
         if not project_name.strip():
@@ -81,12 +86,18 @@ class ProjectCreationService:
 
 
         try:
+            if addon_configuration is None:
+                parsed_addon_config = default_addon_configuration(dependencies)
+            else:
+                parsed_addon_config = parse_addon_configuration(addon_configuration)
+
             blueprint = ProjectBlueprint(
                 project_name=project_name.strip(),
                 kitsu_project_id=kitsu_project.get("id", ""),
                 blender_version=blender_version.strip(),
                 template=kitsu_template,
                 dependencies=dependencies,
+                addon_configuration=parsed_addon_config,
                 topography=topography or self.config_factory.get_topography(),
                 vcs_enabled=vcs_enabled
             )

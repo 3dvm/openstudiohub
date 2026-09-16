@@ -89,6 +89,7 @@ class NewProjectViewModel(BaseViewModel):
         vcs_user: str,
         vcs_pwd: str,
         vcs_enabled: bool = True,
+        addon_configuration: dict | None = None,
     ) -> None:
         required = vcs_enabled and vcs_requires_credentials(self.config_factory)
         creds = ensure_vcs_credentials(
@@ -114,6 +115,7 @@ class NewProjectViewModel(BaseViewModel):
             vcs_user,
             vcs_pwd,
             vcs_enabled=vcs_enabled,
+            addon_configuration=addon_configuration,
         )
         self._worker.result.connect(self._on_creation_finished)
         self._worker.finished.connect(self._worker.deleteLater)

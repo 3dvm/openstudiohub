@@ -79,11 +79,18 @@ class VaultManifest:
         description: str = "",
         mandatory: bool = False,
         requires: List[str] = None,
+        config_schema: Dict[str, Any] = None,
+        default_config: Dict[str, Any] = None,
     ) -> None:
         self.ensure_version(version)
-        self.versions[version].setdefault("addons", {})[name] = {
+        entry: Dict[str, Any] = {
             "version": addon_version,
             "description": description,
             "mandatory": mandatory,
             "requires": list(requires or []),
         }
+        if config_schema is not None:
+            entry["config_schema"] = dict(config_schema)
+        if default_config is not None:
+            entry["default_config"] = dict(default_config)
+        self.versions[version].setdefault("addons", {})[name] = entry

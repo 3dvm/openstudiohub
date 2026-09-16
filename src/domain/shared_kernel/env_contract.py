@@ -10,21 +10,23 @@
 """
 Single source of truth for the process-environment "contract" between the Hub
 and the Blender-side scripts (``src/infrastructure/templates/bootstrap.py``,
-``src/infrastructure/templates/headless_builder.py``, and ``addons/openstudio_toolkit``).
+``src/infrastructure/templates/headless_builder.py``, the generated
+``cfg_<addon>.py`` scripts, and ``addons/openstudio_toolkit``).
 
 Historically the ~25 ``OPENSTUDIO_*`` / ``BLENDER_*`` variables were written by
 six different modules and read by three more, as raw ``os.environ`` strings with
 no validation — so producer/consumer drift was guaranteed. This module is the
 typed model they must all share.
 
-STATUS (Phase 0): this is the *specification only*. It is not yet wired into the
-producers/consumers; that happens in Phase 5 (LaunchService) and Phase 7
-(Blender-side alignment). Until then it must stay in sync with the existing
-string keys listed below.
+The ``KITSU_*`` block is kept here because it is *per-launch session context*
+(host/credentials/active entity) injected RAM-only and consumed by the add-on
+config scripts. It is not part of ``project_init.json``: static, per-project
+add-on settings live under ``addon_configuration`` (see
+``src/domain/shared_kernel/addon_contract.py``).
 
 Because Blender runs its own embedded Python and cannot import the Hub package
-tree, this single file is copied into the sandbox alongside ``bootstrap.py`` and
-``headless_builder.py`` (same mechanism already used to ship ``bootstrap.py``).
+tree, this file is copied into the sandbox alongside ``bootstrap.py`` and
+``addon_runtime.py`` (same mechanism already used to ship ``bootstrap.py``).
 """
 
 from __future__ import annotations

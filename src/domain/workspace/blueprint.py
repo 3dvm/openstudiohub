@@ -11,7 +11,15 @@ to know a project's Blender version, template, dependencies, and topography.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, Optional
+
+from src.domain.shared_kernel.addon_contract import (
+    ADDON_CONFIGURATION_KEY,
+    AddonConfiguration,
+    default_addon_configuration,
+    parse_addon_configuration,
+    serialize_addon_configuration,
+)
 
 from .topography import WorkspaceTopography
 
@@ -23,6 +31,7 @@ class ProjectBlueprint:
     blender_version: str = ""
     template: str = ""
     dependencies: Dict[str, Any] = field(default_factory=dict)
+    addon_configuration: Dict[str, AddonConfiguration] = field(default_factory=dict)
     topography: WorkspaceTopography = field(default_factory=WorkspaceTopography)
     vcs_enabled: bool = True
 
@@ -30,12 +39,20 @@ class ProjectBlueprint:
     def from_dict(cls, data: Dict[str, Any]) -> "ProjectBlueprint":
         data = data or {}
         version_locking = data.get("version_locking") or {}
+        dependencies = data.get("dependencies") or {}
+        raw_addon_config: Optional[Dict[str, Any]] = data.get(ADDON_CONFIGURATION_KEY)
+        if raw_addon_config is None:
+            # Legacy blueprint: derive an enabled skeleton from the add-on deps.
+            addon_configuration = default_addon_configuration(dependencies)
+        else:
+            addon_configuration = parse_addon_configuration(raw_addon_config)
         return cls(
             project_name=data.get("project_name") or "",
             kitsu_project_id=data.get("kitsu_project_id") or "",
             blender_version=version_locking.get("blender_version") or data.get("blender_version") or "",
             template=data.get("template") or "",
-            dependencies=data.get("dependencies") or {},
+            dependencies=dependencies,
+            addon_configuration=addon_configuration,
             topography=WorkspaceTopography.from_dict(data.get("topography_signature") or {}),
         )
 
@@ -62,6 +79,9 @@ class ProjectBlueprint:
             return False
         if not isinstance(dependencies, dict):
             return False
+        addon_configuration = data.get(ADDON_CONFIGURATION_KEY)
+        if addon_configuration is not None and not isinstance(addon_configuration, dict):
+            return False
         if not isinstance(topography, dict):
             return False
 
@@ -79,6 +99,7 @@ class ProjectBlueprint:
             "blender_version": self.blender_version,
             "template": self.template,
             "dependencies": self.dependencies,
+            ADDON_CONFIGURATION_KEY: serialize_addon_configuration(self.addon_configuration),
             "topography_signature": {
                 "vfs_svn": self.topography.vfs_svn,
                 "vfs_shared": self.topography.vfs_shared,

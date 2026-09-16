@@ -21,6 +21,7 @@ Two damage modes are supported:
 from pathlib import Path
 
 from src.domain.workspace.blueprint import ProjectBlueprint
+from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.application.services.workspace_operations import (
     WorkspaceScaffolder,
     BlueprintGenerator,
@@ -55,6 +56,11 @@ class ProjectRepairService:
 
         blueprint.kitsu_project_id = kitsu_proj.get("id", "")
         BlueprintGenerator.write_manifests(project_root, blueprint)
+        AddonConfigGenerator(self.config_factory).generate(
+            project_root,
+            blueprint.addon_configuration,
+            blueprint.topography,
+        )
         return True, "NAS Ghost repaired: Kitsu project created and blueprint synced."
 
     # ------------------------------------------------------------------
@@ -80,6 +86,11 @@ class ProjectRepairService:
 
         WorkspaceScaffolder.build_directories(project_root, blueprint)
         BlueprintGenerator.write_manifests(project_root, blueprint)
+        AddonConfigGenerator(self.config_factory).generate(
+            project_root,
+            blueprint.addon_configuration,
+            blueprint.topography,
+        )
 
         vfs_svn = blueprint.topography.vfs_svn
         base_repo_url = self.config_factory.get_vcs_repository_url()
@@ -124,5 +135,12 @@ class ProjectRepairService:
         # Rebuild any missing structural folders and regenerate the manifest.
         WorkspaceScaffolder.build_directories(project_root, blueprint)
         BlueprintGenerator.write_manifests(project_root, blueprint)
+
+        # Keep the generated add-on startup scripts in sync with the blueprint.
+        AddonConfigGenerator(self.config_factory).generate(
+            project_root,
+            blueprint.addon_configuration,
+            blueprint.topography,
+        )
 
         return True, "Blueprint rebuilt: project_init.json regenerated."

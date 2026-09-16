@@ -44,6 +44,7 @@ class ProjectCreationWorker(QThread):
         vcs_user: str,
         vcs_pwd: str,
         vcs_enabled: bool,
+        addon_configuration: dict | None = None,
     ) -> None:
         super().__init__()
         self.project_creation_service = project_creation_service
@@ -55,6 +56,7 @@ class ProjectCreationWorker(QThread):
         self.vcs_user = vcs_user
         self.vcs_pwd = vcs_pwd
         self.vcs_enabled = vcs_enabled
+        self.addon_configuration = addon_configuration
 
     def run(self) -> None:
         ok, message = self.project_creation_service.create_project(
@@ -66,5 +68,6 @@ class ProjectCreationWorker(QThread):
             vcs_user=self.vcs_user,
             vcs_pwd=self.vcs_pwd,
             vcs_enabled=self.vcs_enabled,
+            addon_configuration=self.addon_configuration,
         )
         self.result.emit(ok, message)

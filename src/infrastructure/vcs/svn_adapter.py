@@ -45,7 +45,7 @@ class SVNAdapter(AbstractVCS):
     def _run_subprocess(self, cmd: List[str], cwd: Optional[Path] = None) -> str:
         """Secure wrapper to execute subprocesses and capture errors."""
         cwd_path = str(cwd) if cwd else None
-        
+
         # === DEBUG MODE: Security mask to avoid printing the password in the console ===
         safe_cmd = []
         skip_next = False
@@ -58,17 +58,17 @@ class SVNAdapter(AbstractVCS):
                 skip_next = True
             else:
                 safe_cmd.append(token)
-                
+
         print(f"\n[SVN DEBUG] Executing (CWD: {cwd_path or 'Current'}):")
         print(f" -> {' '.join(safe_cmd)}")
         # ==============================================================================
 
         try:
             result = subprocess.run(
-                cmd, 
-                cwd=cwd_path, 
-                check=True, 
-                capture_output=True, 
+                cmd,
+                cwd=cwd_path,
+                check=True,
+                capture_output=True,
                 text=True
             )
             return result.stdout
@@ -98,14 +98,14 @@ class SVNAdapter(AbstractVCS):
             cmd_co = ["svn", "checkout", "--depth", "empty", self.repo_url, str(self.workspace_dir)]
             cmd_co.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd_co)
-        
+
         # 2. Download only the approved directories in the paths list
         for path in paths:
             # FIX: Added the --parents flag to build the mandatory empty hierarchy
             cmd_up = ["svn", "update", "--set-depth", "infinity", "--parents", path]
             cmd_up.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd_up, cwd=self.workspace_dir)
-            
+
         return True
 
     def commit(self, message: str, paths: Optional[List[str]] = None, username: Optional[str] = None, password: Optional[str] = None) -> bool:
@@ -169,16 +169,16 @@ class SVNAdapter(AbstractVCS):
         """Aplica la propiedad svn:ignore sobre la raíz del workspace."""
         if not (self.workspace_dir / ".svn").exists():
             return False
-            
+
         # Escribimos un archivo temporal con los patrones
         ignore_file = self.workspace_dir / ".svn_ignore_temp"
         with open(ignore_file, "w", encoding="utf-8") as f:
             f.write("\n".join(patterns) + "\n")
-        
+
         # Aplicamos la propiedad de SVN leyendo el archivo
         cmd = ["svn", "propset", "svn:ignore", "-F", str(ignore_file), "."]
         self._run_subprocess(cmd, cwd=self.workspace_dir)
-        
+
         # Limpieza del temporal
         ignore_file.unlink(missing_ok=True)
         return True
@@ -195,12 +195,12 @@ class SVNAdapter(AbstractVCS):
             # Hay que implementar la creación del repositorio en servers remotos con SSH.
             print("[SVNAdapter] Remote repository detected, assuming that the repository already exists.")
             return True # Si es un server real, asumimos que el admin ya creó el repo o se hace vía API
-            
+
         try:
             import subprocess
             # Creación del repositorio en el contenedor Docker
             subprocess.run(["docker", "exec", "openstudio_local_svn", "svnadmin", "create", f"/home/svn/{project_name}"], check=True, capture_output=True)
-            
+
             # Configuración de permisos
             conf_cmd = (
                 f"echo '[general]' > /home/svn/{project_name}/conf/svnserve.conf && "
@@ -209,15 +209,15 @@ class SVNAdapter(AbstractVCS):
                 f"echo 'password-db = passwd' >> /home/svn/{project_name}/conf/svnserve.conf"
             )
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", conf_cmd], check=True, capture_output=True)
-            
+
             # Creación del usuario admin default para localhost
             pwd_cmd = f"echo '[users]' > /home/svn/{project_name}/conf/passwd && echo '{DEV_SVN_USER} = {DEV_SVN_PASSWORD}' >> /home/svn/{project_name}/conf/passwd"
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", pwd_cmd], check=True, capture_output=True)
-            
+
             # Inyección de la topología VFS base
             mkdir_cmd = f"svn mkdir file:///home/svn/{project_name}/{vfs_svn} -m 'Init Hub Topology'"
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", mkdir_cmd], check=True, capture_output=True)
-            
+
             print(f"[SVNAdapter] ✓ Local repository '{project_name}' created succesfully on Docker.")
             return True
         except Exception as e:

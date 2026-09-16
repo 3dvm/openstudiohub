@@ -22,8 +22,10 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.domain.path_resolver import PathResolver
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
+from src.domain.workspace.blueprint import ProjectBlueprint
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
 StatusCallback = Callable[[str, str], None]
@@ -119,6 +121,8 @@ class LaunchService:
         for key, value in sandbox_env.to_os_environ().items():
             env[key] = str(value)
 
+        self._refresh_addon_config(project_root)
+
         bootstrap_dst = self._deploy_bootstrap(project_root, vfs_local)
 
         status_callback(f"Arrancando {project_name} (Contexto: {task_type.upper()})...", "green")
@@ -148,11 +152,35 @@ class LaunchService:
             return Path(sorted(versioned_files)[-1])
         return Path(f"{base_target_str}.blend")
 
+    def _refresh_addon_config(self, project_root: Path) -> None:
+        """Regenerate the ``cfg_<addon>.py`` scripts from the project blueprint.
+
+        This keeps already-installed workspaces (and older blueprints) in sync
+        without requiring a full reinstall, and guarantees the DCC-side support
+        modules are present before Blender boots.
+        """
+        try:
+            vfs_pipeline = self.config_factory.get_vfs_pipeline_name()
+            init_path = project_root / vfs_pipeline / "project_init.json"
+            if not init_path.exists():
+                return
+            with open(init_path, "r", encoding="utf-8") as handle:
+                blueprint = ProjectBlueprint.from_dict(json.load(handle))
+            AddonConfigGenerator(self.config_factory).generate(
+                project_root,
+                blueprint.addon_configuration,
+                blueprint.topography,
+            )
+        except Exception as error:  # noqa: BLE001
+            print(f"[LaunchService] Add-on config refresh skipped: {error}")
+
     @staticmethod
     def _deploy_bootstrap(project_root: Path, vfs_local: str) -> Path:
         src_root = Path(__file__).resolve().parent.parent.parent  # -> src/
-        bootstrap_src = src_root / "infrastructure" / "templates" / "bootstrap.py"
+        templates_dir = src_root / "infrastructure" / "templates"
+        bootstrap_src = templates_dir / "bootstrap.py"
         env_contract_src = src_root / "domain" / "shared_kernel" / "env_contract.py"
+        addon_runtime_src = templates_dir / "addon_runtime.py"
 
         bootstrap_dst = project_root / vfs_local / "bootstrap.py"
         bootstrap_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -161,8 +189,11 @@ class LaunchService:
             raise FileNotFoundError("No se encontro src/infrastructure/templates/bootstrap.py")
 
         shutil.copy2(bootstrap_src, bootstrap_dst)
-        # Ship the shared env contract next to bootstrap.py so the DCC-side
-        # script can import it from its own directory (Blender has no `src`).
+        # Ship the shared env contract + add-on runtime next to bootstrap.py so
+        # the DCC-side scripts can import them from their own directory
+        # (Blender has no `src`).
         if env_contract_src.exists():
             shutil.copy2(env_contract_src, bootstrap_dst.parent / "env_contract.py")
+        if addon_runtime_src.exists():
+            shutil.copy2(addon_runtime_src, bootstrap_dst.parent / "addon_runtime.py")
         return bootstrap_dst

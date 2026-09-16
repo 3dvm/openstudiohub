@@ -1,0 +1,273 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Módulo: core/templates/addons/cfg_blender_kitsu.py
+# Rol Arquitectónico: DCC Scripting / Add-on startup configuration (AUTO-GENERADO)
+# =========================================================================================
+# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
+# Licencia: GNU General Public License v3.0 (GPLv3)
+# =========================================================================================
+#
+# Este archivo es generado por AddonConfigGenerator a partir de
+# project_init.json -> addon_configuration.blender_kitsu.
+# NO EDITAR MANUALMENTE: se sobrescribe en cada instalación.
+# =========================================================================================
+
+"""Configuración de arranque del addon Blender Kitsu.
+
+El Hub no conoce detalles de Kitsu: este script es el único punto con lógica
+específica del addon. Expone ``register()`` (configuración base) y
+``on_file_opened()`` (reaplicada tras cargar un .blend), consumidos por
+``addon_runtime`` tanto en sesiones interactivas como headless.
+"""
+
+import importlib
+import sys
+from pathlib import Path
+
+import bpy
+import addon_utils
+
+_ADDON_CONFIG = __ADDON_CONFIG_JSON__
+_CONFIG_SETTINGS = dict(_ADDON_CONFIG.get("settings") or {})
+_CONFIG_BEHAVIORS = list(_ADDON_CONFIG.get("behaviors") or [])
+
+# env_contract.py se despliega en vfs_local/ (junto a bootstrap.py). El script
+# vive en vfs_local/blender_data/scripts/startup/, así que parents[3] = vfs_local.
+_VFS_LOCAL = Path(__file__).resolve().parents[3]
+if str(_VFS_LOCAL) not in sys.path:
+    sys.path.insert(0, str(_VFS_LOCAL))
+
+try:
+    from env_contract import SandboxEnvironment
+
+    _ENV = SandboxEnvironment.from_os_environ()
+except Exception as _env_error:  # noqa: BLE001
+    print(f"[OPENSTUDIO HUB] blender_kitsu: env_contract unavailable ({_env_error})")
+    _ENV = None
+
+_SETTINGS_DEFAULTS = {
+    "version_control": True,
+    "shot_dir_name": "shots",
+    "asset_dir_name": "assets",
+    "seq_dir_name": "strips",
+    "edit_dir_name": "edit",
+    "playblast_subdir": "edit/footage",
+}
+
+_REGISTRATION_KEY = "openstudio_cfg_blender_kitsu_registered"
+
+
+def _val(name, default=""):
+    return getattr(_ENV, name, default) if _ENV is not None else default
+
+
+def _setting(name):
+    if name in _CONFIG_SETTINGS:
+        return _CONFIG_SETTINGS[name]
+    return _SETTINGS_DEFAULTS.get(name)
+
+
+def _get_addon_key():
+    for key in bpy.context.preferences.addons.keys():
+        if "blender_kitsu" in key:
+            return key
+    for module in addon_utils.modules():
+        if "blender_kitsu" in module.__name__:
+            return module.__name__
+    return "blender_kitsu"
+
+
+def _get_module():
+    return sys.modules.get(_get_addon_key())
+
+
+def _get_prefs():
+    key = _get_addon_key()
+    if key in bpy.context.preferences.addons:
+        return bpy.context.preferences.addons[key].preferences
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Behaviors
+# ---------------------------------------------------------------------------
+def activate():
+    key = _get_addon_key()
+    if key in bpy.context.preferences.addons:
+        return key
+    print(f"[OPENSTUDIO HUB] Despertando extensión: {key}...")
+    try:
+        # addon_utils.enable dispara un unregister() problemático en Kitsu.
+        bpy.ops.preferences.addon_enable(module=key)
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HUB] Advertencia al activar Kitsu: {error}")
+    try:
+        importlib.import_module(key)
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HUB] Advertencia al importar Kitsu: {error}")
+    return key
+
+
+def configure():
+    prefs = _get_prefs()
+    if prefs is None:
+        print("[OPENSTUDIO HUB] Kitsu: preferencias no disponibles.")
+        return
+
+    project_root = _val("project_root")
+    if project_root and hasattr(prefs, "project_root_dir"):
+        prefs.project_root_dir = project_root
+
+    for attr in ("version_control", "shot_dir_name", "asset_dir_name", "seq_dir_name", "edit_dir_name"):
+        value = _setting(attr)
+        if value is not None and hasattr(prefs, attr):
+            setattr(prefs, attr, value)
+
+    if project_root:
+        footage = Path(project_root) / _val("production_folder", "svn") / str(_setting("playblast_subdir"))
+        if hasattr(prefs, "shot_playblast_root_dir"):
+            prefs.shot_playblast_root_dir = str(footage / "pro")
+        if hasattr(prefs, "seq_playblast_root_dir"):
+            prefs.seq_playblast_root_dir = str(footage / "pre")
+        if hasattr(prefs, "frames_root_dir"):
+            prefs.frames_root_dir = str(footage / "post")
+
+
+def authenticate():
+    prefs = _get_prefs()
+    host = _val("kitsu_host")
+    user = _val("kitsu_user")
+    password = _val("kitsu_pwd")
+    if prefs is None or not (user and password):
+        return False
+    prefs.host = host
+    prefs.email = user
+    prefs.passwd = password
+    try:
+        print(f"[OPENSTUDIO HUB] Autenticando Kitsu con {user}...")
+        bpy.ops.kitsu.session_start('EXEC_DEFAULT')
+        return True
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HUB] Error al autenticar Kitsu API: {error}")
+        return False
+
+
+def set_active_project():
+    prefs = _get_prefs()
+    project_id = _val("kitsu_project_id")
+    if prefs is None or not project_id:
+        return
+    try:
+        bpy.ops.kitsu.con_productions_load('EXEC_DEFAULT')
+    except Exception:  # noqa: BLE001
+        pass
+    module = _get_module()
+    if module is not None:
+        try:
+            module.cache.project_active_set_by_id(bpy.context, project_id)
+        except Exception as error:  # noqa: BLE001
+            print(f"[OPENSTUDIO HUB] project_active_set_by_id falló: {error}")
+    if hasattr(prefs, "project_active_id"):
+        prefs.project_active_id = project_id
+
+
+def override_vfs_root():
+    module = _get_module()
+    project_root = _val("project_root")
+    if module is None or not project_root:
+        return
+    production_folder = _val("production_folder", "svn")
+    try:
+        kitsu_prefs_mod = importlib.import_module(f"{module.__name__}.prefs")
+
+        def custom_project_root_dir_get(context):
+            pref_instance = kitsu_prefs_mod.addon_prefs_get(context)
+            return Path(pref_instance.project_root_dir) / production_folder
+
+        kitsu_prefs_mod.project_root_dir_get = custom_project_root_dir_get
+
+        if hasattr(kitsu_prefs_mod, "KITSU_addon_preferences"):
+            def custom_project_root_path(self):
+                return Path(self.project_root_dir) / production_folder
+
+            kitsu_prefs_mod.KITSU_addon_preferences.project_root_path = custom_project_root_path
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HUB] Monkey Patch VFS falló: {error}")
+
+
+def detect_context():
+    if hasattr(bpy.ops.kitsu, "con_detect_context"):
+        try:
+            bpy.ops.kitsu.con_detect_context('EXEC_DEFAULT')
+        except Exception as error:  # noqa: BLE001
+            print(f"[OPENSTUDIO HUB] Autodetección de contexto falló: {error}")
+
+
+def reapply_after_load():
+    configure()
+    authenticate()
+    set_active_project()
+    override_vfs_root()
+
+
+@bpy.app.handlers.persistent
+def _persistent_load_handler(dummy=None):
+    configure()
+    override_vfs_root()
+
+
+def persist_on_load():
+    if _persistent_load_handler not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_persistent_load_handler)
+
+
+_BEHAVIORS = {
+    "activate": activate,
+    "configure": configure,
+    "authenticate": authenticate,
+    "set_active_project": set_active_project,
+    "override_vfs_root": override_vfs_root,
+    "detect_context": detect_context,
+    "persist_on_load": persist_on_load,
+}
+
+_DEFAULT_BEHAVIORS = [
+    "activate",
+    "configure",
+    "authenticate",
+    "set_active_project",
+    "override_vfs_root",
+    "persist_on_load",
+]
+
+
+# ---------------------------------------------------------------------------
+# Entry points consumed by addon_runtime / bootstrap / headless_builder
+# ---------------------------------------------------------------------------
+def register():
+    if bpy.app.driver_namespace.get(_REGISTRATION_KEY):
+        return
+    bpy.app.driver_namespace[_REGISTRATION_KEY] = True
+
+    behaviors = _CONFIG_BEHAVIORS or _DEFAULT_BEHAVIORS
+    for name in behaviors:
+        behavior = _BEHAVIORS.get(name)
+        if behavior is None:
+            print(f"[OPENSTUDIO HUB] Kitsu: behavior desconocido '{name}'.")
+            continue
+        try:
+            behavior()
+        except Exception as error:  # noqa: BLE001
+            print(f"[OPENSTUDIO HUB] Kitsu: behavior '{name}' falló: {error}")
+
+    if "override_vfs_root" in behaviors:
+        persist_on_load()
+
+
+def on_file_opened():
+    reapply_after_load()
+    detect_context()
+
+
+def get_addon_module():
+    return _get_module()

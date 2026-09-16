@@ -172,7 +172,11 @@ class OpenStudioHub(QMainWindow):
         if not hasattr(self, "_retired_views"):
             self._retired_views = []
         self._retired_views.append(view)
-        view.deleteLater()
+
+        try:
+            view.deleteLater()
+        except RuntimeError:
+            pass
 
     def _build_project_list_vm(self, nas_dir, read_vcs_credentials: bool) -> ProjectListViewModel:
         return ProjectListViewModel(

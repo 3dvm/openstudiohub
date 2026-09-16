@@ -28,7 +28,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.domain.shared_kernel.addon_contract import resolve_addon_entry
 from src.interfaces.qt.viewmodels.new_project_viewmodel import NewProjectViewModel
+from src.interfaces.qt.widgets.addon_config_panel import AddonConfigPanel
 
 
 class NewProjectDialog(QDialog):
@@ -44,6 +46,7 @@ class NewProjectDialog(QDialog):
         self.splash_path = ""
         self.vault_data = self.vm.vault_data
         self.tool_checkboxes = {}
+        self.addon_config_panels = {}
         self.template_group = None
 
         self.setObjectName("ViewLoginBase")
@@ -182,6 +185,7 @@ class NewProjectDialog(QDialog):
     def _draw_dynamic_dependencies(self, selected_version: str) -> None:
         self._clear_addons_layout()
         self.tool_checkboxes.clear()
+        self.addon_config_panels.clear()
         self.template_group = QButtonGroup(self)
         if not selected_version:
             return
@@ -197,9 +201,10 @@ class NewProjectDialog(QDialog):
             self.tool_checkboxes[category] = {}
 
             for item_name, data in items.items():
-                item_version = data.get("version", "1.0")
-                is_mandatory = data.get("mandatory", False)
-                label_text = f"{item_name} v{item_version} - {data.get('description', '')}"
+                entry = resolve_addon_entry(item_name, data)
+                item_version = entry.get("version", "1.0")
+                is_mandatory = entry.get("mandatory", False)
+                label_text = f"{item_name} v{item_version} - {entry.get('description', '')}"
 
                 if category == "templates":
                     cb = QRadioButton(label_text)
@@ -209,14 +214,26 @@ class NewProjectDialog(QDialog):
                     cb = QCheckBox(label_text)
                     cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; }")
 
-                cb.toggled.connect(lambda checked, c=category, n=item_name, r=data.get("requires", []): self._resolve_sub_dependencies(checked, c, n, r))
+                cb.toggled.connect(lambda checked, c=category, n=item_name, r=entry.get("requires", []): self._resolve_sub_dependencies(checked, c, n, r))
                 self.addons_layout.addWidget(cb)
+
+                config_schema = entry.get("config_schema")
+                if config_schema:
+                    default_config = entry.get("default_config") or {}
+                    panel = AddonConfigPanel(config_schema, default_config.get("settings") or {})
+                    cb.toggled.connect(panel.set_editable)
+                    self.addons_layout.addWidget(panel)
+                    self.addon_config_panels[item_name] = panel
 
                 if is_mandatory:
                     cb.setChecked(True)
                     cb.setEnabled(False)
 
-                self.tool_checkboxes[category][item_name] = {"checkbox": cb, "version": item_version}
+                self.tool_checkboxes[category][item_name] = {
+                    "checkbox": cb,
+                    "version": item_version,
+                    "meta": entry,
+                }
 
     def _resolve_sub_dependencies(self, checked: bool, parent_category: str, parent_name: str, requires: list) -> None:
         for req in requires:
@@ -240,6 +257,7 @@ class NewProjectDialog(QDialog):
             return
 
         final_dependencies, main_template = {}, None
+        final_addon_config = {}
         for category, items in self.tool_checkboxes.items():
             final_dependencies[category] = {}
             for item_name, data in items.items():
@@ -247,6 +265,8 @@ class NewProjectDialog(QDialog):
                     final_dependencies[category][item_name] = data["version"]
                     if category == "templates":
                         main_template = item_name
+                        continue
+                    final_addon_config[item_name] = self._build_addon_config(item_name, data.get("meta", {}))
 
         if not main_template:
             main_template = "Macuare_Estudio"
@@ -269,7 +289,31 @@ class NewProjectDialog(QDialog):
         self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
         self.lbl_status.show()
 
-        self.vm.create_project(name, version_blender, final_dependencies, main_template, self.splash_path, vcs_user, vcs_pwd, vcs_enabled=vcs_enabled)
+        self.vm.create_project(
+            name,
+            version_blender,
+            final_dependencies,
+            main_template,
+            self.splash_path,
+            vcs_user,
+            vcs_pwd,
+            vcs_enabled=vcs_enabled,
+            addon_configuration=final_addon_config,
+        )
+
+    def _build_addon_config(self, addon_name: str, meta: dict) -> dict:
+        default_config = meta.get("default_config") or {}
+        panel = self.addon_config_panels.get(addon_name)
+        if panel is not None and panel.schema:
+            settings = panel.values()
+        else:
+            settings = dict(default_config.get("settings") or {})
+        return {
+            "enabled": True,
+            "module_match": meta.get("module_match", addon_name),
+            "settings": settings,
+            "behaviors": list(default_config.get("behaviors") or []),
+        }
 
     def _on_creation_finished(self, success: bool, message: str) -> None:
         if success:
