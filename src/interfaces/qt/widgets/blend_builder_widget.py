@@ -15,6 +15,7 @@ from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QHeaderView,
@@ -31,7 +32,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.domain.production.entities import Task
 from src.domain.production.naming import NamingPolicy
+from src.domain.production.value_objects import EntityType
 from src.interfaces.qt.components.pipeline_wizard import PipelineWizardWidget
 from src.interfaces.qt.components.progress_dialog import SpawningProgressDialog
 from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderViewModel
@@ -45,6 +48,7 @@ class BlendBuilderWidget(QFrame):
         self.project_map = {}
         self.edit_action_mode = "SPAWN"
         self.task_checkboxes = {}
+        self._table_mode = ""
 
         self.setObjectName("TransparentGridContainer")
         self._build_ui()
@@ -208,6 +212,7 @@ class BlendBuilderWidget(QFrame):
         header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
 
         ent_layout.addWidget(self.table, stretch=1)
         self.stack.addWidget(self.page_entities)
@@ -329,6 +334,22 @@ class BlendBuilderWidget(QFrame):
         self.wizard.btn_batch_create.style().polish(self.wizard.btn_batch_create)
 
     def _render_assets(self, assets: list) -> None:
+        self._table_mode = "assets"
+        task_types = sorted({tt for asset in assets for tt in (asset.get("tasks") or {}).keys()})
+        base_headers = ["", self.tr("Asset Name"), self.tr("Type")]
+        all_headers = base_headers + task_types
+
+        self.table.setColumnCount(len(all_headers))
+        self.table.setHorizontalHeaderLabels(all_headers)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        self.table.setColumnWidth(0, 40)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        for i in range(len(base_headers), len(all_headers)):
+            header.setSectionResizeMode(i, QHeaderView.Stretch)
+
         self.table.setRowCount(len(assets))
 
         for row, asset in enumerate(assets):
@@ -341,24 +362,82 @@ class BlendBuilderWidget(QFrame):
                 chk_item.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
                 chk_item.setCheckState(Qt.Checked)
 
-            chk_item.setData(Qt.UserRole, asset["raw_data"])
+            chk_item.setData(Qt.UserRole, asset)
             self.table.setItem(row, 0, chk_item)
 
             self.table.setItem(row, 1, QTableWidgetItem(asset["name"]))
-            self.table.setCellWidget(row, 2, self._create_pill_label("Asset", "#8B5CF6"))
-            self.table.setItem(row, 3, QTableWidgetItem("N/A"))
-            self.table.setItem(row, 4, QTableWidgetItem("N/A"))
+            self.table.setItem(row, 2, QTableWidgetItem(asset.get("type", "")))
 
-            status_text = "✓ File Exists" if asset["has_file"] else "Pending Spawn"
-            status_item = QTableWidgetItem(status_text)
-            status_item.setForeground(QColor("#10B981") if asset["has_file"] else QColor("#F59E0B"))
-            self.table.setItem(row, 5, status_item)
+            tasks_data = asset.get("tasks") or {}
+            for col_idx, tt_name in enumerate(task_types):
+                table_col = len(base_headers) + col_idx
+                cell = QTableWidgetItem()
+
+                if tt_name in tasks_data:
+                    info = tasks_data[tt_name]
+                    if info.get("has_file"):
+                        cell.setText(self.tr("Ready"))
+                        cell.setForeground(QColor("#10B981"))
+                    else:
+                        cell.setText(self.tr("Pending"))
+                        cell.setForeground(QColor("#F59E0B"))
+                    cell.setData(Qt.UserRole, info)
+                    cell.setToolTip(info.get("filepath", ""))
+                else:
+                    cell.setText("N/A")
+                    cell.setForeground(QColor("#4B5563"))
+
+                self.table.setItem(row, table_col, cell)
 
         self.lbl_kpi_total.setText(self.tr(f"Total Entries: {len(assets)}"))
         self.lbl_kpi_shots.setText(self.tr("Shots: 0"))
         self.lbl_kpi_assets.setText(self.tr(f"Assets: {len(assets)}"))
 
+    def _on_cell_double_clicked(self, row: int, column: int) -> None:
+        if self._table_mode != "assets" or column < 3:
+            return
+
+        task_item = self.table.item(row, column)
+        anchor_item = self.table.item(row, 0)
+        if task_item is None or anchor_item is None:
+            return
+
+        task_info = task_item.data(Qt.UserRole)
+        asset = anchor_item.data(Qt.UserRole)
+        if not task_info or not asset:
+            return
+
+        header_item = self.table.horizontalHeaderItem(column)
+        task_type_name = header_item.text() if header_item is not None else "Task"
+        self._open_task_file_dialog(asset, task_info, task_type_name)
+
+    def _open_task_file_dialog(self, asset: dict, task_info: dict, task_type_name: str) -> None:
+        from src.interfaces.qt.views.task_file_link_dialog import TaskFileLinkDialog
+
+        raw_task = task_info.get("raw_task") or {}
+        task = Task.from_kitsu_dict(
+            raw_task,
+            entity_type=EntityType.ASSET,
+            entity_name=asset.get("name", ""),
+            asset_type_name=asset.get("type", ""),
+            task_type_name=task_type_name,
+            project_name=self.vm.current_project_name,
+        )
+        suggested_path = task_info.get("filepath") or self.vm.suggest_task_file_path(task)
+        dialog = TaskFileLinkDialog(
+            self,
+            viewmodel=self.vm,
+            task=task,
+            project_root=self.vm.project_root(),
+            entity_label=asset.get("name", "Asset"),
+            task_type_name=task_type_name,
+            suggested_path=suggested_path,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self.vm.load_assets()
+
     def _render_shots(self, shots: list, task_types: list) -> None:
+        self._table_mode = "shots"
         base_headers = ["", self.tr("Shot Name"), self.tr("Sequence"), self.tr("Frames")]
         all_headers = base_headers + task_types
 
@@ -540,7 +619,8 @@ class BlendBuilderWidget(QFrame):
                 QMessageBox.warning(self, self.tr("Missing Tasks"), self.tr("Please select at least one task type to spawn."))
                 return
         else:
-            selected_tasks = ["Modeling", "Rigging", "Shading", "Concept"]
+            # Assets: the spawner forges every missing task found in the audit.
+            selected_tasks = []
 
         self.progress_modal = SpawningProgressDialog(self, self.tr("Batch Spawning Production Files"))
         self.progress_modal.show()

@@ -141,6 +141,11 @@ class LaunchService:
         if target_file:
             return target_file
 
+        # Prefer the explicit per-task link stored in Kitsu custom data.
+        linked_path = (task_data.get("data") or {}).get("filepath")
+        if linked_path:
+            return project_root / production_folder / linked_path
+
         resolver = PathResolver()
         resolved_rel_path = resolver.resolve(task_data)
         if not resolved_rel_path:

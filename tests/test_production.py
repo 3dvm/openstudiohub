@@ -141,6 +141,26 @@ class FakeKitsu:
             "task_status_name": "Todo",
         }
 
+    def all_tasks_for_asset(self, asset):
+        return [
+            {
+                "id": "t1",
+                "entity_id": asset.get("id", ""),
+                "entity_type_name": "Asset",
+                "entity_name": asset.get("name", ""),
+                "asset_type_name": "Character",
+                "task_type_id": "tt1",
+                "task_type_name": "Modeling",
+                "data": {"filepath": "pro/assets/character/prota/character-prota-model.blend"},
+            }
+        ]
+
+    def get_task(self, task_id):
+        return {"id": task_id, "data": {}}
+
+    def update_task_data(self, task, data):
+        return {"id": task.get("id"), "data": data}
+
     def update_entity_data(self, entity_id, data):
         return {}
 
@@ -167,3 +187,37 @@ def test_repository_create_task():
 def test_repository_update_entity_data():
     repo = KitsuProductionRepository(FakeKitsu())
     assert repo.update_entity_data("e1", {"blend_file_path": "x"}) is True
+
+
+def test_repository_asset_tasks_and_task_data_update():
+    repo = KitsuProductionRepository(FakeKitsu())
+    tasks = repo.all_tasks_for_asset({"id": "a1", "name": "Prota"})
+    assert tasks[0].filepath == "pro/assets/character/prota/character-prota-model.blend"
+    assert repo.update_task_data("t1", {"filepath": "x.blend"}) is True
+
+
+# ----------------------------------------------------------------------
+# Task linked-file helpers
+# ----------------------------------------------------------------------
+def test_task_filepath_helpers(tmp_path):
+    task = Task.from_kitsu_dict(
+        {
+            "id": "t1",
+            "entity_type_name": "Asset",
+            "entity_name": "Prota",
+            "asset_type_name": "Character",
+            "task_type_name": "Modeling",
+            "data": {"filepath": "pro/assets/character/prota/character-prota-model.blend"},
+        }
+    )
+    assert task.filepath == "pro/assets/character/prota/character-prota-model.blend"
+    assert task.has_file(tmp_path, "svn") is False
+
+    physical = tmp_path / "svn" / task.filepath
+    physical.parent.mkdir(parents=True)
+    physical.write_bytes(b"x")
+    assert task.has_file(tmp_path, "svn") is True
+
+    assert task.with_filepath("other.blend").filepath == "other.blend"
+    assert task.without_filepath().filepath == ""
+    assert task.filepath == "pro/assets/character/prota/character-prota-model.blend"

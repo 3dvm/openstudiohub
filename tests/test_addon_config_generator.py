@@ -29,18 +29,20 @@ def test_generate_writes_one_script_per_enabled_addon(tmp_path):
     names = {path.name for path in generated}
     assert names == {"cfg_blender_kitsu.py", "cfg_openstudio_toolkit.py"}
 
-    startup_dir = tmp_path / "local" / "blender_data" / "scripts" / "startup"
-    assert startup_dir.is_dir()
+    config_dir = tmp_path / "local" / "blender_data" / "scripts" / "openstudio"
+    assert config_dir.is_dir()
+    # Must stay out of Blender's auto-registered `startup/` folder.
+    assert not (tmp_path / "local" / "blender_data" / "scripts" / "startup").exists()
 
     # DCC-side support modules are shipped next to bootstrap.py.
     local_dir = tmp_path / "local"
     assert (local_dir / "env_contract.py").exists()
     assert (local_dir / "addon_runtime.py").exists()
 
-    kitsu_script = (startup_dir / "cfg_blender_kitsu.py").read_text(encoding="utf-8")
+    kitsu_script = (config_dir / "cfg_blender_kitsu.py").read_text(encoding="utf-8")
     assert "__ADDON_CONFIG_JSON__" not in kitsu_script
-    assert '"shot_dir_name": "shots"' in kitsu_script
-    assert '"activate"' in kitsu_script
+    assert "'shot_dir_name': 'shots'" in kitsu_script
+    assert "'activate'" in kitsu_script
 
 
 def test_generated_scripts_are_valid_python(tmp_path):
@@ -62,7 +64,7 @@ def test_disabled_addon_is_not_generated_and_removed(tmp_path):
         {"blender_kitsu": AddonConfiguration(name="blender_kitsu")},
         topography,
     )
-    script = generator.startup_dir(tmp_path, topography) / "cfg_blender_kitsu.py"
+    script = generator.config_dir(tmp_path, topography) / "cfg_blender_kitsu.py"
     assert script.exists()
 
     generated = generator.generate(
@@ -84,8 +86,41 @@ def test_addon_without_template_is_skipped(tmp_path):
     assert generated == []
 
 
-def test_startup_dir_uses_topography_local_folder(tmp_path):
-    topography = _topography("studio-local")
-    assert AddonConfigGenerator.startup_dir(tmp_path, topography) == (
-        tmp_path / "studio-local" / "blender_data" / "scripts" / "startup"
+def test_display_name_resolves_to_slugged_template(tmp_path):
+    generator = AddonConfigGenerator()
+    generated = generator.generate(
+        tmp_path,
+        {"Blender Kitsu": AddonConfiguration(name="Blender Kitsu")},
+        _topography(),
     )
+    assert [path.name for path in generated] == ["cfg_blender_kitsu.py"]
+
+
+def test_config_dir_uses_topography_local_folder(tmp_path):
+    topography = _topography("studio-local")
+    assert AddonConfigGenerator.config_dir(tmp_path, topography) == (
+        tmp_path / "studio-local" / "blender_data" / "scripts" / "openstudio"
+    )
+
+
+def test_legacy_startup_scripts_are_removed(tmp_path):
+    generator = AddonConfigGenerator()
+    topography = _topography()
+    legacy_startup = AddonConfigGenerator.legacy_startup_dir(tmp_path, topography)
+    legacy_startup.mkdir(parents=True)
+    legacy_script = legacy_startup / "cfg_blender_kitsu.py"
+    legacy_script.write_text("raise RuntimeError('should be removed')\n", encoding="utf-8")
+    legacy_cache = legacy_startup / "__pycache__"
+    legacy_cache.mkdir()
+    legacy_bytecode = legacy_cache / "cfg_blender_kitsu.cpython-313.pyc"
+    legacy_bytecode.write_bytes(b"stale")
+
+    generator.generate(
+        tmp_path,
+        {"blender_kitsu": AddonConfiguration(name="blender_kitsu")},
+        topography,
+    )
+
+    assert not legacy_script.exists()
+    assert not legacy_bytecode.exists()
+    assert (generator.config_dir(tmp_path, topography) / "cfg_blender_kitsu.py").exists()

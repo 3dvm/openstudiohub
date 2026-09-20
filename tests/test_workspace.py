@@ -164,6 +164,19 @@ def test_legacy_blueprint_derives_addon_configuration_from_dependencies():
     assert restored.addon_configuration["blender_kitsu"].enabled is True
 
 
+def test_legacy_display_names_are_slugified():
+    from src.domain.shared_kernel.addon_contract import slugify_addon_name
+
+    assert slugify_addon_name("Blender Kitsu") == "blender_kitsu"
+    assert slugify_addon_name("openstudio_toolkit") == "openstudio_toolkit"
+    assert slugify_addon_name("Blender Studio Asset Pipeline") == "blender_studio_asset_pipeline"
+
+    derived = default_addon_configuration(
+        {"addons": {"Blender Kitsu": "1.0.0", "openstudio_toolkit": "0.5.0"}}
+    )
+    assert derived["Blender Kitsu"].module_match == "blender_kitsu"
+
+
 def test_parse_and_serialize_addon_configuration():
     parsed = parse_addon_configuration(_addon_config_payload())
     assert isinstance(parsed["blender_kitsu"], AddonConfiguration)

@@ -4,27 +4,34 @@
 # Architectural role: Application service / add-on startup script generation
 # =========================================================================================
 
-"""Generates one ``cfg_<addon>.py`` startup script per active add-on.
+"""Generates one ``cfg_<addon>.py`` config script per active add-on.
 
 The generator is add-on agnostic: it resolves a template by convention
 (``templates/addons/cfg_<addon>.py.template``), injects the project's
 ``AddonConfiguration`` payload, and writes the result into the project's Blender
-user-scripts startup folder. The template is the only place where add-on
-specifics live; adding a new configurable add-on means dropping a new template,
-never touching this service.
+user-scripts *config* folder (``blender_data/scripts/openstudio/``).
+
+The folder is deliberately **not** ``scripts/startup/``: Blender imports every
+module found in ``startup/`` and calls its ``register()`` before the extension
+repositories (``bl_ext``/``bl_pkg``) are initialized, which made add-on
+activation fail. These scripts are loaded at a controlled moment instead, via
+``addon_runtime``. The template is the only place where add-on specifics live;
+adding a new configurable add-on means dropping a new template, never touching
+this service.
 """
 
-import json
-import re
 import shutil
 from pathlib import Path
 from typing import List, Mapping, Optional
 
-from src.domain.shared_kernel.addon_contract import AddonConfiguration, parse_addon_configuration
+from src.domain.shared_kernel.addon_contract import (
+    AddonConfiguration,
+    parse_addon_configuration,
+    slugify_addon_name,
+)
 from src.domain.workspace.topography import WorkspaceTopography
 
 ADDON_CONFIG_TOKEN = "__ADDON_CONFIG_JSON__"
-_SAFE_NAME = re.compile(r"[^a-zA-Z0-9_]")
 
 
 class AddonConfigGenerator:
@@ -43,7 +50,23 @@ class AddonConfigGenerator:
         return src_root / "infrastructure" / "templates" / "addons"
 
     @staticmethod
-    def startup_dir(project_root: Path, topography: WorkspaceTopography) -> Path:
+    def config_dir(project_root: Path, topography: WorkspaceTopography) -> Path:
+        """Directory holding the generated scripts.
+
+        Kept under ``scripts/`` (so ``parents[3]`` still resolves to
+        ``vfs_local`` and ``env_contract`` stays importable) but out of
+        ``startup/``/``modules/`` so Blender does not auto-import them.
+        """
+        return (
+            Path(project_root)
+            / topography.vfs_local
+            / "blender_data"
+            / "scripts"
+            / "openstudio"
+        )
+
+    @staticmethod
+    def legacy_startup_dir(project_root: Path, topography: WorkspaceTopography) -> Path:
         return (
             Path(project_root)
             / topography.vfs_local
@@ -54,7 +77,7 @@ class AddonConfigGenerator:
 
     @staticmethod
     def _safe_name(addon_name: str) -> str:
-        return _SAFE_NAME.sub("_", addon_name)
+        return slugify_addon_name(addon_name)
 
     def _resolve_template(self, addon_name: str) -> Optional[Path]:
         candidate = self.template_dir / f"cfg_{self._safe_name(addon_name)}.py.template"
@@ -95,8 +118,13 @@ class AddonConfigGenerator:
         project downgrade does not leave stale behavior behind.
         """
         configs = parse_addon_configuration(addon_configuration or {})
-        startup_dir = self.startup_dir(project_root, topography)
+        config_dir = self.config_dir(project_root, topography)
         generated: List[Path] = []
+
+        # Migration: Blender auto-registers scripts in `startup/`, which ran
+        # add-on activation before the extension system was ready. Drop any
+        # legacy scripts the Hub generated there.
+        self._remove_legacy_startup_scripts(project_root, topography)
 
         if configs:
             self._deploy_support_modules(project_root, topography)
@@ -114,11 +142,13 @@ class AddonConfigGenerator:
                     )
                 continue
 
-            startup_dir.mkdir(parents=True, exist_ok=True)
-            payload = json.dumps(config.to_dict(), indent=4, ensure_ascii=False)
+            config_dir.mkdir(parents=True, exist_ok=True)
+            # Python literal (not JSON) so the generated module is directly valid
+            # Python: JSON uses true/false/null which are not Python names.
+            payload = repr(config.to_dict())
             rendered = template.read_text(encoding="utf-8").replace(ADDON_CONFIG_TOKEN, payload)
 
-            destination = startup_dir / f"cfg_{self._safe_name(addon_name)}.py"
+            destination = config_dir / f"cfg_{self._safe_name(addon_name)}.py"
             destination.write_text(rendered, encoding="utf-8")
             generated.append(destination)
 
@@ -128,6 +158,28 @@ class AddonConfigGenerator:
         return generated
 
     def remove(self, project_root: Path, topography: WorkspaceTopography, addon_name: str) -> None:
-        destination = self.startup_dir(project_root, topography) / f"cfg_{self._safe_name(addon_name)}.py"
-        if destination.exists():
-            destination.unlink()
+        script_name = f"cfg_{self._safe_name(addon_name)}.py"
+        for directory in (
+            self.config_dir(project_root, topography),
+            self.legacy_startup_dir(project_root, topography),
+        ):
+            destination = directory / script_name
+            if destination.exists():
+                destination.unlink()
+
+    def _remove_legacy_startup_scripts(self, project_root: Path, topography: WorkspaceTopography) -> None:
+        """Delete Hub-generated ``cfg_*.py`` left in ``scripts/startup/``.
+
+        Blender auto-imports and registers those modules before the extension
+        repositories exist, so they must not live there anymore.
+        """
+        legacy_dir = self.legacy_startup_dir(project_root, topography)
+        if not legacy_dir.exists():
+            return
+        for legacy_script in legacy_dir.glob("cfg_*.py"):
+            legacy_script.unlink()
+        # Drop stale bytecode so Blender cannot resurrect a removed module.
+        cache_dir = legacy_dir / "__pycache__"
+        if cache_dir.is_dir():
+            for cached in cache_dir.glob("cfg_*.pyc"):
+                cached.unlink()

@@ -32,7 +32,7 @@ _CONFIG_SETTINGS = dict(_ADDON_CONFIG.get("settings") or {})
 _CONFIG_BEHAVIORS = list(_ADDON_CONFIG.get("behaviors") or [])
 
 # env_contract.py se despliega en vfs_local/ (junto a bootstrap.py). El script
-# vive en vfs_local/blender_data/scripts/startup/, así que parents[3] = vfs_local.
+# vive en vfs_local/blender_data/scripts/openstudio/, así que parents[3] = vfs_local.
 _VFS_LOCAL = Path(__file__).resolve().parents[3]
 if str(_VFS_LOCAL) not in sys.path:
     sys.path.insert(0, str(_VFS_LOCAL))

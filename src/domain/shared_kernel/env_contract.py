@@ -47,6 +47,7 @@ class EnvKey:
     EXTENSIONS_DIR = "OPENSTUDIO_EXTENSIONS_DIR"
     SPLASH_PATH = "OPENSTUDIO_SPLASH_PATH"
     TARGET_FILE = "OPENSTUDIO_TARGET_FILE"
+    TASK_FILE_PATH = "OPENSTUDIO_TASK_FILE_PATH"
     USER_ROLE = "OPENSTUDIO_USER_ROLE"
     TASK_TYPE = "OPENSTUDIO_TASK_TYPE"
 
@@ -89,6 +90,7 @@ _FIELD_TO_KEY: Dict[str, str] = {
     "extensions_dir": EnvKey.EXTENSIONS_DIR,
     "splash_path": EnvKey.SPLASH_PATH,
     "target_file": EnvKey.TARGET_FILE,
+    "task_file_path": EnvKey.TASK_FILE_PATH,
     "user_role": EnvKey.USER_ROLE,
     "task_type": EnvKey.TASK_TYPE,
     "kitsu_host": EnvKey.KITSU_HOST,
@@ -132,6 +134,7 @@ class SandboxEnvironment:
     extensions_dir: Optional[str] = None
     splash_path: Optional[str] = None
     target_file: Optional[str] = None
+    task_file_path: Optional[str] = None
     user_role: Optional[str] = None
     task_type: Optional[str] = None
 

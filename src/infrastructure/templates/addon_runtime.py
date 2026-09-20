@@ -10,10 +10,13 @@
 """Add-on agnostic loader for the generated ``cfg_<addon>.py`` scripts.
 
 The Hub writes one config script per active add-on into the Blender user-scripts
-``startup/`` folder. This module discovers those scripts and invokes their
-``register()`` entry point from a controlled moment (Hub timer for interactive
-sessions, synchronously for headless builds). It is shipped into the sandbox
-next to ``bootstrap.py`` and ``env_contract.py``.
+``openstudio/`` folder. That folder is intentionally outside ``startup/`` and
+``modules/``: Blender imports and calls ``register()`` on those before the
+extension repositories (``bl_ext``/``bl_pkg``) exist, which broke add-on
+activation. This module discovers the scripts and invokes their ``register()``
+entry point from a controlled moment (Hub timer for interactive sessions,
+synchronously for headless builds). It is shipped into the sandbox next to
+``bootstrap.py`` and ``env_contract.py``.
 
 Importing a ``cfg_*.py`` file is side-effect free: the script only defines
 functions. This runtime decides *when* each add-on is configured.
@@ -27,25 +30,25 @@ from pathlib import Path
 from typing import List, Optional
 
 
-def default_startup_dir() -> Optional[Path]:
-    """Resolve ``<BLENDER_USER_SCRIPTS>/startup`` from the shared env contract."""
+def default_config_dir() -> Optional[Path]:
+    """Resolve ``<BLENDER_USER_SCRIPTS>/openstudio`` from the env contract."""
     try:
         from env_contract import SandboxEnvironment
 
         env = SandboxEnvironment.from_os_environ()
         scripts_dir = env.blender_user_scripts
         if scripts_dir:
-            return Path(scripts_dir) / "startup"
+            return Path(scripts_dir) / "openstudio"
     except Exception:  # noqa: BLE001
         return None
     return None
 
 
-def discover(startup_dir: Path) -> List[Path]:
+def discover(config_dir: Path) -> List[Path]:
     """Return the generated ``cfg_*.py`` scripts in deterministic order."""
-    if not startup_dir or not Path(startup_dir).exists():
+    if not config_dir or not Path(config_dir).exists():
         return []
-    return sorted(Path(startup_dir).glob("cfg_*.py"))
+    return sorted(Path(config_dir).glob("cfg_*.py"))
 
 
 def load_module(script_path: Path):
@@ -70,12 +73,12 @@ def load_module(script_path: Path):
     return module
 
 
-def register_all(startup_dir: Optional[Path] = None) -> List[str]:
+def register_all(config_dir: Optional[Path] = None) -> List[str]:
     """Load and register every generated add-on config script.
 
     Returns the list of add-on module names that were registered.
     """
-    directory = Path(startup_dir) if startup_dir else default_startup_dir()
+    directory = Path(config_dir) if config_dir else default_config_dir()
     registered: List[str] = []
     for script_path in discover(directory):
         module = load_module(script_path)
@@ -91,26 +94,26 @@ def register_all(startup_dir: Optional[Path] = None) -> List[str]:
     return registered
 
 
-def load(addon_name: str, startup_dir: Optional[Path] = None):
+def load(addon_name: str, config_dir: Optional[Path] = None):
     """Return the loaded config module for ``addon_name`` (or ``None``)."""
     module_name = f"cfg_{addon_name}"
     if module_name in sys.modules:
         return sys.modules[module_name]
 
-    directory = Path(startup_dir) if startup_dir else default_startup_dir()
+    directory = Path(config_dir) if config_dir else default_config_dir()
     script_path = (directory / f"{module_name}.py") if directory else None
     if script_path and script_path.exists():
         return load_module(script_path)
     return sys.modules.get(addon_name)
 
 
-def notify_file_opened(startup_dir: Optional[Path] = None) -> None:
+def notify_file_opened(config_dir: Optional[Path] = None) -> None:
     """Notify every generated add-on that a ``.blend`` file was just loaded.
 
     Add-ons exposing the optional ``on_file_opened()`` hook use it to restore
     context wiped by Blender (Kitsu re-authenticates and rebuilds its cache).
     """
-    directory = Path(startup_dir) if startup_dir else default_startup_dir()
+    directory = Path(config_dir) if config_dir else default_config_dir()
     for script_path in discover(directory):
         module = load_module(script_path)
         if module is None:

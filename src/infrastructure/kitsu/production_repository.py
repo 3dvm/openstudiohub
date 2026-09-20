@@ -76,6 +76,19 @@ class KitsuProductionRepository(ProductionRepository):
         raw = self.kitsu.create_task(entity_id, task_type)
         return Task.from_kitsu_dict(raw) if raw else None
 
+    def all_tasks_for_asset(self, asset) -> List[Task]:
+        return [Task.from_kitsu_dict(t) for t in self.kitsu.all_tasks_for_asset(asset)]
+
+    def update_task_data(self, task_id: str, data: dict) -> bool:
+        try:
+            task = self.kitsu.get_task(task_id)
+            if not task:
+                return False
+            self.kitsu.update_task_data(task, data)
+            return True
+        except Exception:  # noqa: BLE001 - surfaced as False to the caller
+            return False
+
     # --- Metadata ---
     def update_entity_data(self, entity_id: str, data: dict) -> bool:
         try:

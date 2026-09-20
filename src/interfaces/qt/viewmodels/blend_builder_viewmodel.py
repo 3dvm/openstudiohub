@@ -20,6 +20,8 @@ from PySide6.QtCore import Signal
 from src.application.credential_vault import CredentialVault
 from src.application.production_manager import ProductionManager
 from src.application.services.production_service import ProductionService
+from src.application.services.task_file_service import TaskFileService
+from src.domain.production.entities import Task
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     VcsPrompt,
@@ -38,6 +40,7 @@ from src.interfaces.qt.workers.blender_spawners import (
     MasterSpawningWorker,
     StoryboardBatchWorker,
 )
+from src.interfaces.qt.workers.task_file_workers import TaskFileWorker
 
 
 class BlendBuilderViewModel(BaseViewModel):
@@ -49,6 +52,7 @@ class BlendBuilderViewModel(BaseViewModel):
     spawn_progress = Signal(int, str)
     spawn_log = Signal(str)
     spawn_finished = Signal(bool, str)
+    task_file_finished = Signal(bool, str)
 
     def __init__(
         self,
@@ -66,9 +70,11 @@ class BlendBuilderViewModel(BaseViewModel):
         self.vcs_prompt = vcs_prompt
 
         self.pm_core = ProductionManager(self.config_factory)
+        self.task_file_service = TaskFileService(self.config_factory)
         self.current_project_id: Optional[str] = None
         self.current_project_name: str = ""
         self.project_map: dict = {}
+        self._task_file_worker: Optional[TaskFileWorker] = None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -225,6 +231,40 @@ class BlendBuilderViewModel(BaseViewModel):
         self.worker_batch.log_stream.connect(self.spawn_log.emit)
         self.worker_batch.finished_batch.connect(self.spawn_finished.emit)
         self.worker_batch.start()
+
+    # ------------------------------------------------------------------
+    # Task <-> file mapping
+    # ------------------------------------------------------------------
+    def suggest_task_file_path(self, task: Task) -> str:
+        return self.task_file_service.suggest_relative_path(task)
+
+    def _start_task_file_worker(self, task: Task, action: str, relative_path: str = "") -> None:
+        if self._task_file_worker is not None and self._task_file_worker.isRunning():
+            self.report_status("Another file operation is already running...", "red")
+            return
+        self._task_file_worker = TaskFileWorker(
+            service=self.task_file_service,
+            task=task,
+            project_root=self.project_root(),
+            action=action,
+            relative_path=relative_path,
+        )
+        self._task_file_worker.finished_link.connect(self._on_task_file_finished)
+        self._task_file_worker.finished.connect(self._task_file_worker.deleteLater)
+        self._task_file_worker.start()
+
+    def _on_task_file_finished(self, success: bool, message: str) -> None:
+        self._task_file_worker = None
+        self.task_file_finished.emit(success, message)
+
+    def link_task_file(self, task: Task, relative_path: str) -> None:
+        self._start_task_file_worker(task, "link", relative_path)
+
+    def create_empty_task_file(self, task: Task, project_root: Path, relative_path: str) -> None:
+        self._start_task_file_worker(task, "create_empty", relative_path)
+
+    def unlink_task_file(self, task: Task) -> None:
+        self._start_task_file_worker(task, "unlink")
 
     # ------------------------------------------------------------------
     # Navigation

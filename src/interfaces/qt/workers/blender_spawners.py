@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 
+from src.domain.production.naming import NamingPolicy
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
@@ -42,22 +43,26 @@ class BatchCreationWorker(QThread):
                 e_id = entity.get("id", "")
                 e_type = entity.get("type", "Asset").upper()
                 
-                # --- NEW TASK FILTERING LOGIC ---
+                # --- TASK FILTERING LOGIC ---
                 tasks_to_spawn = []
+                tasks_dict = entity.get("tasks", {})
                 if e_type == "SHOT":
-                    tasks_dict = entity.get("tasks", {})
                     for t_name in self.task_types:
                         # Only spawn if the shot has this task in Kitsu and it has no file
                         task_info = tasks_dict.get(t_name)
                         if task_info and not task_info.get("has_file"):
-                            tasks_to_spawn.append(t_name)
+                            tasks_to_spawn.append((t_name, task_info))
                 else:
-                    # Assets keep iterating once for now
-                    tasks_to_spawn = [""] 
+                    # Assets (and future generic entities) spawn every missing task.
+                    for t_name, task_info in tasks_dict.items():
+                        if not task_info.get("has_file"):
+                            tasks_to_spawn.append((t_name, task_info))
+                    if not tasks_dict:
+                        tasks_to_spawn = [("", {})]
                 # -------------------------------------------
                 
                 # Nested loop to iterate each missing task of the entity
-                for t_idx, t_name in enumerate(tasks_to_spawn):
+                for t_idx, (t_name, task_info) in enumerate(tasks_to_spawn):
                     
                     display_name = f"{e_name} [{t_name}]" if t_name else e_name
                     base_progress = 10 + int((idx / total_ents) * 90)
@@ -83,6 +88,17 @@ class BatchCreationWorker(QThread):
                     if e_type == "SHOT":
                         sandbox.kitsu_sequence_name = str(entity.get("parent", ""))
                         sandbox.kitsu_task_type_name = str(t_name)
+                    else:
+                        # Assets: forge at the task's linked/suggested path.
+                        sandbox.kitsu_task_type_name = str(t_name)
+                        relative_path = (task_info or {}).get("filepath", "")
+                        if not relative_path and t_name:
+                            asset_type = entity.get("asset_type_name") or entity.get("type") or "props"
+                            try:
+                                relative_path = str(NamingPolicy.asset_path(asset_type, e_name, t_name))
+                            except Exception:  # noqa: BLE001
+                                relative_path = ""
+                        sandbox.task_file_path = relative_path
 
                     env = os.environ.copy()
                     env.update(sandbox.to_os_environ())

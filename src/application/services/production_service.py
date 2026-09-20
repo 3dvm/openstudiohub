@@ -168,24 +168,52 @@ class ProductionService:
         return result
 
     def audit_assets(self, project_id: str, project_root: Path, vfs_svn: str) -> List[dict]:
-        """Audit assets against physical files and normalize dirty names in Kitsu."""
+        """Audit each asset *task* against its physical file.
+
+        Mirrors :meth:`audit_shots`: one ``tasks[task_type_name]`` entry per task
+        with its linked ``filepath`` and ``has_file`` state, plus an aggregate
+        ``has_file`` that is true only when every task has its file on disk.
+        """
         assets = self.kitsu.all_assets_for_project(project_id)
         asset_types_map = {at["id"]: at for at in self.kitsu.all_asset_types()}
+        task_types_map = {tt["id"]: tt.get("name", "Unknown") for tt in self.kitsu.all_task_types()}
 
         result = []
         for asset in assets:
             raw_name = asset.get("name", "Unknown")
             clean_name = NamingPolicy.sanitize_name(raw_name)
 
-            has_file = False
-            asset_data = asset.get("data") or {}
-            kitsu_filepath = asset_data.get("filepath")
-            if kitsu_filepath:
-                physical_path = project_root / vfs_svn / kitsu_filepath
-                has_file = physical_path.exists()
-                if not has_file:
-                    print(f"[AUDITORIA ASSETS] ⚠️ Ruta registrada en Kitsu, pero no existe en disco: {physical_path}")
+            # 1. Per-task file mapping (the canonical link lives on the task).
+            tasks_data: Dict[str, dict] = {}
+            try:
+                asset_tasks = self.kitsu.all_tasks_for_asset(asset)
+            except Exception as error:  # noqa: BLE001
+                print(f"[AUDITORIA ASSETS] Error fetching tasks for '{raw_name}': {error}")
+                asset_tasks = []
 
+            has_all_files = bool(asset_tasks)
+            for task in asset_tasks:
+                tt_name = (
+                    task.get("task_type_name")
+                    or task_types_map.get(task.get("task_type_id"), "")
+                    or "Unknown"
+                )
+                task_data = task.get("data") or {}
+                kitsu_filepath = task_data.get("filepath") or ""
+                has_file = bool(kitsu_filepath) and (project_root / vfs_svn / kitsu_filepath).exists()
+                if kitsu_filepath and not has_file:
+                    print(f"[AUDITORIA ASSETS] ⚠️ Ruta registrada en Kitsu, pero no existe en disco: {kitsu_filepath}")
+
+                tasks_data[tt_name] = {
+                    "task_id": task.get("id", ""),
+                    "has_file": has_file,
+                    "filepath": kitsu_filepath,
+                    "raw_task": task,
+                }
+                if not has_file:
+                    has_all_files = False
+
+            # 2. Asset type enrichment.
             type_id = asset.get("entity_type_id")
             if type_id and type_id in asset_types_map:
                 asset["asset_type_id"] = type_id
@@ -194,8 +222,9 @@ class ProductionService:
                 asset["asset_type_id"] = ""
                 asset["asset_type_name"] = ""
 
+            # 3. Dirty-name normalization only while nothing is mapped on disk.
             final_name = raw_name
-            if not has_file and raw_name != clean_name:
+            if not has_all_files and raw_name != clean_name:
                 try:
                     asset["name"] = clean_name
                     self.kitsu.update_asset(asset)
@@ -208,7 +237,10 @@ class ProductionService:
                 "id": asset["id"],
                 "name": final_name,
                 "type": asset["asset_type_name"],
-                "has_file": has_file,
+                "parent": "N/A",
+                "frame_in": 0,
+                "tasks": tasks_data,
+                "has_file": has_all_files,
                 "raw_data": asset,
             })
 

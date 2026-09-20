@@ -419,6 +419,16 @@ class KitsuManager:
         """Persiste los cambios (incluida la metadata) de una tarea."""
         return gazu.task.update_task(task)
 
+    def update_task_data(self, task: dict, data: dict) -> dict:
+        """Persiste el custom data (metadata) de una tarea."""
+        updated = dict(task)
+        updated["data"] = dict(data)
+        return gazu.task.update_task(updated)
+
+    def all_tasks_for_asset(self, asset) -> list:
+        """Devuelve todas las tareas de un Asset."""
+        return gazu.task.all_tasks_for_asset(asset)
+
     def get_default_task_status(self) -> dict:
         """Devuelve el Task Status por defecto del estudio."""
         return gazu.task.get_default_task_status()

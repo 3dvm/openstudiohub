@@ -11,11 +11,16 @@ System of Record; ``*_from_kitsu_dict`` factories are the single translation
 boundary where the raw dict is converted into the domain model.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .value_objects import EntityType, FilePath
 from .naming import NamingPolicy
+
+# Canonical Kitsu task custom-data key holding the physical ``.blend`` path
+# (relative to the VCS root, POSIX separators).
+TASK_FILE_PATH_KEY = "filepath"
 
 
 @dataclass
@@ -155,6 +160,31 @@ class Task:
         }
         kwargs.update(extra)
         return cls(**kwargs)
+
+    # ------------------------------------------------------------------
+    # Linked work file (explicit per-task path stored in Kitsu custom data)
+    # ------------------------------------------------------------------
+    @property
+    def filepath(self) -> str:
+        """The linked physical file path (relative to the VCS root), if any."""
+        return str(self.data.get(TASK_FILE_PATH_KEY) or "")
+
+    def with_filepath(self, relative_path: str) -> "Task":
+        """Return a copy of this task with its linked file path replaced."""
+        data = dict(self.data)
+        data[TASK_FILE_PATH_KEY] = relative_path
+        return replace(self, data=data)
+
+    def without_filepath(self) -> "Task":
+        data = dict(self.data)
+        data.pop(TASK_FILE_PATH_KEY, None)
+        return replace(self, data=data)
+
+    def has_file(self, project_root: Path, vfs_svn: str) -> bool:
+        """True when the linked file exists under ``<project_root>/<vfs_svn>``."""
+        if not self.filepath:
+            return False
+        return (Path(project_root) / vfs_svn / self.filepath).exists()
 
     # ------------------------------------------------------------------
     # Path helpers (delegated to NamingPolicy — the single source of truth)

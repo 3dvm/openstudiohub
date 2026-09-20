@@ -23,11 +23,24 @@ generated ``cfg_<addon>.py`` scripts merge both sources at launch time.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Mapping, Optional
 
 # Top-level key inside ``project_init.json`` that holds the configuration.
 ADDON_CONFIGURATION_KEY = "addon_configuration"
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def slugify_addon_name(name: str) -> str:
+    """Canonical, filesystem-safe id for an add-on.
+
+    Blueprints may store either module keys (``openstudio_toolkit``) or display
+    names (``Blender Kitsu``). The slug unifies both so template resolution and
+    generated file names always match (``blender_kitsu``).
+    """
+    return _SLUG_RE.sub("_", (name or "").strip().lower()).strip("_")
 
 
 @dataclass
@@ -139,6 +152,6 @@ def default_addon_configuration(dependencies: Optional[Mapping[str, Any]]) -> Di
     if not isinstance(addons, Mapping):
         return {}
     return {
-        name: AddonConfiguration(name=name, module_match=name)
+        name: AddonConfiguration(name=name, module_match=slugify_addon_name(name))
         for name in addons.keys()
     }

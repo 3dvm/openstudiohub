@@ -343,11 +343,45 @@ def forjar_asset():
         print("[HeadlessBuilder] 🎬 Ejecutando kitsu.build_new_asset()...")
         bpy.ops.kitsu.build_new_asset(save_file=False)
 
-        # 5. EXTRACCIÓN DE LA RUTA Y GUARDADO
+        # 5. RESOLVER LA RUTA DE LA TAREA Y GUARDAR
         asset = kitsu_module.cache.asset_active_get()
-        filepath_str = asset.get_filepath(bpy.context)
+        task_type_name = (_ENV.kitsu_task_type_name or "")
+        vfs_root = Path((_ENV.project_root or "")) / (_ENV.production_folder or "svn")
 
-        _guardar_entidad_forjada(filepath_str, "ASSET")
+        relative_path = (_ENV.task_file_path or "")
+        if not relative_path:
+            from src.domain.production.naming import NamingPolicy
+
+            try:
+                relative_path = str(NamingPolicy.asset_path(asset_type_name, asset_name, task_type_name))
+            except Exception:  # noqa: BLE001
+                relative_path = ""
+
+        if relative_path:
+            out_path = vfs_root / relative_path
+        else:
+            # Fallback: Kitsu's own asset master path.
+            out_path = Path(asset.get_filepath(bpy.context))
+
+        out_path = _guardar_entidad_forjada(str(out_path), "ASSET")
+
+        # 6. MAPEAR LA RUTA EN LA TAREA DE KITSU (data.filepath)
+        if task_type_name:
+            try:
+                rel_path = out_path.relative_to(vfs_root).as_posix()
+                task_type = kitsu_mgr.get_task_type_by_name(task_type_name, for_entity="Asset")
+                if task_type:
+                    task = kitsu_mgr.get_task_by_entity(asset.id, task_type.get("id", ""))
+                    if task:
+                        task_data = task.get("data") or {}
+                        task_data["filepath"] = rel_path
+                        task["data"] = task_data
+                        kitsu_mgr.update_task(task)
+                        print(f"[HeadlessBuilder] ✓ Ruta mapeada a la tarea Asset ({task_type_name}): {rel_path}")
+                    else:
+                        print(f"[HeadlessBuilder] ⚠️ Tarea '{task_type_name}' no encontrada para mapear.")
+            except Exception as api_error:  # noqa: BLE001
+                print(f"[HeadlessBuilder] ❌ Error mapeando la tarea del Asset: {api_error}")
 
     except Exception as error:  # noqa: BLE001
         import traceback
