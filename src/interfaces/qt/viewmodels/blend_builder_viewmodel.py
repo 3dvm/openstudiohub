@@ -40,7 +40,9 @@ from src.interfaces.qt.workers.blender_spawners import (
     MasterSpawningWorker,
     StoryboardBatchWorker,
 )
+from src.interfaces.qt.workers.project_list_workers import ProjectInstallWorker
 from src.interfaces.qt.workers.task_file_workers import TaskFileWorker
+from src.interfaces.qt.workers.worker_keepalive import keep_worker_alive
 
 
 class BlendBuilderViewModel(BaseViewModel):
@@ -53,6 +55,8 @@ class BlendBuilderViewModel(BaseViewModel):
     spawn_log = Signal(str)
     spawn_finished = Signal(bool, str)
     task_file_finished = Signal(bool, str)
+    install_progress = Signal(str, str)
+    install_finished = Signal(bool, str)
 
     def __init__(
         self,
@@ -61,6 +65,8 @@ class BlendBuilderViewModel(BaseViewModel):
         credential_vault: CredentialVault,
         status_sink: StatusSink | None = None,
         vcs_prompt: VcsPrompt | None = None,
+        installation_service=None,
+        user_role: str = "manager",
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -68,6 +74,8 @@ class BlendBuilderViewModel(BaseViewModel):
         self.config_factory = config_factory
         self.credential_vault = credential_vault
         self.vcs_prompt = vcs_prompt
+        self.installation_service = installation_service
+        self.user_role = user_role
 
         self.pm_core = ProductionManager(self.config_factory)
         self.task_file_service = TaskFileService(self.config_factory)
@@ -75,6 +83,7 @@ class BlendBuilderViewModel(BaseViewModel):
         self.current_project_name: str = ""
         self.project_map: dict = {}
         self._task_file_worker: Optional[TaskFileWorker] = None
+        self._install_worker: Optional[ProjectInstallWorker] = None
 
     # ------------------------------------------------------------------
     # Helpers
@@ -122,6 +131,72 @@ class BlendBuilderViewModel(BaseViewModel):
         if project_name in self.project_map:
             self.current_project_id = self.project_map[project_name]
             self.current_project_name = project_name
+
+    # ------------------------------------------------------------------
+    # Local installation gate
+    # ------------------------------------------------------------------
+    def is_current_project_installed(self) -> bool:
+        """True when the selected project's local workspace is fully provisioned."""
+        if not self.current_project_id:
+            return False
+        if self.installation_service is None:
+            return True
+        try:
+            return self.installation_service.verify_installation(self.project_root())
+        except Exception:  # noqa: BLE001
+            return False
+
+    def install_current_project(self) -> bool:
+        """Provision the selected project's local workspace (Blender + VCS).
+
+        Returns ``True`` when the install worker actually started (so the view
+        can keep its button disabled), ``False`` when it was aborted (no
+        project/service, already running, or credentials cancelled).
+        """
+        if not self.current_project_id:
+            self.report_status("Please select a project first.", "yellow")
+            return False
+        if self.installation_service is None:
+            self.report_status("Installation service unavailable.", "red")
+            return False
+        if self._install_worker is not None and self._install_worker.isRunning():
+            self.report_status("Please wait, an installation is already running...", "red")
+            return False
+
+        creds = ensure_vcs_credentials(
+            required=vcs_requires_credentials(self.config_factory),
+            credential_vault=self.credential_vault,
+            prompt=self.vcs_prompt,
+            report_status=self.report_status,
+        )
+        if creds is None:
+            return False
+        vcs_user, vcs_pwd = creds
+
+        self.report_status("Installing project workspace...", "yellow")
+        self._install_worker = ProjectInstallWorker(
+            self.installation_service,
+            self.project_root(),
+            vcs_user,
+            vcs_pwd,
+            self.user_role,
+        )
+        self._install_worker.progress_update.connect(self.install_progress.emit)
+        self._install_worker.finished_install.connect(self._on_install_finished)
+        self._install_worker.finished.connect(self._on_install_worker_finished)
+        keep_worker_alive(self._install_worker)
+        self._install_worker.start()
+        return True
+
+    def _on_install_worker_finished(self) -> None:
+        self._install_worker = None
+
+    def _on_install_finished(self, success: bool, message: str) -> None:
+        self.install_finished.emit(success, message)
+        if success:
+            self.report_status("✓ Workspace installed", "green")
+        else:
+            self.report_status(f"✗ Install failed: {message}", "red")
 
     # ------------------------------------------------------------------
     # Audits

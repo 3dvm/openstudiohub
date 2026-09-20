@@ -119,8 +119,11 @@ class BatchCreationWorker(QThread):
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
             self.finished_batch.emit(True, f"{total_ents} entities processed successfully.")
             
-        except Exception as e:
-            self.finished_batch.emit(False, str(e))
+        except Exception as e:  # noqa: BLE001
+            error_message = f"{type(e).__name__}: {e}"
+            print(f"[{self.__class__.__name__}] {error_message}")
+            self.log_stream.emit(f"❌ {error_message}")
+            self.finished_batch.emit(False, error_message)
 
 class MasterSpawningWorker(QThread):
     progress_updated = Signal(int, str)
@@ -185,8 +188,11 @@ class MasterSpawningWorker(QThread):
             else:
                 raise RuntimeError(f"Blender crashed with return code {proceso.returncode}")
                 
-        except Exception as e:
-            self.finished_spawn.emit(False, str(e))
+        except Exception as e:  # noqa: BLE001
+            error_message = f"{type(e).__name__}: {e}"
+            print(f"[{self.__class__.__name__}] {error_message}")
+            self.log_stream.emit(f"❌ {error_message}")
+            self.finished_spawn.emit(False, error_message)
 
 class StoryboardBatchWorker(QThread):
     progress_updated = Signal(int, str)
@@ -264,5 +270,8 @@ class StoryboardBatchWorker(QThread):
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
             self.finished_batch.emit(True, f"{total_seqs} Storyboard sequences processed successfully.")
             
-        except Exception as e:
-            self.finished_batch.emit(False, str(e))
+        except Exception as e:  # noqa: BLE001
+            error_message = f"{type(e).__name__}: {e}"
+            print(f"[{self.__class__.__name__}] {error_message}")
+            self.log_stream.emit(f"❌ {error_message}")
+            self.finished_batch.emit(False, error_message)

@@ -232,6 +232,8 @@ class OpenStudioHub(QMainWindow):
             self.ctx.credential_vault,
             self.ctx.status_sink,
             vcs_prompt=self._prompt_vcs_credentials,
+            installation_service=self.ctx.installation_service,
+            user_role=self.ctx.auth_service.current_role().value,
         )
 
         return ViewPM(

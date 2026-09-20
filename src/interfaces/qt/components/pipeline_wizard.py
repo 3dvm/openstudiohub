@@ -69,6 +69,7 @@ class PipelineWizardWidget(QFrame):
         self.steps_data = ["Storyboard", "Editorial", "Assets", "Shots"]
         self._nodes = []
         self._lines = []
+        self._locked = False
 
         self._build_ui()
         self.set_step(1)
@@ -136,3 +137,24 @@ class PipelineWizardWidget(QFrame):
             4: "Batch Create Shots",
         }
         self.btn_batch_create.setText(self.tr(text_map.get(step_number, "Batch Create")))
+
+    def set_locked(self, locked: bool) -> None:
+        """Lock the stepper while the project's local workspace is missing.
+
+        When locked the nodes stop accepting clicks, the CTA is disabled and the
+        batch action is replaced by an explicit call to install first.
+        """
+        self._locked = locked
+        self.btn_batch_create.setEnabled(not locked)
+
+        for node in self._nodes:
+            node.setEnabled(not locked)
+            node.setCursor(Qt.PointingHandCursor if not locked else Qt.ArrowCursor)
+
+        if locked:
+            self.btn_batch_create.setText(self.tr("Install project to continue"))
+            self.btn_batch_create.setObjectName("SecondaryButton")
+        else:
+            self.set_step(self.current_step)
+
+        self.btn_batch_create.style().polish(self.btn_batch_create)

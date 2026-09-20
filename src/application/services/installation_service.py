@@ -21,6 +21,7 @@ from typing import Dict, Optional, Tuple
 
 from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.application.sparse_manager import SparseManager
+from src.infrastructure.sandbox.blender_locator import BlenderLocator
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
 
@@ -61,13 +62,29 @@ class InstallationService:
         return "macos", "dmg"
 
     def verify_installation(self, project_root: Path) -> bool:
-        """Return True when the local sandbox and VCS checkout already exist."""
+        """Return True when the local sandbox, VCS checkout and Blender exist.
+
+        A project is only considered installed when the local configuration was
+        written (the last step of :meth:`instalar_entorno`), the VCS checkout is
+        present, and the isolated Blender binary can be resolved. The previous
+        check only tested ``project_config.json`` + ``svn`` so projects with a
+        half-provisioned ``local`` folder (e.g. missing ``blender-build``) were
+        treated as installed and the spawner failed later with a hidden error.
+        """
         vfs_local = self.config_factory.get_vfs_local_name()
         vfs_svn = self.config_factory.get_vfs_svn_name()
 
+        project_root = Path(project_root)
         config_local = project_root / vfs_local / "project_config.json"
         vcs_dir = project_root / vfs_svn
-        return config_local.exists() and vcs_dir.exists()
+        if not (config_local.exists() and vcs_dir.exists()):
+            return False
+
+        try:
+            BlenderLocator.resolve(project_root / vfs_local / "blender-build")
+        except FileNotFoundError:
+            return False
+        return True
 
     def instalar_entorno(
         self,

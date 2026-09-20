@@ -74,5 +74,12 @@ class SpawningProgressDialog(QDialog):
             self.btn_action.show()
             self.btn_action.clicked.connect(action_callback)
 
-        if not success:
+        if success:
+            if self.progress.value() < 100:
+                self.progress.setValue(100)
+        else:
+            self.progress.setValue(100)
             self.progress.setStyleSheet("QProgressBar::chunk { background-color: #EF4444; }")
+            self.progress.setFormat(self.tr("Failed"))
+            if main_msg:
+                self.append_log(f"❌ {main_msg}")

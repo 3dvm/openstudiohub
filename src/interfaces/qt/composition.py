@@ -48,7 +48,7 @@ class AppContext:
         self.nas_manager = NasManager(config_factory=self.config_factory)
 
         # Application services for the future audit/repair use cases.
-        self.audit_service = ProjectAuditService(self.nas_manager, self.kitsu)
+        self.audit_service = ProjectAuditService(self.nas_manager, self.kitsu, self.installation_service)
         self.repair_service = ProjectRepairService(self.kitsu, self.nas_manager, self.config_factory)
 
         # Shared status channel for the dashboard ViewModels.

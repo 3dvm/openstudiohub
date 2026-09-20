@@ -37,7 +37,8 @@ class NewProjectDialog(QDialog):
     def __init__(self, parent: QWidget, viewmodel: NewProjectViewModel, on_success_callback) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("New Project"))
-        self.setFixedSize(500, 700)
+        self.setFixedSize(700, 980)
+        self.setSizeGripEnabled(True)
         self.setModal(True)
 
         self.vm = viewmodel

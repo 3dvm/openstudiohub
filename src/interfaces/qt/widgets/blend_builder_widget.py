@@ -62,6 +62,8 @@ class BlendBuilderWidget(QFrame):
         self.vm.assets_loaded.connect(self._render_assets)
         self.vm.shots_loaded.connect(self._render_shots)
         self.vm.sequences_loaded.connect(self._render_sequences)
+        self.vm.install_progress.connect(self._on_install_progress)
+        self.vm.install_finished.connect(self._on_install_finished)
 
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -217,6 +219,45 @@ class BlendBuilderWidget(QFrame):
         ent_layout.addWidget(self.table, stretch=1)
         self.stack.addWidget(self.page_entities)
 
+        # PAGE 3: INSTALL REQUIRED (gates the whole generation interface)
+        self.page_install = QWidget()
+        install_layout = QVBoxLayout(self.page_install)
+        install_layout.setContentsMargins(0, 0, 0, 0)
+        install_layout.setAlignment(Qt.AlignCenter)
+
+        install_card = QFrame()
+        install_card.setObjectName("CardFrame")
+        card_layout = QVBoxLayout(install_card)
+        card_layout.setSpacing(18)
+        card_layout.setAlignment(Qt.AlignCenter)
+
+        lbl_install_title = QLabel(self.tr("Local Workspace Not Installed"))
+        lbl_install_title.setObjectName("H2Title")
+        lbl_install_title.setAlignment(Qt.AlignCenter)
+        card_layout.addWidget(lbl_install_title)
+
+        self.lbl_install_status = QLabel(
+            self.tr(
+                "This project must be installed on your disk (VCS checkout + isolated Blender) "
+                "before assets can be generated."
+            )
+        )
+        self.lbl_install_status.setObjectName("PageDescription")
+        self.lbl_install_status.setWordWrap(True)
+        self.lbl_install_status.setAlignment(Qt.AlignCenter)
+        self.lbl_install_status.setMaximumWidth(560)
+        card_layout.addWidget(self.lbl_install_status, alignment=Qt.AlignCenter)
+
+        self.btn_install_project = QPushButton(self.tr("Install Project"))
+        self.btn_install_project.setObjectName("OrangeCTA")
+        self.btn_install_project.setCursor(Qt.PointingHandCursor)
+        self.btn_install_project.setFixedSize(220, 40)
+        self.btn_install_project.clicked.connect(self._start_project_install)
+        card_layout.addWidget(self.btn_install_project, alignment=Qt.AlignCenter)
+
+        install_layout.addWidget(install_card)
+        self.stack.addWidget(self.page_install)
+
         main_layout.addWidget(self.stack, stretch=1)
 
     # ------------------------------------------------------------------
@@ -249,6 +290,12 @@ class BlendBuilderWidget(QFrame):
 
         self.wizard.set_step(step_number)
 
+        if not self.vm.is_current_project_installed():
+            self._show_install_gate()
+            return
+
+        self.wizard.set_locked(False)
+
         if step_number == 1:
             self.stack.setCurrentIndex(0)
         elif step_number == 2:
@@ -260,6 +307,40 @@ class BlendBuilderWidget(QFrame):
         elif step_number == 4:
             self.stack.setCurrentIndex(2)
             self.vm.load_shots()
+
+    # ------------------------------------------------------------------
+    # Install gate
+    # ------------------------------------------------------------------
+    def _show_install_gate(self) -> None:
+        self.wizard.set_locked(True)
+        self.lbl_install_status.setText(
+            self.tr(
+                "This project must be installed on your disk (VCS checkout + isolated Blender) "
+                "before assets can be generated."
+            )
+        )
+        self.btn_install_project.setEnabled(True)
+        self.stack.setCurrentWidget(self.page_install)
+
+    def _start_project_install(self) -> None:
+        self.btn_install_project.setEnabled(False)
+        self.lbl_install_status.setText(self.tr("Installing workspace... this may take a few minutes."))
+        if not self.vm.install_current_project():
+            self.btn_install_project.setEnabled(True)
+
+    def _on_install_progress(self, message: str, color: str) -> None:
+        if message:
+            self.lbl_install_status.setText(message)
+
+    def _on_install_finished(self, success: bool, message: str) -> None:
+        if success:
+            self.lbl_install_status.setText(self.tr("✓ Workspace installed. Loading project..."))
+            self.change_step(1)
+            self.vm.load_shots()
+            self.vm.load_sequences()
+        else:
+            self.lbl_install_status.setText(self.tr(f"Installation failed: {message}"))
+            self.btn_install_project.setEnabled(True)
 
     def _add_sequence_to_list(self) -> None:
         raw_seq_name = self.input_seq.text().strip().upper()
@@ -308,13 +389,18 @@ class BlendBuilderWidget(QFrame):
         if project_name in self.project_map:
             self.vm.select_project(project_name)
             self.change_step(1)
-            self.vm.load_shots()
-            self.vm.load_sequences()
+            if self.vm.is_current_project_installed():
+                self.vm.load_shots()
+                self.vm.load_sequences()
 
     # ------------------------------------------------------------------
     # Rendering callbacks
     # ------------------------------------------------------------------
     def _render_editorial_status(self, edit_data: dict) -> None:
+        if not self.vm.is_current_project_installed():
+            self._show_install_gate()
+            return
+
         self.wizard.btn_batch_create.setEnabled(True)
 
         self.lbl_edit_filename.setText(self.tr(f"File Name: {edit_data['file_name']}"))
@@ -528,9 +614,44 @@ class BlendBuilderWidget(QFrame):
     # ------------------------------------------------------------------
     # Pipeline execution
     # ------------------------------------------------------------------
+    def _begin_spawn(self, title: str) -> SpawningProgressDialog:
+        """Create the progress modal and wire it to the VM signals.
+
+        Any handler still connected to ``spawn_finished`` from a previous run is
+        dropped first, so a finished spawn can never fire twice or cross-fire
+        into another step's callback.
+        """
+        try:
+            self.vm.spawn_finished.disconnect()
+        except (RuntimeError, TypeError):
+            pass
+
+        dialog = SpawningProgressDialog(self, title)
+        dialog.show()
+        self.progress_modal = dialog
+        self.vm.spawn_progress.connect(dialog.update_progress)
+        self.vm.spawn_log.connect(dialog.append_log)
+        return dialog
+
+    def _end_spawn(self, dialog: SpawningProgressDialog) -> None:
+        """Detach the progress/log signals from a specific dialog (idempotent)."""
+        for signal, slot in (
+            (self.vm.spawn_progress, dialog.update_progress),
+            (self.vm.spawn_log, dialog.append_log),
+        ):
+            try:
+                signal.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
+
     def _execute_pipeline_step(self, step_id: int) -> None:
         if not self.vm.current_project_id:
             self.vm.report_status(self.tr("Please select a project first."), "yellow")
+            return
+
+        if not self.vm.is_current_project_installed():
+            self._show_install_gate()
+            self.vm.report_status(self.tr("Install the project workspace before generating files."), "yellow")
             return
 
         if step_id == 1:
@@ -548,21 +669,21 @@ class BlendBuilderWidget(QFrame):
                 QMessageBox.information(self, self.tr("System Checked"), self.tr("All listed sequences already have physical files. Nothing to spawn."))
                 return
 
-            self.progress_modal = SpawningProgressDialog(self, self.tr("Batch Spawning Storyboards"))
-            self.progress_modal.show()
+            dialog = self._begin_spawn(self.tr("Batch Spawning Storyboards"))
 
-            self.vm.spawn_progress.connect(self.progress_modal.update_progress)
-            self.vm.spawn_log.connect(self.progress_modal.append_log)
-
-            def on_finished(success: bool, msg: str) -> None:
-                self.vm.spawn_progress.disconnect(self.progress_modal.update_progress)
-                self.vm.spawn_log.disconnect(self.progress_modal.append_log)
+            def on_finished(success: bool, msg: str, dialog=dialog) -> None:
+                try:
+                    self.vm.spawn_finished.disconnect(on_finished)
+                except (RuntimeError, TypeError):
+                    pass
+                self._end_spawn(dialog)
                 if success:
-                    self.progress_modal.finalize(True, self.tr("Success: Storyboards spawned."), "Assign Artists in Kitsu", self._open_kitsu_shots)
+                    dialog.finalize(True, self.tr("Success: Storyboards spawned."), "Assign Artists in Kitsu", self._open_kitsu_shots)
                     self.change_step(2)
                     self.vm.load_sequences()
                 else:
-                    self.progress_modal.finalize(False, self.tr("Process completed with errors. Check logs."))
+                    dialog.finalize(False, msg or self.tr("Process completed with errors. Check logs."))
+                    QMessageBox.critical(self, self.tr("Spawn Failed"), msg or self.tr("Unknown error."))
 
             self.vm.spawn_finished.connect(on_finished)
             self.vm.spawn_storyboard(pending_sequences)
@@ -575,20 +696,20 @@ class BlendBuilderWidget(QFrame):
                 self.vm.report_status(self.tr("Opened Kitsu for assignment."), "white")
                 return
 
-            self.progress_modal = SpawningProgressDialog(self, self.tr("Spawning EDIT Master"))
-            self.progress_modal.show()
+            dialog = self._begin_spawn(self.tr("Spawning EDIT Master"))
 
-            self.vm.spawn_progress.connect(self.progress_modal.update_progress)
-            self.vm.spawn_log.connect(self.progress_modal.append_log)
-
-            def on_finished(success: bool, msg: str) -> None:
-                self.vm.spawn_progress.disconnect(self.progress_modal.update_progress)
-                self.vm.spawn_log.disconnect(self.progress_modal.append_log)
+            def on_finished(success: bool, msg: str, dialog=dialog) -> None:
+                try:
+                    self.vm.spawn_finished.disconnect(on_finished)
+                except (RuntimeError, TypeError):
+                    pass
+                self._end_spawn(dialog)
                 if success:
                     self.change_step(3)
-                    self.progress_modal.finalize(True, self.tr("Success: EDIT Master forged."))
+                    dialog.finalize(True, self.tr("Success: EDIT Master forged."))
                 else:
-                    self.progress_modal.finalize(False, self.tr("Process completed with errors. Check logs."))
+                    dialog.finalize(False, msg or self.tr("Process completed with errors. Check logs."))
+                    QMessageBox.critical(self, self.tr("Spawn Failed"), msg or self.tr("Unknown error."))
 
             self.vm.spawn_finished.connect(on_finished)
             self.vm.spawn_edit_master()
@@ -622,24 +743,23 @@ class BlendBuilderWidget(QFrame):
             # Assets: the spawner forges every missing task found in the audit.
             selected_tasks = []
 
-        self.progress_modal = SpawningProgressDialog(self, self.tr("Batch Spawning Production Files"))
-        self.progress_modal.show()
+        dialog = self._begin_spawn(self.tr("Batch Spawning Production Files"))
 
-        self.vm.spawn_progress.connect(self.progress_modal.update_progress)
-        self.vm.spawn_log.connect(self.progress_modal.append_log)
-
-        def on_batch_finished(success: bool, message: str) -> None:
-            self.vm.spawn_progress.disconnect(self.progress_modal.update_progress)
-            self.vm.spawn_log.disconnect(self.progress_modal.append_log)
+        def on_batch_finished(success: bool, message: str, dialog=dialog) -> None:
+            try:
+                self.vm.spawn_finished.disconnect(on_batch_finished)
+            except (RuntimeError, TypeError):
+                pass
+            self._end_spawn(dialog)
             if success:
-                self.progress_modal.update_progress(100, self.tr("Done!"))
-                self.progress_modal.finalize(True, self.tr("Success: Files Spawned."), "Assign in Kitsu", self._open_kitsu_assets)
+                dialog.update_progress(100, self.tr("Done!"))
+                dialog.finalize(True, self.tr("Success: Files Spawned."), "Assign in Kitsu", self._open_kitsu_assets)
                 if step_id == 3:
                     self.vm.load_assets()
                 elif step_id == 4:
                     self.vm.load_shots()
             else:
-                self.progress_modal.finalize(False, self.tr("Process completed with errors. Check logs."))
+                dialog.finalize(False, message or self.tr("Process completed with errors. Check logs."))
                 QMessageBox.critical(self, self.tr("Batch Creation Failed"), message)
 
         self.vm.spawn_finished.connect(on_batch_finished)
