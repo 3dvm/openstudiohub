@@ -74,3 +74,20 @@ def test_gate_defaults_to_true_without_service(tmp_path, qapp):
     vm.select_project("MIDEQ_promo")
 
     assert vm.is_current_project_installed() is True
+
+
+def test_select_project_is_case_insensitive(tmp_path, qapp):
+    vm, _ = _make_vm(tmp_path, installed=True)
+    vm.select_project("mideq_promo")
+
+    assert vm.current_project_id == "p1"
+    assert vm.current_project_name == "MIDEQ_promo"
+
+
+def test_select_project_clears_state_when_missing(tmp_path, qapp):
+    vm, _ = _make_vm(tmp_path, installed=True)
+    vm.select_project("MIDEQ_promo")
+    vm.select_project("does-not-exist")
+
+    assert vm.current_project_id is None
+    assert vm.current_project_name == ""

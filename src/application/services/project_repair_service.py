@@ -110,7 +110,11 @@ class ProjectRepairService:
             "*.blend1",
             "*.blend2",
         ]
-        provisioner.initialize_and_commit(project_name, vfs_svn, vcs_user, vcs_pwd, ignore_patterns)
+        success, message = provisioner.initialize_and_commit(
+            folder_name, vfs_svn, vcs_user, vcs_pwd, ignore_patterns
+        )
+        if not success:
+            return False, f"Kitsu Orphan repair failed at VCS initialization: {message}"
 
         return True, "Kitsu Orphan repaired: NAS topography and VCS initialized."
 

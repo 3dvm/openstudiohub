@@ -8,13 +8,15 @@
 
 import webbrowser
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
 from src.application.services.production_service import ProductionService
 
 
-class AcknowledgeWorker(QThread):
+class AcknowledgeWorker(ManagedWorker):
     """Sends the read receipt to Kitsu asynchronously."""
 
     ack_finished = Signal(bool)

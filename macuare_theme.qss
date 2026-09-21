@@ -207,6 +207,18 @@ QPushButton#LinkButton:hover {
     text-decoration: underline;
 }
 
+QPushButton#TaskLinkButton {
+    background-color: transparent;
+    border: none;
+    outline: none;
+    padding: 0;
+}
+
+QPushButton#TaskLinkButton:hover {
+    background-color: #2E3643;
+    border-radius: 4px;
+}
+
 /* ---------------------------------------------------------
    ALERTS & STATUS
 --------------------------------------------------------- */

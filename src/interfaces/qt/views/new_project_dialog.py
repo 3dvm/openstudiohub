@@ -28,8 +28,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.application.services.creation_saga import CreationOutcome
 from src.domain.shared_kernel.addon_contract import resolve_addon_entry
 from src.interfaces.qt.viewmodels.new_project_viewmodel import NewProjectViewModel
+from src.interfaces.qt.views.creation_error_dialog import (
+    CreationErrorAction,
+    CreationErrorDialog,
+)
 from src.interfaces.qt.widgets.addon_config_panel import AddonConfigPanel
 
 
@@ -54,6 +59,7 @@ class NewProjectDialog(QDialog):
         self._build_ui()
         self.vm.templates_loaded.connect(self._on_templates_loaded)
         self.vm.creation_finished.connect(self._on_creation_finished)
+        self.vm.rollback_finished.connect(self._on_rollback_finished)
         self.vm.load_templates()
 
     def _build_ui(self) -> None:
@@ -316,17 +322,56 @@ class NewProjectDialog(QDialog):
             "behaviors": list(default_config.get("behaviors") or []),
         }
 
-    def _on_creation_finished(self, success: bool, message: str) -> None:
-        if success:
-            self.lbl_status.setText(message)
+    def _on_creation_finished(self, outcome: CreationOutcome) -> None:
+        if outcome.success:
+            self.lbl_status.setText(outcome.message)
             self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold;")
             self.on_success()
             self.close()
+            return
+
+        if outcome.can_retry or outcome.can_rollback:
+            self._show_creation_error(outcome)
         else:
-            self.btn_create.setEnabled(True)
-            self.btn_create.setText(self.tr("Generate Project"))
-            self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+            self._show_inline_error(outcome.message)
+
+    def _show_creation_error(self, outcome: CreationOutcome) -> None:
+        dialog = CreationErrorDialog(self, outcome)
+        dialog.exec()
+
+        if dialog.action == CreationErrorAction.RETRY:
+            self.btn_create.setEnabled(False)
+            self.btn_create.setText(self.tr("Retrying..."))
+            self.lbl_status.setText(self.tr("Retrying the failed step..."))
+            self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+            self.lbl_status.show()
+            self.vm.retry_creation()
+        elif dialog.action == CreationErrorAction.ROLLBACK:
+            self.btn_create.setEnabled(False)
+            self.btn_create.setText(self.tr("Deleting..."))
+            self.lbl_status.setText(self.tr("Deleting the created data..."))
+            self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+            self.lbl_status.show()
+            self.vm.rollback_creation()
+        else:
+            self._show_inline_error(outcome.message)
+
+    def _on_rollback_finished(self, success: bool, message: str) -> None:
+        self.btn_create.setEnabled(True)
+        self.btn_create.setText(self.tr("Generate Project"))
+        color = "#10B981" if success else "#EF4444"
+        self.lbl_status.setText(message)
+        self.lbl_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+        self.lbl_status.show()
+        if success:
+            self.on_success()
+
+    def _show_inline_error(self, message: str) -> None:
+        self.btn_create.setEnabled(True)
+        self.btn_create.setText(self.tr("Generate Project"))
+        self.lbl_status.setText(message)
+        self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+        self.lbl_status.show()
 
     def try_safe_delete(self) -> None:
         """Delete the dialog without destroying a still-running worker thread."""
@@ -335,4 +380,8 @@ class NewProjectDialog(QDialog):
             self.deleteLater()
             return
         for worker in workers:
-            worker.finished.connect(self.deleteLater)
+            try:
+                worker.finished.connect(self.deleteLater)
+            except RuntimeError:
+                # The worker's C++ object was already deleted by Qt.
+                continue

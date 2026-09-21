@@ -10,7 +10,9 @@ import re
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -30,7 +32,7 @@ from src.infrastructure.provisioning_workers import BlenderDirectDownloadWorker
 MACUARE_LTS_VERSIONS = ("2.83", "2.93", "3.3", "3.6", "4.2", "4.5", "5.2")
 
 
-class BlenderBaseScraper(QThread):
+class BlenderBaseScraper(ManagedWorker):
     """Fetches the base version folders from download.blender.org/release/."""
 
     data_ready = Signal(list)
@@ -49,7 +51,7 @@ class BlenderBaseScraper(QThread):
             self.error_occurred.emit(f"Base connection failure: {str(error)}")
 
 
-class SubversionScraper(QThread):
+class SubversionScraper(ManagedWorker):
     """Fetches the binary files inside a specific Blender folder."""
 
     data_ready = Signal(dict)

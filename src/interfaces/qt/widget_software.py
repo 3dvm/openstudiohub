@@ -29,7 +29,9 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QScrollArea, QFrame, QLineEdit, 
                                QFileDialog, QCheckBox, QProgressBar, QComboBox,
                                QMessageBox)
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.infrastructure.file_downloader import FileDownloaderWorker
 from src.infrastructure.manifest_manager import ManifestManager
@@ -42,7 +44,7 @@ from src.infrastructure.provisioning_workers import StudioToolsFetchWorker
 
 MACUARE_LTS_VERSIONS = ("2.83", "2.93", "3.3", "3.6", "4.2", "4.5", "5.2")
 
-class BlenderBaseScraper(QThread):
+class BlenderBaseScraper(ManagedWorker):
     data_ready = Signal(list)
     error_occurred = Signal(str)
 
@@ -57,7 +59,7 @@ class BlenderBaseScraper(QThread):
         except Exception as e:
             self.error_occurred.emit(f"Base connection failed: {str(e)}")
 
-class SubversionScraper(QThread):
+class SubversionScraper(ManagedWorker):
     data_ready = Signal(dict)
     error_occurred = Signal(str)
 

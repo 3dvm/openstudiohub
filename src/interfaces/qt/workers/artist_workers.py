@@ -8,13 +8,15 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 
 
-class FetchArtistTasksWorker(QThread):
+class FetchArtistTasksWorker(ManagedWorker):
     """Asynchronously fetches the tasks assigned to the current user."""
 
     data_ready = Signal(list)
@@ -32,7 +34,7 @@ class FetchArtistTasksWorker(QThread):
             self.error_occurred.emit(str(error))
 
 
-class InstallProjectWorker(QThread):
+class InstallProjectWorker(ManagedWorker):
     """Runs the local installation engine without freezing the UI."""
 
     progress_updated = Signal(str, str)
@@ -91,7 +93,7 @@ class InstallProjectWorker(QThread):
             self.finished_install.emit(False, str(error))
 
 
-class LaunchTaskWorker(QThread):
+class LaunchTaskWorker(ManagedWorker):
     """Launches Blender in a background thread without freezing the UI."""
 
     finished_launch = Signal(bool, str)

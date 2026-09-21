@@ -8,13 +8,15 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.task_file_service import TaskFileService
 from src.domain.production.entities import Task
 
 
-class TaskFileWorker(QThread):
+class TaskFileWorker(ManagedWorker):
     finished_link = Signal(bool, str)
 
     def __init__(

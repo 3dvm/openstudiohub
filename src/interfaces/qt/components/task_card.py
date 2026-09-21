@@ -14,7 +14,9 @@ import webbrowser
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -27,10 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.interfaces.qt.workers.worker_keepalive import keep_worker_alive
-
-
-class ThumbnailWorker(QThread):
+class ThumbnailWorker(ManagedWorker):
     """Background thread for downloading entity thumbnails over HTTP."""
 
     image_downloaded = Signal(bytes)
@@ -285,7 +284,6 @@ class TaskCard(QFrame):
         self.worker.image_downloaded.connect(self._on_thumbnail_ready)
         self.worker.error_occurred.connect(self._on_thumbnail_error)
         self.worker.finished.connect(self.worker.deleteLater)
-        keep_worker_alive(self.worker)
         self.worker.start()
 
     def _on_thumbnail_ready(self, img_bytes: bytes) -> None:

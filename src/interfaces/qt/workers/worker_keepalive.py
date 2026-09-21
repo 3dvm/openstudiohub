@@ -1,37 +1,29 @@
 # =========================================================================================
 # OPENSTUDIOHUB
 # Module: src/interfaces/qt/workers/worker_keepalive.py
-# Architectural role: UI worker lifecycle guard
+# Architectural role: UI worker lifecycle guard (compatibility shim)
 # =========================================================================================
 
-"""Keeps short-lived ``QThread`` workers alive until they finish.
+"""Backward-compatible re-export of the shared Qt worker lifecycle guard.
 
-Python garbage-collecting a running ``QThread`` triggers
-``QThread: Destroyed while thread '' is still running`` and aborts the whole
-process. Widgets that own a worker can be destroyed before the worker finishes
-(for example, a responsive grid rebuilding its cards), which drops the only
-Python reference to the thread.
-
-``keep_worker_alive`` stores a strong reference in a module-level registry and
-releases it when the thread emits ``finished``. This decouples the worker's
-lifetime from the widget that created it, so the widget can be safely destroyed
-while the background operation completes.
+The implementation now lives in :mod:`src.infrastructure.qt_worker` so that both
+the interface and infrastructure layers can use it without a dependency
+inversion. New worker classes should inherit from ``ManagedWorker`` instead of
+calling ``keep_worker_alive`` manually.
 """
 
-import functools
-import weakref
-from typing import Set
+from src.infrastructure.qt_worker import (  # noqa: F401
+    _ACTIVE,
+    _release,
+    ManagedWorker,
+    active_workers,
+    keep_worker_alive,
+    wait_for_all,
+)
 
-_ACTIVE: Set[object] = set()
-
-
-def keep_worker_alive(worker) -> None:
-    """Hold ``worker`` in memory until it emits ``finished``."""
-    _ACTIVE.add(worker)
-    worker.finished.connect(functools.partial(_release, weakref.ref(worker)))
-
-
-def _release(worker_ref) -> None:
-    worker = worker_ref()
-    if worker is not None:
-        _ACTIVE.discard(worker)
+__all__ = [
+    "ManagedWorker",
+    "keep_worker_alive",
+    "active_workers",
+    "wait_for_all",
+]

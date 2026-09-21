@@ -6,13 +6,15 @@
 
 """Project repair workers (heavy repair I/O off the UI thread)."""
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.project_repair_service import ProjectRepairService
 from src.domain.workspace.entities import ERROR_INVALID_BLUEPRINT, ERROR_KITSU_ORPHAN, ERROR_MISSING_BLUEPRINT, ERROR_NAS_GHOST
 
 
-class ProjectRepairWorker(QThread):
+class ProjectRepairWorker(ManagedWorker):
     """Runs the repair saga for a single damaged project without freezing the UI."""
 
     result = Signal(bool, str)

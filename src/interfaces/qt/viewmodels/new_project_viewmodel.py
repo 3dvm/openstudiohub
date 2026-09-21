@@ -13,6 +13,7 @@ collects the form inputs and forwards them here for the heavy I/O.
 from PySide6.QtCore import Signal
 
 from src.application.credential_vault import CredentialVault
+from src.application.services.creation_saga import CreationOutcome
 from src.application.services.project_creation_service import ProjectCreationService
 from src.application.services.production_service import ProductionService
 from src.application.services.vault_service import VaultService
@@ -24,13 +25,17 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
 )
 from src.interfaces.qt.workers.new_project_workers import (
     FetchKitsuTemplatesWorker,
+    ProjectCreationRetryWorker,
     ProjectCreationWorker,
+    ProjectRollbackWorker,
 )
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class NewProjectViewModel(BaseViewModel):
     templates_loaded = Signal(list)
-    creation_finished = Signal(bool, str)
+    creation_finished = Signal(object)
+    rollback_finished = Signal(bool, str)
 
     def __init__(
         self,
@@ -50,7 +55,8 @@ class NewProjectViewModel(BaseViewModel):
         self.credential_vault = credential_vault
         self.vcs_prompt = vcs_prompt
 
-        self._worker = None
+        self.workers = WorkerManager(self)
+        self._last_outcome: CreationOutcome | None = None
 
     def resolve_vcs_credentials(self) -> tuple[str, str]:
         user, pwd = "", ""
@@ -59,25 +65,13 @@ class NewProjectViewModel(BaseViewModel):
         return user or "", pwd or ""
 
     def load_templates(self) -> None:
-        self._templates_worker = FetchKitsuTemplatesWorker(self.production_service)
-        self._templates_worker.data_ready.connect(self.templates_loaded.emit)
-        self._templates_worker.finished.connect(self._on_templates_worker_finished)
-        self._templates_worker.start()
-
-    def _on_templates_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._templates_worker = None
+        worker = FetchKitsuTemplatesWorker(self.production_service)
+        worker.data_ready.connect(self.templates_loaded.emit)
+        self.workers.start("templates", worker)
 
     def active_workers(self) -> list:
         """Return the currently running workers so callers can defer teardown."""
-        workers = []
-        if self._templates_worker is not None and self._templates_worker.isRunning():
-            workers.append(self._templates_worker)
-        if self._worker is not None and self._worker.isRunning():
-            workers.append(self._worker)
-        return workers
+        return self.workers.active()
 
     def create_project(
         self,
@@ -99,13 +93,21 @@ class NewProjectViewModel(BaseViewModel):
             report_status=self.report_status,
         )
         if creds is None:
-            self.creation_finished.emit(False, self.tr("VCS credentials are required to create the project."))
+            outcome = CreationOutcome(
+                success=False,
+                message=self.tr("VCS credentials are required to create the project."),
+                failed_step="credentials",
+                can_retry=False,
+                can_rollback=False,
+            )
+            self._last_outcome = outcome
+            self.creation_finished.emit(outcome)
             return
         if required:
             vcs_user, vcs_pwd = creds
 
         self.set_busy(True)
-        self._worker = ProjectCreationWorker(
+        worker = ProjectCreationWorker(
             self.project_creation_service,
             name,
             version,
@@ -117,10 +119,40 @@ class NewProjectViewModel(BaseViewModel):
             vcs_enabled=vcs_enabled,
             addon_configuration=addon_configuration,
         )
-        self._worker.result.connect(self._on_creation_finished)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+        worker.result.connect(self._on_creation_finished)
+        self.workers.start("creation", worker)
 
-    def _on_creation_finished(self, success: bool, message: str) -> None:
+    def retry_creation(self) -> None:
+        """Resume the last failed creation from its recorded context."""
+        outcome = self._last_outcome
+        if outcome is None or not outcome.can_retry or outcome.context is None:
+            return
+
+        self.set_busy(True)
+        worker = ProjectCreationRetryWorker(
+            self.project_creation_service, outcome.context
+        )
+        worker.result.connect(self._on_creation_finished)
+        self.workers.start("retry", worker)
+
+    def rollback_creation(self) -> None:
+        """Delete everything created by the last failed project creation."""
+        outcome = self._last_outcome
+        if outcome is None or outcome.context is None:
+            return
+
+        self.set_busy(True)
+        worker = ProjectRollbackWorker(
+            self.project_creation_service, outcome.context
+        )
+        worker.result.connect(self._on_rollback_finished)
+        self.workers.start("rollback", worker)
+
+    def _on_creation_finished(self, outcome: CreationOutcome) -> None:
         self.set_busy(False)
-        self.creation_finished.emit(success, message)
+        self._last_outcome = outcome
+        self.creation_finished.emit(outcome)
+
+    def _on_rollback_finished(self, success: bool, message: str) -> None:
+        self.set_busy(False)
+        self.rollback_finished.emit(success, message)

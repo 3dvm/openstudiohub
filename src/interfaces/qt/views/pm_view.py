@@ -117,12 +117,12 @@ class ViewPM(BaseDashboardView):
 
         if panel_id == "btn_projects":
             self.project_list.refresh()
+        elif panel_id == "btn_batch":
+            self.blend_builder.refresh_projects()
         elif panel_id == "settings" and self.credential_vault is not None:
             username, _ = self.credential_vault.get_svn_credentials()
             self.tab_credentials.load_data(username or "", self.credential_vault.is_svn_enabled())
 
     def _open_wizard_for_project(self, project_name: str) -> None:
         self._switch_panel("btn_batch")
-        index = self.blend_builder.combo_projects.findText(project_name)
-        if index >= 0:
-            self.blend_builder.combo_projects.setCurrentIndex(index)
+        self.blend_builder.select_project(project_name)

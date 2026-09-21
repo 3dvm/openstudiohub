@@ -6,13 +6,15 @@
 
 """Project grid workers."""
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 
 
-class ProjectInstallWorker(QThread):
+class ProjectInstallWorker(ManagedWorker):
     """Runs the workspace installation for a project without freezing the UI."""
 
     progress_update = Signal(str, str)
@@ -40,7 +42,7 @@ class ProjectInstallWorker(QThread):
         self.progress_update.emit(message, color)
 
 
-class ProjectGridWorker(QThread):
+class ProjectGridWorker(ManagedWorker):
     """Fetches the studio's open projects from Kitsu."""
 
     data_ready = Signal(list)

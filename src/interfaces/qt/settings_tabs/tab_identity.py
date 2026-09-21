@@ -12,7 +12,9 @@ hydration (load_data) and payload extraction (identity_payload) methods.
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -27,7 +29,7 @@ from src.application.services.auth_service import AuthService
 from src.application.services.production_service import ProductionService
 
 
-class SyncIdentityWorker(QThread):
+class SyncIdentityWorker(ManagedWorker):
     """Fetches the organisation metadata from Kitsu asynchronously."""
 
     finished_sync = Signal(dict)

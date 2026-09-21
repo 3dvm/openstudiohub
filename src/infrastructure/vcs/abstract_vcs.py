@@ -16,7 +16,7 @@ Garantiza que cualquier motor (SVN, Git) exponga los mismos métodos al Hub.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
 class AbstractVCS(ABC):
@@ -100,6 +100,27 @@ class AbstractVCS(ABC):
         """
         Crea el repositorio remoto en el servidor para el nuevo proyecto 
         e inicializa la topología base si es necesario.
+        """
+        pass
+
+    @abstractmethod
+    def destroy_server_repository(self, project_name: str, vfs_svn: str) -> Tuple[bool, str]:
+        """
+        Elimina el repositorio del servidor cuando sea posible (rollback).
+        Devuelve ``(ok, mensaje)``; para servidores remotos puede no estar soportado.
+        """
+        pass
+
+    @abstractmethod
+    def check_server_health(
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        timeout: float = 5.0,
+    ) -> Tuple[bool, str]:
+        """
+        Verifica que el servidor VCS esté accesible antes de iniciar operaciones.
+        Devuelve ``(ok, mensaje)`` con un mensaje legible para la UI.
         """
         pass
 

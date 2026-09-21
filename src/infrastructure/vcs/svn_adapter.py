@@ -16,11 +16,21 @@ Implements the Sparse Checkout mechanism to orchestrate Vendor Jailing.
 Anchored to English standard.
 """
 
+import socket
 import subprocess
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
+from urllib.parse import urlsplit
+
 from pathlib import Path
 from .abstract_vcs import AbstractVCS
 from src.infrastructure.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
+
+SVN_DEFAULT_PORTS = {
+    "svn": 3690,
+    "svn+ssh": 22,
+    "http": 80,
+    "https": 443,
+}
 
 class SVNAdapter(AbstractVCS):
     """Concrete adapter for Subversion (SVN) operations via CLI."""
@@ -189,6 +199,81 @@ class SVNAdapter(AbstractVCS):
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 
+    def _server_endpoint(self) -> Tuple[str, int]:
+        """Derives the (host, port) of the VCS server from the repository URL."""
+        parsed = urlsplit(self.repo_url)
+        scheme = (parsed.scheme or "svn").lower()
+        host = parsed.hostname or "localhost"
+        port = parsed.port or SVN_DEFAULT_PORTS.get(scheme, 3690)
+        return host, port
+
+    def check_server_health(
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        timeout: float = 5.0,
+    ) -> Tuple[bool, str]:
+        """Pre-flight probe: confirms the SVN server is reachable before writing."""
+        host, port = self._server_endpoint()
+
+        if host in ("localhost", "127.0.0.1"):
+            if not self._docker_container_running():
+                return (
+                    False,
+                    f"Local VCS server (Docker 'openstudio_local_svn') is not running. "
+                    f"Start it from the Infrastructure panel and retry.",
+                )
+
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                pass
+            return True, f"VCS server reachable at {host}:{port}."
+        except OSError as error:
+            return False, f"VCS server unreachable at {host}:{port}: {error}"
+
+    @staticmethod
+    def _docker_container_running() -> bool:
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.State.Running}}", "openstudio_local_svn"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return result.stdout.strip().lower() == "true"
+        except Exception:
+            return False
+
+    @staticmethod
+    def _normalized_repo_name(repository_name: str) -> str:
+        """
+        Canonical repository directory name.
+
+        Must match the first path segment of the checkout URL, which is built from
+        the lowercased project folder name. Normalizing here prevents a display
+        name (e.g. ``MIDEQ_promo``) from creating a server repository that the
+        checkout URL (``mideq_promo``) cannot find.
+        """
+        return (repository_name or "").strip().lower().replace(" ", "-")
+
+    def destroy_server_repository(self, project_name: str, vfs_svn: str) -> Tuple[bool, str]:
+        """Best-effort rollback of the server-side repository."""
+        if "localhost" not in self.repo_url:
+            return False, "Remote repository cannot be deleted automatically."
+
+        repo_name = self._normalized_repo_name(project_name)
+        try:
+            subprocess.run(
+                ["docker", "exec", "openstudio_local_svn", "rm", "-rf", f"/home/svn/{repo_name}"],
+                check=True,
+                capture_output=True,
+            )
+            print(f"[SVNAdapter] Local repository '{repo_name}' removed from Docker.")
+            return True, f"VCS repository '{repo_name}' removed."
+        except Exception as error:
+            print(f"[SVNAdapter] WARNING: Failed to remove SVN repository '{repo_name}': {error}")
+            return False, f"Failed to remove VCS repository: {error}"
+
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
         """Crea el repositorio SVN en el servidor (Soporta Docker local para desarrollo)."""
         if "localhost" not in self.repo_url:
@@ -196,29 +281,39 @@ class SVNAdapter(AbstractVCS):
             print("[SVNAdapter] Remote repository detected, assuming that the repository already exists.")
             return True # Si es un server real, asumimos que el admin ya creó el repo o se hace vía API
 
+        repo_name = self._normalized_repo_name(project_name)
         try:
-            import subprocess
+            # Idempotencia: si el repositorio ya existe (p. ej. un retry), no lo recreamos.
+            existing = subprocess.run(
+                ["docker", "exec", "openstudio_local_svn", "test", "-d", f"/home/svn/{repo_name}"],
+                check=False,
+                capture_output=True,
+            )
+            if existing.returncode == 0:
+                print(f"[SVNAdapter] Local repository '{repo_name}' already exists. Skipping creation.")
+                return True
+
             # Creación del repositorio en el contenedor Docker
-            subprocess.run(["docker", "exec", "openstudio_local_svn", "svnadmin", "create", f"/home/svn/{project_name}"], check=True, capture_output=True)
+            subprocess.run(["docker", "exec", "openstudio_local_svn", "svnadmin", "create", f"/home/svn/{repo_name}"], check=True, capture_output=True)
 
             # Configuración de permisos
             conf_cmd = (
-                f"echo '[general]' > /home/svn/{project_name}/conf/svnserve.conf && "
-                f"echo 'anon-access = none' >> /home/svn/{project_name}/conf/svnserve.conf && "
-                f"echo 'auth-access = write' >> /home/svn/{project_name}/conf/svnserve.conf && "
-                f"echo 'password-db = passwd' >> /home/svn/{project_name}/conf/svnserve.conf"
+                f"echo '[general]' > /home/svn/{repo_name}/conf/svnserve.conf && "
+                f"echo 'anon-access = none' >> /home/svn/{repo_name}/conf/svnserve.conf && "
+                f"echo 'auth-access = write' >> /home/svn/{repo_name}/conf/svnserve.conf && "
+                f"echo 'password-db = passwd' >> /home/svn/{repo_name}/conf/svnserve.conf"
             )
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", conf_cmd], check=True, capture_output=True)
 
             # Creación del usuario admin default para localhost
-            pwd_cmd = f"echo '[users]' > /home/svn/{project_name}/conf/passwd && echo '{DEV_SVN_USER} = {DEV_SVN_PASSWORD}' >> /home/svn/{project_name}/conf/passwd"
+            pwd_cmd = f"echo '[users]' > /home/svn/{repo_name}/conf/passwd && echo '{DEV_SVN_USER} = {DEV_SVN_PASSWORD}' >> /home/svn/{repo_name}/conf/passwd"
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", pwd_cmd], check=True, capture_output=True)
 
             # Inyección de la topología VFS base
-            mkdir_cmd = f"svn mkdir file:///home/svn/{project_name}/{vfs_svn} -m 'Init Hub Topology'"
+            mkdir_cmd = f"svn mkdir file:///home/svn/{repo_name}/{vfs_svn} -m 'Init Hub Topology'"
             subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", mkdir_cmd], check=True, capture_output=True)
 
-            print(f"[SVNAdapter] ✓ Local repository '{project_name}' created succesfully on Docker.")
+            print(f"[SVNAdapter] ✓ Local repository '{repo_name}' created succesfully on Docker.")
             return True
         except Exception as e:
             print(f"[SVNAdapter] WARNING: Failed to configure SVN Docker: {e}")

@@ -12,7 +12,6 @@ with typed domain entities (Project/Shot/Asset/Task); for now they keep their
 existing behavior so consumers are unchanged.
 """
 
-import glob
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -269,11 +268,18 @@ class ProductionService:
         version = "N/A"
 
         if edit_dir.exists():
-            blend_files = [f for f in glob.glob(str(edit_dir / "*.blend")) if "blend1" not in f]
+            blend_files = [f for f in edit_dir.glob("*.blend") if "blend1" not in f.name]
             if blend_files:
                 has_file = True
-                blend_files.sort()
-                latest_file = Path(blend_files[-1])
+
+                def _edit_sort_key(path: Path) -> tuple:
+                    match = re.search(r"-v(\d+)\.blend$", path.name, re.IGNORECASE)
+                    version = int(match.group(1)) if match else -1
+                    # Prefer the canonical lower-case name when versions tie.
+                    return (version, path.name == path.name.lower())
+
+                # Prefer the versioned DCC master over any un-versioned stray.
+                latest_file = max(blend_files, key=_edit_sort_key)
                 file_name = latest_file.name
                 match = re.search(r"(v\d+)", file_name, re.IGNORECASE)
                 if match:
@@ -300,6 +306,10 @@ class ProductionService:
     # ------------------------------------------------------------------
     def set_host(self, host_url: str) -> None:
         self.kitsu.set_host(host_url)
+
+    def check_health(self, timeout: float = 5.0) -> Tuple[bool, str]:
+        """Pre-flight reachability probe against the Kitsu server."""
+        return self.kitsu.check_health(timeout=timeout)
 
     def list_templates(self) -> list:
         try:

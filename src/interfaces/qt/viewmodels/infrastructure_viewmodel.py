@@ -23,6 +23,7 @@ from src.infrastructure.dev_defaults import (
 )
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.infrastructure_workers import DockerWorker, KitsuSeederWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class InfrastructureViewModel(BaseViewModel):
@@ -42,8 +43,7 @@ class InfrastructureViewModel(BaseViewModel):
         self.infra_dir = self.config_factory.get_workspace_root() / ".openstudio_infra"
         self.infra_dir.mkdir(parents=True, exist_ok=True)
 
-        self.seeder_worker = None
-        self.worker = None
+        self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
     # SVN lifecycle
@@ -117,35 +117,21 @@ SECRET_KEY={DEV_KITSU_SECRET_KEY}
     # Database seeders
     # ------------------------------------------------------------------
     def run_seeder(self, action: str) -> None:
-        if self.seeder_worker is not None and self.seeder_worker.isRunning():
+        if self.workers.is_running("seeder"):
             self.report_status("A seeder is already running...", "red")
             return
         self.report_status("Running Seeder against the Database...", "yellow")
-        self.seeder_worker = KitsuSeederWorker(self.production_service, action)
-        self.seeder_worker.finished_signal.connect(self._on_worker_finished)
-        self.seeder_worker.finished.connect(self._on_seeder_worker_finished)
-        self.seeder_worker.start()
-
-    def _on_seeder_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self.seeder_worker = None
+        worker = KitsuSeederWorker(self.production_service, action)
+        worker.finished_signal.connect(self._on_worker_finished)
+        self.workers.start("seeder", worker)
 
     def _run_docker_worker(self, command: list, cwd: Path | None = None) -> None:
-        if self.worker is not None and self.worker.isRunning():
+        if self.workers.is_running("docker"):
             self.report_status("A docker operation is already running...", "red")
             return
-        self.worker = DockerWorker(command, cwd)
-        self.worker.finished_signal.connect(self._on_worker_finished)
-        self.worker.finished.connect(self._on_docker_worker_finished)
-        self.worker.start()
-
-    def _on_docker_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self.worker = None
+        worker = DockerWorker(command, cwd)
+        worker.finished_signal.connect(self._on_worker_finished)
+        self.workers.start("docker", worker)
 
     def _on_worker_finished(self, success: bool, message: str) -> None:
         color = "green" if success else "red"

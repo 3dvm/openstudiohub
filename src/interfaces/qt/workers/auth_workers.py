@@ -10,12 +10,14 @@ They only invoke ``AuthService`` and re-emit the result as Qt signals so the
 LoginViewModel never blocks the GUI thread.
 """
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.auth_service import AuthService
 
 
-class LoginWorker(QThread):
+class LoginWorker(ManagedWorker):
     """Asynchronously performs the login use case."""
 
     success = Signal()

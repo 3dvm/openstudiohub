@@ -14,9 +14,9 @@ Extracted from the module-level ``lanzar_blender`` function; the raw
 ``os.environ`` string writes are replaced by ``SandboxEnvironment.to_os_environ()``.
 """
 
-import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -151,11 +151,49 @@ class LaunchService:
         if not resolved_rel_path:
             return None
 
-        base_target_str = str(project_root / production_folder / resolved_rel_path).replace(".blend", "")
-        versioned_files = glob.glob(f"{base_target_str}-v*.blend")
-        if versioned_files:
-            return Path(sorted(versioned_files)[-1])
-        return Path(f"{base_target_str}.blend")
+        base_target = (project_root / production_folder / resolved_rel_path).with_suffix("")
+
+        # The DCC add-on writes versioned masters preserving the project name's
+        # case (e.g. ``MIDEQ_promo-edit-v001.blend``), while the resolved task
+        # name may be lower-cased. Match case-insensitively and pick the newest
+        # version, otherwise fall back to the un-versioned master.
+        versioned = LaunchService._find_latest_versioned(base_target)
+        if versioned is not None:
+            return versioned
+
+        unversioned = LaunchService._find_case_insensitive(base_target.with_suffix(".blend"))
+        return unversioned if unversioned is not None else base_target.with_suffix(".blend")
+
+    @staticmethod
+    def _find_latest_versioned(base_target: Path) -> Optional[Path]:
+        """Return the newest ``<base>-vNNN.blend`` (case-insensitive), if any."""
+        directory = base_target.parent
+        if not directory.exists():
+            return None
+
+        pattern = re.compile(rf"^{re.escape(base_target.name)}-v(\d+)\.blend$", re.IGNORECASE)
+        matches = []
+        for entry in directory.iterdir():
+            match = pattern.match(entry.name)
+            if match:
+                matches.append((int(match.group(1)), entry))
+
+        if not matches:
+            return None
+        return max(matches, key=lambda item: item[0])[1]
+
+    @staticmethod
+    def _find_case_insensitive(path: Path) -> Optional[Path]:
+        """Return an existing file whose name matches ``path`` ignoring case."""
+        directory = path.parent
+        if not directory.exists():
+            return None
+
+        target = path.name.lower()
+        for entry in directory.iterdir():
+            if entry.name.lower() == target:
+                return entry
+        return None
 
     def _refresh_addon_config(self, project_root: Path) -> None:
         """Regenerate the ``cfg_<addon>.py`` scripts from the project blueprint.

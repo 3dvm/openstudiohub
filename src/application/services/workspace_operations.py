@@ -77,21 +77,25 @@ class VCSProvisioner:
         self.vcs_router = vcs_router
         self.is_enabled = is_enabled
 
-    def initialize_and_commit(self, project_name: str, vfs_svn: str, username: str, password: str, ignore_patterns: list) -> bool:
+    def initialize_and_commit(self, repository_name: str, vfs_svn: str, username: str, password: str, ignore_patterns: list) -> tuple[bool, str]:
         if not self.is_enabled:
             print("[VCSProvisioner] Version Control is disabled (NAS only). Skipping VCS initialization.")
-            return True
+            return True, "Version Control is disabled (NAS only)."
 
         try:
-
             adapter = self.vcs_router.get_adapter()
-            adapter.create_server_repository(project_name, vfs_svn)
+            if adapter is None:
+                return False, "VCS enabled but no adapter is available."
+
+            if not adapter.create_server_repository(repository_name, vfs_svn):
+                return False, "Failed to create the VCS server repository."
+
             adapter.full_pull(username, password)
             adapter.setup_ignore(ignore_patterns)
             adapter.add_all(".")
             adapter.commit("Initial Blueprint commit.", ["."], username, password)
 
-            return True
+            return True, "VCS repository initialized."
         except Exception as e:
             print(f"[VCSProvisioner] Error: {e}")
-            return False
+            return False, str(e)

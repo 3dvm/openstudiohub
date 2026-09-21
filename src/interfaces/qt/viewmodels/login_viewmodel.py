@@ -19,6 +19,7 @@ from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.auth_workers import LoginWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class LoginViewModel(BaseViewModel):
@@ -39,7 +40,7 @@ class LoginViewModel(BaseViewModel):
         self.auth_service = auth_service
         self.credential_vault = credential_vault
         self.config_factory = config_factory
-        self._worker = None
+        self.workers = WorkerManager(self)
         self._temp_email = ""
         self._temp_password = ""
 
@@ -81,11 +82,10 @@ class LoginViewModel(BaseViewModel):
         self.set_busy(True)
         self.report_status("SYSTEM: AUTHENTICATING... PLEASE WAIT.", "yellow")
 
-        self._worker = LoginWorker(self.auth_service, email, password, host)
-        self._worker.success.connect(self._on_login_success)
-        self._worker.error.connect(self._on_login_error)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+        worker = LoginWorker(self.auth_service, email, password, host)
+        worker.success.connect(self._on_login_success)
+        worker.error.connect(self._on_login_error)
+        self.workers.start("login", worker, skip_if_running=False)
 
     def _on_login_success(self) -> None:
         self.set_busy(False)

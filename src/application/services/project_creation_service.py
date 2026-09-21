@@ -4,21 +4,24 @@
 # Architectural role: Application service / project creation saga
 # =========================================================================================
 
-"""Project creation saga.
+"""Resumable project creation saga.
 
-Orchestrates: Kitsu project -> physical folder tree -> template copy ->
-project_init.json blueprint -> VCS repository + initial commit.
+Orchestrates: server pre-flight -> Kitsu project -> physical folder tree ->
+``project_init.json`` blueprint -> VCS repository + initial commit.
+
+Every step is recorded in a :class:`CreationContext` so a failed step can be
+retried without re-running the steps that already succeeded, and so the created
+data can be rolled back on demand.
 """
 
-from src.domain.workspace import blueprint
-from utils import _
-
-import json
 import shutil
 from pathlib import Path
 
+from utils import _
+
 from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.infrastructure.kitsu_manager import KitsuManager
+from src.infrastructure.nas_manager import NasManager
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
 from src.domain.shared_kernel.addon_contract import (
@@ -26,27 +29,29 @@ from src.domain.shared_kernel.addon_contract import (
     parse_addon_configuration,
 )
 from src.domain.workspace.blueprint import ProjectBlueprint
+from src.application.services.creation_saga import (
+    CreationContext,
+    CreationOutcome,
+    CreationStep,
+    StageError,
+)
 from src.application.services.workspace_operations import (
     WorkspaceScaffolder,
     BlueprintGenerator,
     VCSProvisioner,
-    EnvironmentPatcher
+    EnvironmentPatcher,
 )
 
 
 class ProjectCreationService:
-    def __init__(self, config_factory) -> None:
+    def __init__(self, config_factory, kitsu_manager=None, nas_manager=None) -> None:
         self.config_factory = config_factory
-        #self.vault_templates_dir = config_factory.get_vault_path() / "project_templates"
+        self._kitsu = kitsu_manager or KitsuManager()
+        self._nas = nas_manager or NasManager(config_factory=config_factory)
 
-    # @property
-    # def base_dir(self) -> Path:
-    #     return self.config_factory.get_workspace_root()
-    #
-    # @property
-    # def vault_templates_dir(self) -> Path:
-    #     return self.config_factory.get_vault_path() / "project_templates"
-    #
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
     def create_project(
         self,
         project_name: str,
@@ -59,193 +64,330 @@ class ProjectCreationService:
         topography=None,
         vcs_enabled: bool = True,
         addon_configuration: dict | None = None,
-    ) -> tuple[bool, str]:
+    ) -> CreationOutcome:
 
         if not project_name.strip():
-            return False, _("Project name cannot be empty.")
+            return self._validation_failure(_("Project name cannot be empty."))
         if not blender_version.strip():
-            return False, _("You must specify a Blender version.")
+            return self._validation_failure(_("You must specify a Blender version."))
 
-        folder_name = project_name.strip().lower().replace(" ", "-")
+        folder_name = self._folder_name(project_name)
         project_path = self.config_factory.get_workspace_root() / folder_name
 
         if project_path.exists():
-            return False, _(f"Folder '{folder_name}' already exists on the NAS.")
+            return CreationOutcome(
+                success=False,
+                message=_(f"Folder '{folder_name}' already exists on the NAS."),
+                failed_step="folder_exists",
+                can_retry=False,
+                can_rollback=False,
+            )
 
-        kitsu = KitsuManager()
+        context = self._build_context(
+            project_name=project_name.strip(),
+            folder_name=folder_name,
+            project_path=project_path,
+            blender_version=blender_version,
+            dependencies=dependencies,
+            kitsu_template=kitsu_template,
+            splash_image_path=splash_image_path,
+            vcs_user=vcs_user,
+            vcs_pwd=vcs_pwd,
+            topography=topography,
+            vcs_enabled=vcs_enabled,
+            addon_configuration=addon_configuration,
+        )
+        return self._run(context)
 
-        success, kitsu_msg, kitsu_project = kitsu.create_project_from_template(
-            project_name.strip(), kitsu_template
+    def retry(self, context: CreationContext) -> CreationOutcome:
+        """Resume a failed creation, skipping the steps already completed."""
+        if context is None:
+            return CreationOutcome(
+                success=False,
+                message=_("Nothing to retry."),
+                can_retry=False,
+                can_rollback=False,
+            )
+        return self._run(context)
+
+    def rollback(self, context: CreationContext) -> tuple[bool, str]:
+        """Best-effort deletion of everything created for a failed project."""
+        if context is None:
+            return False, _("Nothing to delete.")
+
+        reports: list[str] = []
+        ok = True
+
+        if context.kitsu_project_id:
+            deleted, message = self._kitsu.delete_project(context.kitsu_project_id)
+            ok = ok and deleted
+            reports.append(message)
+
+        if context.vcs_enabled:
+            try:
+                deleted, message = VCSRouter.destroy_repository(
+                    self.config_factory.get_vcs_adapter_type(),
+                    self.config_factory.get_vcs_repository_url(),
+                    context.folder_name,
+                    context.blueprint.topography.vfs_svn,
+                )
+                ok = ok and deleted
+                reports.append(message)
+            except Exception as error:  # noqa: BLE001
+                ok = False
+                reports.append(_(f"Failed to delete the VCS repository: {error}"))
+
+        if context.project_path and context.project_path.exists():
+            if self._nas.delete_project_folder(context.project_path):
+                reports.append(_("NAS workspace folder deleted."))
+            else:
+                ok = False
+                reports.append(_("Failed to delete the NAS workspace folder."))
+
+        return ok, " ".join(reports) if reports else _("Nothing to delete.")
+
+    # ------------------------------------------------------------------
+    # Saga execution
+    # ------------------------------------------------------------------
+    def _run(self, context: CreationContext) -> CreationOutcome:
+        steps = [
+            (CreationStep.PREFLIGHT_KITSU, self._preflight_kitsu),
+            (CreationStep.PREFLIGHT_VCS, self._preflight_vcs),
+            (CreationStep.KITSU, self._step_kitsu),
+            (CreationStep.SCAFFOLD, self._step_scaffold),
+            (CreationStep.MANIFESTS, self._step_manifests),
+            (CreationStep.SPLASH, self._step_splash),
+            (CreationStep.VFS_PATCH, self._step_vfs_patch),
+            (CreationStep.VCS, self._step_vcs),
+        ]
+
+        current = CreationStep.PREFLIGHT_KITSU
+        try:
+            for step, run_step in steps:
+                current = step
+                run_step(context)
+
+            return CreationOutcome(
+                success=True,
+                message=_(f"Project '{context.folder_name}' successfully generated."),
+                context=context,
+            )
+        except StageError as error:
+            return self._failure_outcome(error.step, error.message, context)
+        except Exception as error:  # noqa: BLE001
+            import traceback
+
+            print(_(f"\n[ProjectCreationService] CRASH FATAL:\n{traceback.format_exc()}\n"))
+            return self._failure_outcome(current, str(error), context)
+
+    def _preflight_kitsu(self, context: CreationContext) -> None:
+        if context.is_done(CreationStep.PREFLIGHT_KITSU):
+            return
+        online, message = self._kitsu.check_health()
+        if not online:
+            raise StageError(CreationStep.PREFLIGHT_KITSU, message)
+        context.mark_done(CreationStep.PREFLIGHT_KITSU)
+
+    def _preflight_vcs(self, context: CreationContext) -> None:
+        if not context.vcs_enabled or context.is_done(CreationStep.PREFLIGHT_VCS):
+            return
+
+        base_repo_url = self.config_factory.get_vcs_repository_url()
+        if not base_repo_url:
+            raise StageError(
+                CreationStep.PREFLIGHT_VCS,
+                _("VCS repository URL is not configured."),
+            )
+        online, message = VCSRouter.probe_health(
+            self.config_factory.get_vcs_adapter_type(),
+            base_repo_url,
+            context.vcs_user,
+            context.vcs_pwd,
+        )
+        if not online:
+            raise StageError(CreationStep.PREFLIGHT_VCS, message)
+        context.mark_done(CreationStep.PREFLIGHT_VCS)
+
+    def _step_kitsu(self, context: CreationContext) -> None:
+        if context.is_done(CreationStep.KITSU):
+            return
+
+        success, kitsu_msg, kitsu_project = self._kitsu.create_project_from_template(
+            context.project_name, context.blueprint.template
         )
         if not success:
-            return False, _(f"Aborted by Kitsu: {kitsu_msg}")
-
-        project_id = kitsu_project.get("id", "")
-        # Debugging prints
-        print( _(f"[ProjectCreationService] Kitsu project created. ID: {project_id}") )
-
-
-        try:
-            if addon_configuration is None:
-                parsed_addon_config = default_addon_configuration(dependencies)
+            existing = self._kitsu.get_project_by_name(context.project_name)
+            if existing:
+                print(f"[ProjectCreationService] Reusing existing Kitsu project '{context.project_name}'.")
+                kitsu_project = existing
             else:
-                parsed_addon_config = parse_addon_configuration(addon_configuration)
+                raise StageError(CreationStep.KITSU, _(f"Aborted by Kitsu: {kitsu_msg}"))
 
-            blueprint = ProjectBlueprint(
-                project_name=project_name.strip(),
-                kitsu_project_id=kitsu_project.get("id", ""),
-                blender_version=blender_version.strip(),
-                template=kitsu_template,
-                dependencies=dependencies,
-                addon_configuration=parsed_addon_config,
-                topography=topography or self.config_factory.get_topography(),
-                vcs_enabled=vcs_enabled
+        context.kitsu_project_id = kitsu_project.get("id", "")
+        context.blueprint.kitsu_project_id = context.kitsu_project_id
+        print(f"[ProjectCreationService] Kitsu project ready. ID: {context.kitsu_project_id}")
+        context.mark_done(CreationStep.KITSU)
+
+    def _step_scaffold(self, context: CreationContext) -> None:
+        if context.is_done(CreationStep.SCAFFOLD):
+            return
+        if not WorkspaceScaffolder.build_directories(context.project_path, context.blueprint):
+            raise StageError(CreationStep.SCAFFOLD, _("Failed to create the workspace folder tree."))
+        context.mark_done(CreationStep.SCAFFOLD)
+
+    def _step_manifests(self, context: CreationContext) -> None:
+        if context.is_done(CreationStep.MANIFESTS):
+            return
+        if not BlueprintGenerator.write_manifests(context.project_path, context.blueprint):
+            raise StageError(CreationStep.MANIFESTS, _("Failed to write project_init.json."))
+        context.mark_done(CreationStep.MANIFESTS)
+
+    def _step_splash(self, context: CreationContext) -> None:
+        if context.is_done(CreationStep.SPLASH):
+            return
+        splash_path = context.splash_image_path
+        if splash_path and Path(splash_path).exists():
+            shutil.copy(
+                splash_path,
+                context.project_path / context.blueprint.topography.vfs_pipeline / "splash.png",
             )
+            self._kitsu.upload_project_splash(context.kitsu_project_id, splash_path)
+        context.mark_done(CreationStep.SPLASH)
 
-            WorkspaceScaffolder.build_directories(project_path, blueprint)
-            BlueprintGenerator.write_manifests(project_path, blueprint)
+    def _step_vfs_patch(self, context: CreationContext) -> None:
+        if context.is_done(CreationStep.VFS_PATCH):
+            return
+        patch_template = (
+            Path(__file__).resolve().parent.parent.parent
+            / "infrastructure"
+            / "templates"
+            / "vfs_patch.py.template"
+        )
+        if not EnvironmentPatcher.apply_vfs_patch(context.project_path, context.blueprint, patch_template):
+            raise StageError(CreationStep.VFS_PATCH, _("Failed to apply the VFS patch."))
+        context.mark_done(CreationStep.VFS_PATCH)
 
-            if splash_image_path and Path(splash_image_path).exists():
-                shutil.copy( splash_image_path, project_path / blueprint.topography.vfs_pipeline / "splash.png")
-                kitsu.upload_project_splash(blueprint.kitsu_project_id, splash_image_path)
+    def _step_vcs(self, context: CreationContext) -> None:
+        if context.is_done(CreationStep.VCS):
+            return
 
-            patch_template = Path(__file__).resolve().parent.parent.parent / "infrastructure" / "templates" / "vfs_patch.py.template"
-            EnvironmentPatcher.apply_vfs_patch(project_path, blueprint, patch_template)
+        if not context.vcs_enabled:
+            context.mark_done(CreationStep.VCS)
+            return
 
-            base_repo_url = self.config_factory.get_vcs_repository_url()
-            if "localhost" in base_repo_url and not vcs_user:
-                vcs_user, vcs_pwd = DEV_SVN_USER, DEV_SVN_PASSWORD
+        base_repo_url = self.config_factory.get_vcs_repository_url()
+        if "localhost" in base_repo_url and not context.vcs_user:
+            context.vcs_user, context.vcs_pwd = DEV_SVN_USER, DEV_SVN_PASSWORD
 
-            vcs_router = VCSRouter(
-                vcs_type=self.config_factory.get_vcs_adapter_type(),
-                repo_url=f"{base_repo_url}/{folder_name}/{blueprint.topography.vfs_svn}",
-                workspace_dir=project_path / blueprint.topography.vfs_svn
-            )
+        online, message = VCSRouter.probe_health(
+            self.config_factory.get_vcs_adapter_type(),
+            base_repo_url,
+            context.vcs_user,
+            context.vcs_pwd,
+        )
+        if not online:
+            raise StageError(CreationStep.VCS, message)
 
-            provisioner = VCSProvisioner(vcs_router, is_enabled=vcs_enabled)
-            ignore_rules = [blueprint.topography.vfs_local, blueprint.topography.vfs_shared,
-                            blueprint.topography.vfs_pipeline, "*.blend1", "*.blend2"] # ignore_rules must be defined at initial config, not hardcoded
+        router = self._build_router(context)
+        provisioner = VCSProvisioner(router, is_enabled=context.vcs_enabled)
+        success, message = provisioner.initialize_and_commit(
+            context.folder_name,
+            context.blueprint.topography.vfs_svn,
+            context.vcs_user,
+            context.vcs_pwd,
+            context.ignore_rules,
+        )
+        if not success:
+            raise StageError(CreationStep.VCS, message)
 
-            provisioner.initialize_and_commit(project_name, blueprint.topography.vfs_svn, vcs_user, vcs_pwd, ignore_rules)
+        context.mark_done(CreationStep.VCS)
 
-            return True, _(f"Project '{folder_name}' successfully generated.")
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def _build_context(
+        self,
+        project_name: str,
+        folder_name: str,
+        project_path: Path,
+        blender_version: str,
+        dependencies: dict,
+        kitsu_template: str,
+        splash_image_path: str,
+        vcs_user: str,
+        vcs_pwd: str,
+        topography,
+        vcs_enabled: bool,
+        addon_configuration: dict | None,
+    ) -> CreationContext:
+        if addon_configuration is None:
+            parsed_addon_config = default_addon_configuration(dependencies)
+        else:
+            parsed_addon_config = parse_addon_configuration(addon_configuration)
 
-        except Exception as error:
-            import traceback
-            print(_(f"\n[ProjectCreationService] CRASH FATAL:\n{traceback.format_exc()}\n"))
-            return False, _(f"System error creating directory tree: {str(error)}")
+        blueprint = ProjectBlueprint(
+            project_name=project_name,
+            kitsu_project_id="",
+            blender_version=blender_version.strip(),
+            template=kitsu_template,
+            dependencies=dependencies,
+            addon_configuration=parsed_addon_config,
+            topography=topography or self.config_factory.get_topography(),
+            vcs_enabled=vcs_enabled,
+        )
 
-        # try:
-        #     vfs_svn = self.config_factory.get_vfs_svn_name()
-        #     vfs_shared = self.config_factory.get_vfs_shared_name()
-        #     vfs_local = self.config_factory.get_vfs_local_name()
-        #     vfs_pipe = self.config_factory.get_vfs_pipeline_name()
-        #     custom_dirs = self.config_factory.get_custom_dirs()
-        #
-        #     base_folders = [
-        #         vfs_local,
-        #         vfs_shared,
-        #         vfs_pipe,
-        #         f"{vfs_svn}/pro",
-        #         f"{vfs_svn}/tools",
-        #         f"{vfs_svn}/pro/assets",
-        #         f"{vfs_svn}/pro/shots",
-        #         f"{vfs_svn}/pro/edit",
-        #         f"{vfs_svn}/pro/strips",
-        #     ] + custom_dirs
-        #
-        #     for folder in base_folders:
-        #         (project_path / folder).mkdir(parents=True, exist_ok=True)
-        #
-        #     template_path = self.vault_templates_dir / project_template
-        #     if template_path.exists() and template_path.is_dir():
-        #         for item in template_path.iterdir():
-        #             if item.is_file():
-        #                 shutil.copy2(item, project_path / vfs_svn)
-        #             elif item.is_dir():
-        #                 shutil.copytree(item, project_path / vfs_svn / item.name, dirs_exist_ok=True)
-        #
-        #     payload_data = {
-        #         "project_name": project_name.strip(),
-        #         "kitsu_project_id": project_id,
-        #         "blender_version": blender_version.strip(),
-        #         "kitsu_template": kitsu_template.strip(),
-        #         "dependencies": dependencies,
-        #         "topography_signature": {
-        #             "vfs_svn": vfs_svn,
-        #             "vfs_shared": vfs_shared,
-        #             "vfs_local": vfs_local,
-        #             "vfs_pipeline": vfs_pipe,
-        #         },
-        #     }
-        #
-        #     payload_file_svn = project_path / vfs_svn / "project_init.json"
-        #     with open(payload_file_svn, "w", encoding="utf-8") as handle:
-        #         json.dump(payload_data, handle, indent=4)
-        #     shutil.copy2(payload_file_svn, project_path / vfs_pipe / "project_init.json")
-        #
-        #     if splash_image_path:
-        #         splash_source = Path(splash_image_path)
-        #         if splash_source.exists() and splash_source.is_file():
-        #             shutil.copy(splash_source, project_path / vfs_pipe / "splash.png")
-        #             kitsu.upload_project_splash(project_id, splash_image_path)
-        #
-        #     base_repo_url = self.config_factory.get_vcs_repository_url()
-        #
-        #     try:
-        #         vcs_type = self.config_factory.get_vcs_adapter_type()
-        #         final_repo_url = f"{base_repo_url}/{folder_name}/{vfs_svn}"
-        #
-        #         vcs_root = project_path / vfs_svn
-        #         router = VCSRouter(vcs_type=vcs_type, repo_url=final_repo_url, workspace_dir=vcs_root)
-        #         adapter = router.get_adapter()
-        #
-        #         if "localhost" in base_repo_url and not vcs_user:
-        #             vcs_user, vcs_pwd = DEV_SVN_USER, DEV_SVN_PASSWORD
-        #
-        #         adapter.create_server_repository(project_name, vfs_svn)
-        #
-        #         if vcs_user and vcs_pwd:
-        #             adapter.full_pull(username=vcs_user, password=vcs_pwd)
-        #             print("[ProjectCreationService] Repositorio VCS emparejado.")
-        #
-        #             ignore_patterns = [vfs_local, vfs_shared, vfs_pipe, "*.blend1", "*.blend2", "quit.blend"] # The patterns should be configurable
-        #             adapter.setup_ignore(ignore_patterns)
-        #
-        #             startup_dir = project_path / vfs_local / "blender_data" / "scripts" / "startup"
-        #             startup_dir.mkdir(parents=True, exist_ok=True)
-        #             patch_file = startup_dir / "00_openstudio_vfs_patch.py"
-        #
-        #             template_patch_path = (
-        #                 Path(__file__).resolve().parent.parent.parent
-        #                 / "infrastructure"
-        #                 / "templates"
-        #                 / "vfs_patch.py.template"
-        #             )
-        #             if template_patch_path.exists():
-        #                 with open(template_patch_path, "r", encoding="utf-8") as t_file:
-        #                     patch_content = t_file.read()
-        #                 patch_content = patch_content.replace("{VFS_SVN_PLACEHOLDER}", vfs_svn)
-        #                 with open(patch_file, "w", encoding="utf-8") as handle:
-        #                     handle.write(patch_content)
-        #                 print("[ProjectCreationService] VFS Patch applied.")
-        #
-        #             adapter.add_all(".")
-        #             adapter.commit(
-        #                 message="Initial commit: Hub Project Blueprint established.",
-        #                 paths=["."],
-        #                 username=vcs_user,
-        #                 password=vcs_pwd,
-        #             )
-        #         else:
-        #             print("[ProjectCreationService] No VCS credentials provided. Skipping initial commit.")
-        #     except Exception as error:  # noqa: BLE001
-        #         print(f"[ProjectCreationService] Warning: Initial VCS commit failed: {error}")
-        #
-        #     return True, f"Project '{folder_name}' successfully generated."
-        #
-        # except Exception as error:  # noqa: BLE001
-        #     import traceback
-        #
-        #     print(f"\n[ProjectCreationService] CRASH FATAL:\n{traceback.format_exc()}\n")
-        #     return False, f"System error creating directory tree: {str(error)}"
+        ignore_rules = [
+            blueprint.topography.vfs_local,
+            blueprint.topography.vfs_shared,
+            blueprint.topography.vfs_pipeline,
+            "*.blend1",
+            "*.blend2",
+        ]
+
+        context = CreationContext(
+            project_name=project_name,
+            folder_name=folder_name,
+            project_path=project_path,
+            blueprint=blueprint,
+            vcs_user=vcs_user,
+            vcs_pwd=vcs_pwd,
+            vcs_enabled=vcs_enabled,
+            splash_image_path=splash_image_path,
+            ignore_rules=ignore_rules,
+        )
+        return context
+
+    def _build_router(self, context: CreationContext) -> VCSRouter:
+        base_repo_url = self.config_factory.get_vcs_repository_url()
+        return VCSRouter(
+            vcs_type=self.config_factory.get_vcs_adapter_type(),
+            repo_url=f"{base_repo_url}/{context.folder_name}/{context.blueprint.topography.vfs_svn}",
+            workspace_dir=context.project_path / context.blueprint.topography.vfs_svn,
+        )
+
+    def _failure_outcome(self, step: CreationStep, message: str, context: CreationContext) -> CreationOutcome:
+        has_side_effects = context.has_side_effects
+        return CreationOutcome(
+            success=False,
+            message=message,
+            failed_step=step.value,
+            has_side_effects=has_side_effects,
+            can_retry=True,
+            can_rollback=has_side_effects
+            and (bool(context.kitsu_project_id) or context.project_path.exists()),
+            context=context,
+        )
+
+    @staticmethod
+    def _validation_failure(message: str) -> CreationOutcome:
+        return CreationOutcome(
+            success=False,
+            message=message,
+            failed_step="validation",
+            can_retry=False,
+            can_rollback=False,
+        )
+
+    @staticmethod
+    def _folder_name(project_name: str) -> str:
+        return project_name.strip().lower().replace(" ", "-")

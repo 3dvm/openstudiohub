@@ -9,7 +9,9 @@
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.infrastructure.dev_defaults import (
     DEV_KITSU_ADMIN_EMAIL,
@@ -17,7 +19,7 @@ from src.infrastructure.dev_defaults import (
 )
 
 
-class DockerWorker(QThread):
+class DockerWorker(ManagedWorker):
     """Runs Docker commands without freezing the UI while images download."""
 
     finished_signal = Signal(bool, str)
@@ -44,7 +46,7 @@ class DockerWorker(QThread):
             self.finished_signal.emit(False, f"System error: {str(error)}")
 
 
-class KitsuSeederWorker(QThread):
+class KitsuSeederWorker(ManagedWorker):
     """Interacts with the Kitsu database through Gazu and the CLI."""
 
     finished_signal = Signal(bool, str)

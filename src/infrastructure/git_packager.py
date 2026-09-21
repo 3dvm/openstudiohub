@@ -11,13 +11,15 @@ import tempfile
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.infrastructure.manifest_manager import ManifestManager
 from src.domain.addon_parser import AddonParser
 from src.application.services.provisioning_service import ProvisioningService
 
-class StudioToolsPackagerWorker(QThread):
+class StudioToolsPackagerWorker(ManagedWorker):
     """Clones the repo (resolving Git LFS), repacks internal addons individually, and registers valid ones."""
     progress_updated = Signal(int)
     status_update = Signal(str, str)

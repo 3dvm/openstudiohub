@@ -43,6 +43,7 @@ from src.domain.workspace.entities import (
 )
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 from src.interfaces.qt.workers.new_project_workers import FetchKitsuTemplatesWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 from src.interfaces.qt.widgets.addon_config_panel import AddonConfigPanel
 
 
@@ -77,7 +78,7 @@ class RepairProjectDialog(QDialog):
         self.tool_checkboxes = {}
         self.addon_config_panels = {}
         self.template_group = None
-        self._templates_worker = None
+        self.workers = WorkerManager(self)
         self._repair_connected = False
 
         self.setObjectName("ViewLoginBase")
@@ -186,16 +187,9 @@ class RepairProjectDialog(QDialog):
     # Template / dependencies loaders
     # ------------------------------------------------------------------
     def _load_kitsu_templates(self) -> None:
-        self._templates_worker = FetchKitsuTemplatesWorker(self.production_service)
-        self._templates_worker.data_ready.connect(self._on_templates_loaded)
-        self._templates_worker.finished.connect(self._on_templates_worker_finished)
-        self._templates_worker.start()
-
-    def _on_templates_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._templates_worker = None
+        worker = FetchKitsuTemplatesWorker(self.production_service)
+        worker.data_ready.connect(self._on_templates_loaded)
+        self.workers.start("templates", worker)
 
     def _on_templates_loaded(self, templates: list) -> None:
         self.combo_kitsu_template.clear()
@@ -398,11 +392,15 @@ class RepairProjectDialog(QDialog):
 
     def try_safe_delete(self) -> None:
         """Delete the dialog without destroying a still-running worker thread."""
-        worker = self._templates_worker
-        if worker is not None and worker.isRunning():
-            worker.finished.connect(self.deleteLater)
-        else:
+        workers = self.workers.active()
+        if not workers:
             self.deleteLater()
+            return
+        for worker in workers:
+            try:
+                worker.finished.connect(self.deleteLater)
+            except RuntimeError:
+                continue
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._disconnect_repair_signal()

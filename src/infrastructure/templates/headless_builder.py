@@ -18,27 +18,58 @@ autogenerados y se invoca a través de ``addon_runtime``. Este script solo
 conserva la orquestación de construcción (forjado) de archivos.
 """
 
+import os
 import sys
 from pathlib import Path
 
 import bpy
 
 # =================================================================
-# 0. BOOTSTRAP: Hacer importables el paquete 'src' del Hub y el
-#    addon_runtime desplegado en el sandbox.
+# 0. BOOTSTRAP: Hacer importables el paquete 'src' del Hub y los
+#    módulos de soporte desplegados en el sandbox (env_contract.py,
+#    addon_runtime.py), que viven junto a bootstrap.py en vfs_local/.
 # =================================================================
 _HUB_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_HUB_ROOT) not in sys.path:
     sys.path.insert(0, str(_HUB_ROOT))
 
 _TEMPLATES_DIR = Path(__file__).resolve().parent
+
+
+def _resolve_support_dir():
+    """Locate the deployed DCC support modules (mirrors bootstrap.py)."""
+    scripts = os.environ.get("BLENDER_USER_SCRIPTS")
+    if scripts:
+        candidate = Path(scripts).resolve().parents[1]  # <vfs_local>
+        if (candidate / "env_contract.py").exists():
+            return candidate
+
+    resources = os.environ.get("BLENDER_USER_RESOURCES")
+    if resources:
+        candidate = Path(resources).resolve().parent  # <vfs_local>
+        if (candidate / "env_contract.py").exists():
+            return candidate
+
+    return None
+
+
+_SUPPORT_DIR = _resolve_support_dir()
+
+# The templates dir is only a development fallback; the sandbox support dir
+# must win so the deployed env_contract/addon_runtime are imported.
 if str(_TEMPLATES_DIR) not in sys.path:
     sys.path.insert(0, str(_TEMPLATES_DIR))
+if _SUPPORT_DIR is not None and str(_SUPPORT_DIR) in sys.path:
+    sys.path.remove(str(_SUPPORT_DIR))
+if _SUPPORT_DIR is not None:
+    sys.path.insert(0, str(_SUPPORT_DIR))
 
 import addon_runtime
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
 
 _ENV = SandboxEnvironment.from_os_environ()
+
+_CONFIG_DIR = Path(_ENV.blender_user_scripts) / "openstudio" if _ENV.blender_user_scripts else None
 
 
 # =================================================================
@@ -148,6 +179,10 @@ def _guardar_entidad_forjada(filepath_str: str, debug_label: str = "ENTIDAD"):
     out_path = Path(filepath_str)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
+
+    if not out_path.exists():
+        raise RuntimeError(f"save_mainfile did not write '{out_path}'")
+
     print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO DE {debug_label} EXITOSO EN: {out_path}")
     return out_path
 
@@ -155,7 +190,7 @@ def _guardar_entidad_forjada(filepath_str: str, debug_label: str = "ENTIDAD"):
 # =======================================================
 # CONSTRUCTORES ESPECÍFICOS (Estrategias)
 # =======================================================
-def forjar_storyboard():
+def forge_storyboard():
     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Storyboard...")
     inyectar_parche_proteccion_memoria()
     _reapply_addon_context()
@@ -182,47 +217,94 @@ def forjar_storyboard():
         bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
 
         print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO FORZADO EXITOSO EN: {out_path}")
+        return True
 
     except Exception as error:  # noqa: BLE001
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo de Storyboard: {error}")
+        return False
 
 
-def forjar_edit_master():
+def forge_edit_master() -> bool:
     print("[HeadlessBuilder] Iniciando forjado del Archivo Maestro de Edición...")
-    inyectar_parche_proteccion_memoria()
 
     kitsu_module = _kitsu_module()
     if not kitsu_module:
-        return
+        print(
+            "[HeadlessBuilder] ❌ Edit abortado: el addon 'blender_kitsu' no está disponible. "
+            "Revisa los mensajes de addon_runtime/registro más arriba (support dir, cfg scripts)."
+        )
+        return False
+
+    inyectar_parche_proteccion_memoria()
     _reapply_addon_context()
 
     # 1. DISPARAR LA CREACIÓN DEL EDIT
     try:
+        project = kitsu_module.cache.project_active_get()
+        project_name = getattr(project, "name", "")
+        project_id = getattr(project, "id", "")
+        print(f"[HeadlessBuilder] Proyecto activo Kitsu: {project_name!r} (id={project_id!r})")
+        if not project_id:
+            print(
+                "[HeadlessBuilder] ❌ Edit abortado: no hay proyecto activo en Kitsu. "
+                "La sesión del addon no se autenticó (revisa credenciales/host)."
+            )
+            return False
+
         print("[HeadlessBuilder] 🎬 Ejecutando kitsu.create_edit_file()...")
-        bpy.ops.kitsu.create_edit_file(create_kitsu_edit=True, save_file=False)
+        result = bpy.ops.kitsu.create_edit_file(create_kitsu_edit=True, save_file=False)
+        print(f"[HeadlessBuilder] create_edit_file result: {result}")
+        if "CANCELLED" in result:
+            print("[HeadlessBuilder] ❌ create_edit_file fue cancelado por el addon.")
+            return False
         print("[HeadlessBuilder] ✓ Archivo Maestro de Edición configurado en memoria por Kitsu.")
 
         # 2. EXTRACCIÓN DE LA RUTA Y GUARDADO FÍSICO
         edit_entity = kitsu_module.cache.edit_default_get(episode_id=bpy.context.scene.kitsu.episode_active_id)
+        if not edit_entity or not getattr(edit_entity, "id", ""):
+            print("[HeadlessBuilder] ❌ No se pudo resolver la entidad Edit de Kitsu.")
+            return False
+
         filepath_str = edit_entity.get_filepath(bpy.context)
 
-        _guardar_entidad_forjada(filepath_str, "EDIT MASTER")
+        # The add-on derives the master name from the Kitsu project name (which
+        # may be mixed case). The Hub standard is lower-case file names, so
+        # normalize the file name before saving. Rename any previously created
+        # mixed-case master so there is a single canonical file.
+        original_path = Path(filepath_str)
+        out_path = original_path.with_name(original_path.name.lower())
+        if out_path != original_path and original_path.exists() and not out_path.exists():
+            try:
+                original_path.rename(out_path)
+            except OSError as rename_error:
+                print(f"[HeadlessBuilder] ⚠️ No se pudo renombrar el Edit a minúsculas: {rename_error}")
+        print(f"[HeadlessBuilder] Ruta de guardado Edit (normalizada): {out_path}")
 
-    except Exception as error:  # noqa: BLE001
+        out_path = _guardar_entidad_forjada(str(out_path), "EDIT MASTER")
+        if not out_path.exists():
+            print(f"[HeadlessBuilder] ❌ El archivo Edit no existe tras guardar: {out_path}")
+            return False
+
+        print(f"[HeadlessBuilder] ✓ EDIT MASTER creado en: {out_path}")
+        return True
+
+    except Exception as error:
         import traceback
 
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el archivo Edit: {error}")
         traceback.print_exc()
+        return False
 
 
-def forjar_shot():
+def forge_shot():
     print("[HeadlessBuilder] Iniciando forjado de Shot (Toma)...")
     inyectar_parche_proteccion_memoria()
 
     try:
         kitsu_module = _kitsu_module()
         if not kitsu_module:
-            return
+            print("[HeadlessBuilder] ❌ Shot abortado: el addon 'blender_kitsu' no está disponible.")
+            return False
         _reapply_addon_context()
 
         # 1. EXTRAER NOMBRES DESDE LAS VARIABLES DE ENTORNO
@@ -285,21 +367,25 @@ def forjar_shot():
             print(f"[HeadlessBuilder] ❌ Error actualizando la Tarea en Kitsu: {api_e}")
         # ==========================================================
 
+        return True
+
     except Exception as error:  # noqa: BLE001
         import traceback
 
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Shot: {error}")
         traceback.print_exc()
+        return False
 
 
-def forjar_asset():
+def forge_asset():
     print("[HeadlessBuilder] Iniciando forjado de Asset (Recurso)...")
     inyectar_parche_proteccion_memoria()
 
     try:
         kitsu_module = _kitsu_module()
         if not kitsu_module:
-            return
+            print("[HeadlessBuilder] ❌ Asset abortado: el addon 'blender_kitsu' no está disponible.")
+            return False
         _reapply_addon_context()
 
         # 1. RECUPERAR IDs DEL ENTORNO
@@ -383,11 +469,14 @@ def forjar_asset():
             except Exception as api_error:  # noqa: BLE001
                 print(f"[HeadlessBuilder] ❌ Error mapeando la tarea del Asset: {api_error}")
 
+        return True
+
     except Exception as error:  # noqa: BLE001
         import traceback
 
         print(f"[HeadlessBuilder] ❌ Fallo crítico al crear el Asset: {error}")
         traceback.print_exc()
+        return False
 
 
 # =======================================================
@@ -397,28 +486,39 @@ def main():
     print("\n" + "=" * 50)
     print("[OPENSTUDIO HUB] Iniciando Constructor Headless...")
 
+    # --- Diagnostics: make the addon-resolution path visible. ---
+    print(f"[HeadlessBuilder] Support dir: {_SUPPORT_DIR}")
+    print(f"[HeadlessBuilder] Config dir: {_CONFIG_DIR}")
+    if _CONFIG_DIR is not None and _CONFIG_DIR.exists():
+        cfg_scripts = sorted(p.name for p in _CONFIG_DIR.glob("cfg_*.py"))
+        print(f"[HeadlessBuilder] cfg scripts: {cfg_scripts}")
+
     # Delegar la configuración de add-ons a los scripts autogenerados.
-    registered = addon_runtime.register_all()
-    if registered:
-        print(f"[HeadlessBuilder] Add-ons configurados: {', '.join(registered)}")
+    registered = addon_runtime.register_all(_CONFIG_DIR)
+    print(f"[HeadlessBuilder] Add-ons configurados: {registered}")
 
     build_target = (_ENV.build_target or "STORYBOARD").upper()
+    print(f"[HeadlessBuilder] Build target: {build_target}")
 
-    if build_target == "STORYBOARD":
-        forjar_storyboard()
-    elif build_target == "EDIT":
-        forjar_edit_master()
-    elif build_target == "SHOT":
-        forjar_shot()
-    elif build_target == "ASSET":
-        forjar_asset()
-    else:
+    builders = {
+        "STORYBOARD": forge_storyboard,
+        "EDIT": forge_edit_master,
+        "SHOT": forge_shot,
+        "ASSET": forge_asset,
+    }
+
+    builder = builders.get(build_target)
+    if builder is None:
         print(f"[HeadlessBuilder] ❌ Error: Objetivo de construcción desconocido -> {build_target}")
+        ok = False
+    else:
+        ok = bool(builder())
 
+    print(f"[OPENSTUDIO HUB] RESULT: {'OK' if ok else 'FAILED'}")
     print("[OPENSTUDIO HUB] Constructor Headless Finalizado.")
     print("=" * 50 + "\n")
 
-    sys.exit(0)
+    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":

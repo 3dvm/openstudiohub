@@ -35,6 +35,7 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     vcs_requires_credentials,
 )
 from src.interfaces.qt.workers.project_list_workers import ProjectGridWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class ProjectListViewModel(BaseViewModel):
@@ -77,8 +78,7 @@ class ProjectListViewModel(BaseViewModel):
 
         self.nas_manager = NasManager(self.nas_dir)
         self._projects: List[dict] = []
-        self._worker = None
-        self._install_worker = None
+        self.workers = WorkerManager(self)
         self._refresh_pending = False
 
     # ------------------------------------------------------------------
@@ -97,23 +97,18 @@ class ProjectListViewModel(BaseViewModel):
         return self.auth_service.host
 
     def refresh(self) -> None:
-        if self._worker is not None and self._worker.isRunning():
+        if self.workers.is_running("grid"):
             self._refresh_pending = True
             return
 
         self.report_status("Syncing projects catalog...", "yellow")
         self._projects = []
 
-        self._worker = ProjectGridWorker(self.production_service)
-        self._worker.data_ready.connect(self._on_projects_fetched)
-        self._worker.finished.connect(self._on_grid_worker_finished)
-        self._worker.start()
+        worker = ProjectGridWorker(self.production_service)
+        worker.data_ready.connect(self._on_projects_fetched)
+        self.workers.start("grid", worker, on_finished=self._on_grid_worker_finished)
 
     def _on_grid_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._worker = None
         if self._refresh_pending:
             self._refresh_pending = False
             self.refresh()
@@ -197,7 +192,7 @@ class ProjectListViewModel(BaseViewModel):
         )
 
     def install_project(self, project_dir: Path) -> None:
-        if self._install_worker is not None and self._install_worker.isRunning():
+        if self.workers.is_running("install"):
             self.report_status("Please wait, an installation is already running...", "red")
             return
 
@@ -206,19 +201,12 @@ class ProjectListViewModel(BaseViewModel):
             return
         vcs_user, vcs_pwd = creds
 
-        self._install_worker = self._build_install_worker(project_dir, vcs_user, vcs_pwd)
-        self._install_worker.progress_update.connect(self.report_status)
-        self._install_worker.finished_install.connect(
+        worker = self._build_install_worker(project_dir, vcs_user, vcs_pwd)
+        worker.progress_update.connect(self.report_status)
+        worker.finished_install.connect(
             lambda success, msg, p=project_dir: self._on_install_finished(p, success, msg)
         )
-        self._install_worker.finished.connect(self._on_install_worker_finished)
-        self._install_worker.start()
-
-    def _on_install_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._install_worker = None
+        self.workers.start("install", worker)
 
     def _build_install_worker(self, project_dir: Path, vcs_user: str, vcs_pwd: str):
         from src.interfaces.qt.workers.project_list_workers import ProjectInstallWorker

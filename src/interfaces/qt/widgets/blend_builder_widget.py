@@ -10,10 +10,13 @@ Coordinates the PipelineWizard stepper and the entity table, delegating all
 data access and spawning to ``BlendBuilderViewModel``.
 """
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices
+from pathlib import Path
+
+from PySide6.QtCore import QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFrame,
@@ -49,6 +52,7 @@ class BlendBuilderWidget(QFrame):
         self.edit_action_mode = "SPAWN"
         self.task_checkboxes = {}
         self._table_mode = ""
+        self._pending_project_name = ""
 
         self.setObjectName("TransparentGridContainer")
         self._build_ui()
@@ -214,7 +218,6 @@ class BlendBuilderWidget(QFrame):
         header.setSectionResizeMode(3, QHeaderView.Stretch)
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
 
         ent_layout.addWidget(self.table, stretch=1)
         self.stack.addWidget(self.page_entities)
@@ -268,16 +271,99 @@ class BlendBuilderWidget(QFrame):
         lbl.setObjectName("KPILabel")
         return lbl
 
-    def _create_pill_label(self, text: str, color_hex: str) -> QWidget:
+    def _create_colored_icon(self, icon_path: Path, color_hex: str) -> QIcon:
+        """Tint a monochromatic SVG icon at runtime (folder marker)."""
+        if not icon_path.exists():
+            return QIcon()
+        try:
+            with open(icon_path, "r", encoding="utf-8") as handle:
+                svg_content = handle.read()
+            svg_content = svg_content.replace("currentColor", color_hex)
+            svg_content = svg_content.replace("#000000", color_hex)
+            pixmap = QPixmap()
+            pixmap.loadFromData(svg_content.encode("utf-8"), "SVG")
+            return QIcon(pixmap)
+        except Exception:  # noqa: BLE001
+            return QIcon(str(icon_path))
+
+    def _status_dot(self, color_hex: str) -> QLabel:
+        dot = QLabel()
+        dot.setFixedSize(12, 12)
+        dot.setStyleSheet(f"background-color: {color_hex}; border-radius: 6px;")
+        return dot
+
+    def _task_filepath(self, task_info: dict) -> str:
+        """Resolve the linked file path across asset/shot audit shapes."""
+        if not task_info:
+            return ""
+        raw = task_info.get("raw_task") or {}
+        return task_info.get("filepath") or ((raw.get("data") or {}).get("filepath") or "")
+
+    def _build_task_cell(self, entity: dict, task_info: dict | None, task_type_name: str) -> QWidget:
+        """Status dot + folder link button for one entity/task-type intersection."""
         widget = QWidget()
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(5, 2, 5, 2)
-        lbl = QLabel(text)
-        lbl.setAlignment(Qt.AlignCenter)
-        lbl.setObjectName("PillLabel")
-        lbl.setStyleSheet(f"background-color: {color_hex};")
-        layout.addWidget(lbl)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignCenter)
+
+        if not task_info:
+            layout.addWidget(self._status_dot("#4B5563"))
+            return widget
+
+        ready = bool(task_info.get("has_file"))
+        layout.addWidget(self._status_dot("#10B981" if ready else "#F59E0B"))
+
+        btn = QPushButton()
+        btn.setObjectName("TaskLinkButton")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedSize(24, 24)
+        btn.setIconSize(QSize(16, 16))
+        btn.setIcon(self._create_colored_icon(Path("assets/icons/folder.svg"), "#3B82F6"))
+        btn.setToolTip(self._task_filepath(task_info) or self.tr("Link a physical file to this task"))
+        btn.clicked.connect(
+            lambda _=False, e=entity, ti=task_info, tt=task_type_name: self._open_task_file_dialog(e, ti, tt)
+        )
+        layout.addWidget(btn)
         return widget
+
+    def _render_task_checkboxes(self, task_types: list) -> None:
+        """Rebuild the spawn-task selector so it always matches the current step."""
+        while self.layout_checkboxes.count():
+            child = self.layout_checkboxes.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        self.task_checkboxes.clear()
+        for tt_name in task_types:
+            chk = QCheckBox(tt_name)
+            chk.setChecked(True)
+            self.task_checkboxes[tt_name] = chk
+            self.layout_checkboxes.addWidget(chk)
+
+        self.panel_tasks.setVisible(bool(task_types))
+
+    def _prompt_missing_tasks(self, names: list) -> None:
+        """Block batch creation when selected assets have no tasks in Kitsu."""
+        preview = "\n".join(f"• {name}" for name in names[:10])
+        if len(names) > 10:
+            preview += self.tr("\n… and {count} more").format(count=len(names) - 10)
+
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle(self.tr("Missing Tasks"))
+        box.setText(
+            self.tr(
+                "These assets have no tasks in Kitsu. Create their tasks before batch creating files."
+            )
+        )
+        box.setInformativeText(preview)
+        open_btn = box.addButton(self.tr("Open Assets in Kitsu"), QMessageBox.ActionRole)
+        box.addButton(QMessageBox.Cancel)
+        box.exec()
+
+        if box.clickedButton() is open_btn:
+            self._open_kitsu_assets()
 
     def _open_kitsu_assets(self) -> None:
         if not self.vm.current_project_id:
@@ -367,31 +453,64 @@ class BlendBuilderWidget(QFrame):
     # ------------------------------------------------------------------
     # Project loading
     # ------------------------------------------------------------------
+    def refresh_projects(self) -> None:
+        """Reload the Kitsu project catalog so newly created projects appear."""
+        self.vm.load_projects()
+
+    def select_project(self, project_name: str) -> None:
+        """Select a project by name, refreshing the catalog when it is missing."""
+        self._pending_project_name = project_name
+        index = self._find_project_index(project_name)
+        if index >= 0:
+            self._pending_project_name = ""
+            self.combo_projects.setCurrentIndex(index)
+            return
+        self.refresh_projects()
+
+    def _find_project_index(self, project_name: str) -> int:
+        # ``MatchFixedString`` without ``MatchCaseSensitive`` is case-insensitive.
+        index = self.combo_projects.findText(project_name, Qt.MatchFlag.MatchFixedString)
+        if index >= 0:
+            return index
+        target = (project_name or "").strip().lower()
+        for i in range(self.combo_projects.count()):
+            if self.combo_projects.itemText(i).strip().lower() == target:
+                return i
+        return -1
+
     def _on_projects_loaded(self, projects: list) -> None:
+        # Preserve the current selection across a catalog refresh.
+        previous = self._pending_project_name or self.combo_projects.currentText()
+
         self.combo_projects.blockSignals(True)
         self.combo_projects.clear()
         self.project_map.clear()
 
         if not projects:
             self.combo_projects.addItem(self.tr("No open projects found"))
-            self.combo_projects.blockSignals(False)
-            return
+        else:
+            for p in projects:
+                self.project_map[p.get("name", "Unknown")] = p.get("id")
+                self.combo_projects.addItem(p.get("name", "Unknown"))
 
-        for p in projects:
-            self.project_map[p.get("name", "Unknown")] = p.get("id")
-            self.combo_projects.addItem(p.get("name", "Unknown"))
+            if previous:
+                index = self._find_project_index(previous)
+                if index >= 0:
+                    self.combo_projects.setCurrentIndex(index)
 
+        self._pending_project_name = ""
         self.combo_projects.blockSignals(False)
         self._on_project_changed()
 
     def _on_project_changed(self) -> None:
         project_name = self.combo_projects.currentText()
-        if project_name in self.project_map:
-            self.vm.select_project(project_name)
-            self.change_step(1)
-            if self.vm.is_current_project_installed():
-                self.vm.load_shots()
-                self.vm.load_sequences()
+        self.vm.select_project(project_name)
+        if not self.vm.current_project_id:
+            return
+        self.change_step(1)
+        if self.vm.is_current_project_installed():
+            self.vm.load_shots()
+            self.vm.load_sequences()
 
     # ------------------------------------------------------------------
     # Rendering callbacks
@@ -437,6 +556,7 @@ class BlendBuilderWidget(QFrame):
             header.setSectionResizeMode(i, QHeaderView.Stretch)
 
         self.table.setRowCount(len(assets))
+        self._render_task_checkboxes(task_types)
 
         for row, asset in enumerate(assets):
             chk_item = QTableWidgetItem()
@@ -451,76 +571,64 @@ class BlendBuilderWidget(QFrame):
             chk_item.setData(Qt.UserRole, asset)
             self.table.setItem(row, 0, chk_item)
 
-            self.table.setItem(row, 1, QTableWidgetItem(asset["name"]))
+            name_item = QTableWidgetItem(asset["name"])
+            if not (asset.get("tasks") or {}):
+                name_item.setToolTip(self.tr("No Kitsu tasks: create them before batch creating."))
+            self.table.setItem(row, 1, name_item)
             self.table.setItem(row, 2, QTableWidgetItem(asset.get("type", "")))
 
             tasks_data = asset.get("tasks") or {}
             for col_idx, tt_name in enumerate(task_types):
                 table_col = len(base_headers) + col_idx
-                cell = QTableWidgetItem()
-
-                if tt_name in tasks_data:
-                    info = tasks_data[tt_name]
-                    if info.get("has_file"):
-                        cell.setText(self.tr("Ready"))
-                        cell.setForeground(QColor("#10B981"))
-                    else:
-                        cell.setText(self.tr("Pending"))
-                        cell.setForeground(QColor("#F59E0B"))
-                    cell.setData(Qt.UserRole, info)
-                    cell.setToolTip(info.get("filepath", ""))
-                else:
-                    cell.setText("N/A")
-                    cell.setForeground(QColor("#4B5563"))
-
-                self.table.setItem(row, table_col, cell)
+                task_info = tasks_data.get(tt_name)
+                self.table.setCellWidget(
+                    row, table_col, self._build_task_cell(asset, task_info, tt_name)
+                )
 
         self.lbl_kpi_total.setText(self.tr(f"Total Entries: {len(assets)}"))
         self.lbl_kpi_shots.setText(self.tr("Shots: 0"))
         self.lbl_kpi_assets.setText(self.tr(f"Assets: {len(assets)}"))
 
-    def _on_cell_double_clicked(self, row: int, column: int) -> None:
-        if self._table_mode != "assets" or column < 3:
-            return
-
-        task_item = self.table.item(row, column)
-        anchor_item = self.table.item(row, 0)
-        if task_item is None or anchor_item is None:
-            return
-
-        task_info = task_item.data(Qt.UserRole)
-        asset = anchor_item.data(Qt.UserRole)
-        if not task_info or not asset:
-            return
-
-        header_item = self.table.horizontalHeaderItem(column)
-        task_type_name = header_item.text() if header_item is not None else "Task"
-        self._open_task_file_dialog(asset, task_info, task_type_name)
-
-    def _open_task_file_dialog(self, asset: dict, task_info: dict, task_type_name: str) -> None:
+    def _open_task_file_dialog(self, entity: dict, task_info: dict, task_type_name: str) -> None:
         from src.interfaces.qt.views.task_file_link_dialog import TaskFileLinkDialog
 
         raw_task = task_info.get("raw_task") or {}
-        task = Task.from_kitsu_dict(
-            raw_task,
-            entity_type=EntityType.ASSET,
-            entity_name=asset.get("name", ""),
-            asset_type_name=asset.get("type", ""),
-            task_type_name=task_type_name,
-            project_name=self.vm.current_project_name,
-        )
-        suggested_path = task_info.get("filepath") or self.vm.suggest_task_file_path(task)
+        is_shot = self._table_mode == "shots"
+
+        if is_shot:
+            task = Task.from_kitsu_dict(
+                raw_task,
+                entity_type=EntityType.SHOT,
+                entity_name=entity.get("name", ""),
+                sequence_name=entity.get("parent", ""),
+                task_type_name=task_type_name,
+                project_name=self.vm.current_project_name,
+            )
+        else:
+            task = Task.from_kitsu_dict(
+                raw_task,
+                entity_type=EntityType.ASSET,
+                entity_name=entity.get("name", ""),
+                asset_type_name=entity.get("type", ""),
+                task_type_name=task_type_name,
+                project_name=self.vm.current_project_name,
+            )
+
+        suggested_path = self._task_filepath(task_info) or self.vm.suggest_task_file_path(task)
         dialog = TaskFileLinkDialog(
             self,
             viewmodel=self.vm,
             task=task,
             project_root=self.vm.project_root(),
-            entity_label=asset.get("name", "Asset"),
+            entity_label=entity.get("name", "Shot" if is_shot else "Asset"),
             task_type_name=task_type_name,
             suggested_path=suggested_path,
         )
         if dialog.exec() == QDialog.Accepted:
-            self.vm.load_assets()
+            if is_shot:
+                self.vm.load_shots()
+            else:
+                self.vm.load_assets()
 
     def _render_shots(self, shots: list, task_types: list) -> None:
         self._table_mode = "shots"
@@ -541,20 +649,7 @@ class BlendBuilderWidget(QFrame):
         self.table.setRowCount(len(shots))
         shots_count = len(shots)
 
-        self.panel_tasks.show()
-        while self.layout_checkboxes.count():
-            child = self.layout_checkboxes.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        self.task_checkboxes.clear()
-        for tt_name in task_types:
-            from PySide6.QtWidgets import QCheckBox
-
-            chk = QCheckBox(tt_name)
-            chk.setChecked(True)
-            self.task_checkboxes[tt_name] = chk
-            self.layout_checkboxes.addWidget(chk)
+        self._render_task_checkboxes(task_types)
 
         for row, entity in enumerate(shots):
             chk_item = QTableWidgetItem()
@@ -577,15 +672,10 @@ class BlendBuilderWidget(QFrame):
             tasks_data = entity.get("tasks", {})
             for col_idx, tt_name in enumerate(task_types):
                 table_col = len(base_headers) + col_idx
-
-                if tt_name in tasks_data:
-                    task_info = tasks_data[tt_name]
-                    if task_info["has_file"]:
-                        self.table.setCellWidget(row, table_col, self._create_pill_label("✓ Ready", "#10B981"))
-                    else:
-                        self.table.setCellWidget(row, table_col, self._create_pill_label("Pending", "#F59E0B"))
-                else:
-                    self.table.setCellWidget(row, table_col, self._create_pill_label("N/A", "#4B5563"))
+                task_info = tasks_data.get(tt_name)
+                self.table.setCellWidget(
+                    row, table_col, self._build_task_cell(entity, task_info, tt_name)
+                )
 
         self.lbl_kpi_total.setText(self.tr(f"Total Entries: {shots_count}"))
         self.lbl_kpi_shots.setText(self.tr(f"Shots: {shots_count}"))
@@ -733,15 +823,18 @@ class BlendBuilderWidget(QFrame):
             QMessageBox.information(self, self.tr("System Checked"), self.tr("No pending entities selected to spawn."))
             return
 
-        selected_tasks = []
-        if step_id == 4:
-            selected_tasks = [name for name, chk in self.task_checkboxes.items() if chk.isChecked()]
-            if not selected_tasks:
-                QMessageBox.warning(self, self.tr("Missing Tasks"), self.tr("Please select at least one task type to spawn."))
+        if step_id == 3:
+            # Never forge an asset that has no Kitsu tasks: the PM must create
+            # them first (the Hub does not invent pipeline tasks).
+            task_less = [e.get("name", "?") for e in selected_entities if not (e.get("tasks") or {})]
+            if task_less:
+                self._prompt_missing_tasks(task_less)
                 return
-        else:
-            # Assets: the spawner forges every missing task found in the audit.
-            selected_tasks = []
+
+        selected_tasks = [name for name, chk in self.task_checkboxes.items() if chk.isChecked()]
+        if self.task_checkboxes and not selected_tasks:
+            QMessageBox.warning(self, self.tr("Missing Tasks"), self.tr("Please select at least one task type to spawn."))
+            return
 
         dialog = self._begin_spawn(self.tr("Batch Spawning Production Files"))
 

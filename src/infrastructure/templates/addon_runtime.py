@@ -39,7 +39,12 @@ def default_config_dir() -> Optional[Path]:
         scripts_dir = env.blender_user_scripts
         if scripts_dir:
             return Path(scripts_dir) / "openstudio"
-    except Exception:  # noqa: BLE001
+        print("[AddonRuntime] BLENDER_USER_SCRIPTS is not set; cannot locate cfg_*.py.")
+    except Exception as error:  # noqa: BLE001
+        print(
+            "[AddonRuntime] Could not import env_contract; add-on configs will not "
+            f"be discovered: {error}"
+        )
         return None
     return None
 
@@ -79,8 +84,18 @@ def register_all(config_dir: Optional[Path] = None) -> List[str]:
     Returns the list of add-on module names that were registered.
     """
     directory = Path(config_dir) if config_dir else default_config_dir()
+    if directory is None:
+        print("[AddonRuntime] No config dir resolved; skipping add-on registration.")
+        return []
+    if not Path(directory).exists():
+        print(f"[AddonRuntime] Config dir does not exist: {directory}")
+        return []
+
+    scripts = discover(directory)
+    print(f"[AddonRuntime] cfg_*.py found in {directory}: {[p.name for p in scripts]}")
+
     registered: List[str] = []
-    for script_path in discover(directory):
+    for script_path in scripts:
         module = load_module(script_path)
         if module is None:
             continue

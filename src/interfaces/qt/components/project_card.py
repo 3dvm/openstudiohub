@@ -14,7 +14,9 @@ injected callbacks provided by the parent ViewModel.
 from pathlib import Path
 from typing import Callable, Optional
 
-from PySide6.QtCore import QSize, Qt, QThread, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtGui import QColor, QCursor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -32,10 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.interfaces.qt.workers.worker_keepalive import keep_worker_alive
-
-
-class ProjectThumbnailWorker(QThread):
+class ProjectThumbnailWorker(ManagedWorker):
     """Background thread for downloading project thumbnails over HTTP."""
 
     image_downloaded = Signal(bytes)
@@ -448,7 +447,6 @@ class ProjectCard(QFrame):
         self.worker.image_downloaded.connect(self._on_thumbnail_ready)
         self.worker.error_occurred.connect(self._on_thumbnail_error)
         self.worker.finished.connect(self.worker.deleteLater)
-        keep_worker_alive(self.worker)
         self.worker.start()
 
     def _on_thumbnail_ready(self, img_bytes: bytes) -> None:

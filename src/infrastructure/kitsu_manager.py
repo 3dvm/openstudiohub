@@ -56,6 +56,43 @@ class KitsuManager:
             # Asumimos False (no existe) para permitir que el flujo superior decida.
             return False
 
+    def check_health(self, timeout: float = 5.0) -> Tuple[bool, str]:
+        """
+        Pre-flight reachability probe against the Kitsu server.
+
+        It only answers "is the server up?"; authentication and authorization are
+        handled by the actual API calls. The probe hits the Kitsu root (the same
+        target used by the Docker healthcheck) with no credentials, so any HTTP
+        response means the server is alive. The short timeout protects against a
+        black-holed network without producing the false negatives that a heavy
+        authenticated endpoint did.
+        """
+        try:
+            host = gazu.client.get_host()
+        except Exception as error:  # noqa: BLE001
+            return False, f"Kitsu host is not configured: {error}"
+
+        if not host:
+            return False, "Kitsu host is not configured."
+
+        root = host.rstrip("/")
+        if root.endswith("/api"):
+            root = root[:-4]
+
+        try:
+            response = requests.get(root, timeout=timeout)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Kitsu server unreachable: {error}"
+
+        return True, f"Kitsu server is online (HTTP {response.status_code})."
+
+    def get_project_by_name(self, project_name: str) -> Optional[dict]:
+        """Returns the Kitsu project dict for an exact name, or ``None``."""
+        try:
+            return gazu.project.get_project_by_name(project_name)
+        except Exception:  # noqa: BLE001 - missing project or network error
+            return None
+
     def create_project(self, project_name: str) -> Tuple[bool, str, dict]:
         """
         Construye la entidad raíz del Proyecto en la base de datos de Kitsu.

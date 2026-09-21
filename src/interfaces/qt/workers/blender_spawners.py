@@ -1,14 +1,17 @@
 import subprocess
 import os
+from collections import deque
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.domain.production.naming import NamingPolicy
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
 
-class BatchCreationWorker(QThread):
+class BatchCreationWorker(ManagedWorker):
     progress_updated = Signal(int, str)
     log_stream = Signal(str)
     finished_batch = Signal(bool, str)
@@ -37,28 +40,30 @@ class BatchCreationWorker(QThread):
             blender_bin = BlenderLocator.resolve(base_blender_dir)
 
             vfs_svn = self.config.get_vfs_svn_name()
+            failures = []
 
             for idx, entity in enumerate(self.entities):
                 e_name = entity.get("name", "Unknown")
                 e_id = entity.get("id", "")
+                # For assets ``type`` holds the asset type name (e.g. "Character");
+                # only shots route to the dedicated SHOT builder. Asset files are
+                # always forged by the generic ASSET builder, with the Kitsu asset
+                # type forwarded separately via ``kitsu_asset_type_id``.
                 e_type = entity.get("type", "Asset").upper()
-                
+                build_target = "SHOT" if e_type == "SHOT" else "ASSET"
+
                 # --- TASK FILTERING LOGIC ---
+                # Spawn only the task types the PM selected, and only when the
+                # task has no physical file yet. Entities with no Kitsu tasks are
+                # gated out in the UI (no blank-file fallback here).
+                selected = set(self.task_types or [])
                 tasks_to_spawn = []
                 tasks_dict = entity.get("tasks", {})
-                if e_type == "SHOT":
-                    for t_name in self.task_types:
-                        # Only spawn if the shot has this task in Kitsu and it has no file
-                        task_info = tasks_dict.get(t_name)
-                        if task_info and not task_info.get("has_file"):
-                            tasks_to_spawn.append((t_name, task_info))
-                else:
-                    # Assets (and future generic entities) spawn every missing task.
-                    for t_name, task_info in tasks_dict.items():
-                        if not task_info.get("has_file"):
-                            tasks_to_spawn.append((t_name, task_info))
-                    if not tasks_dict:
-                        tasks_to_spawn = [("", {})]
+                for t_name, task_info in tasks_dict.items():
+                    if selected and t_name not in selected:
+                        continue
+                    if not task_info.get("has_file"):
+                        tasks_to_spawn.append((t_name, task_info))
                 # -------------------------------------------
                 
                 # Nested loop to iterate each missing task of the entity
@@ -71,7 +76,7 @@ class BatchCreationWorker(QThread):
                     self.log_stream.emit(f"\n[{display_name}] Spawning physical file via Headless Engine...")
                     
                     sandbox = SandboxEnvironment(
-                        build_target=e_type,
+                        build_target=build_target,
                         project_root=str(project_root),
                         production_folder=vfs_svn,
                         blender_user_resources=str(project_root / vfs_local / "blender_data"),
@@ -112,12 +117,21 @@ class BatchCreationWorker(QThread):
                     proceso.wait()
                     
                     if proceso.returncode != 0:
+                        failures.append(display_name)
                         self.log_stream.emit(f"[{display_name}] ❌ ERROR: Blender Headless failed.")
                     else:
                         self.log_stream.emit(f"[{display_name}] ✓ Physical file spawned.")
 
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
-            self.finished_batch.emit(True, f"{total_ents} entities processed successfully.")
+            if failures:
+                self.finished_batch.emit(
+                    False,
+                    self.tr("Failed to forge {count} file(s): {names}").format(
+                        count=len(failures), names=", ".join(failures)
+                    ),
+                )
+            else:
+                self.finished_batch.emit(True, f"{total_ents} entities processed successfully.")
             
         except Exception as e:  # noqa: BLE001
             error_message = f"{type(e).__name__}: {e}"
@@ -125,7 +139,7 @@ class BatchCreationWorker(QThread):
             self.log_stream.emit(f"❌ {error_message}")
             self.finished_batch.emit(False, error_message)
 
-class MasterSpawningWorker(QThread):
+class MasterSpawningWorker(ManagedWorker):
     progress_updated = Signal(int, str)
     log_stream = Signal(str)
     finished_spawn = Signal(bool, str)
@@ -168,33 +182,59 @@ class MasterSpawningWorker(QThread):
             self.progress_updated.emit(30, self.tr("Booting Blender Engine..."))
             cmd = [str(blender_bin), "-b", "--python", str(script_path)]
             proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            
+
+            # Track the headless build result instead of trusting the exit code
+            # alone: the builder always used to exit 0, even on failure.
+            tail = deque(maxlen=15)
+            saw_ok = False
+            saw_failure = False
+            created_path = ""
+
             for line in proceso.stdout:
                 line_clean = line.strip()
                 if not line_clean: continue
                 self.log_stream.emit(line_clean)
-                
-                if "Cargando App-Template" in line_clean:
+                tail.append(line_clean)
+
+                if "RESULT: OK" in line_clean:
+                    saw_ok = True
+                elif "RESULT: FAILED" in line_clean:
+                    saw_failure = True
+
+                if "EXITOSO EN:" in line_clean or "creado en:" in line_clean:
+                    self.progress_updated.emit(90, self.tr("Writing physical file..."))
+                    for marker in ("EXITOSO EN:", "creado en:"):
+                        if marker in line_clean:
+                            created_path = line_clean.split(marker, 1)[-1].strip()
+                            break
+                elif "Cargando App-Template" in line_clean:
                     self.progress_updated.emit(50, self.tr("Loading UI Template..."))
                 elif "Restaurando contexto Kitsu" in line_clean:
                     self.progress_updated.emit(70, self.tr("Authenticating with server..."))
-                elif "GUARDADO FORZADO EXITOSO" in line_clean:
-                    self.progress_updated.emit(90, self.tr("Writing physical file..."))
-            
+
             proceso.wait()
-            if proceso.returncode == 0:
+            if proceso.returncode == 0 and saw_ok and not saw_failure:
                 self.progress_updated.emit(100, self.tr("Master File Forged Successfully!"))
-                self.finished_spawn.emit(True, f"{self.build_target} created.")
+                message = f"{self.build_target} created."
+                if created_path:
+                    message = f"{self.build_target} created: {created_path}"
+                self.finished_spawn.emit(True, message)
             else:
-                raise RuntimeError(f"Blender crashed with return code {proceso.returncode}")
-                
+                details = "\n".join(tail)
+                reason = (
+                    "The headless builder reported a failure."
+                    if saw_failure
+                    else f"Blender exited with code {proceso.returncode} without a result marker."
+                )
+                self.finished_spawn.emit(False, f"{reason}\n{details}".strip())
+
         except Exception as e:  # noqa: BLE001
             error_message = f"{type(e).__name__}: {e}"
             print(f"[{self.__class__.__name__}] {error_message}")
             self.log_stream.emit(f"❌ {error_message}")
             self.finished_spawn.emit(False, error_message)
 
-class StoryboardBatchWorker(QThread):
+class StoryboardBatchWorker(ManagedWorker):
     progress_updated = Signal(int, str)
     log_stream = Signal(str)
     finished_batch = Signal(bool, str)

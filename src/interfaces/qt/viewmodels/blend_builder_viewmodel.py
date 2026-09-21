@@ -42,7 +42,7 @@ from src.interfaces.qt.workers.blender_spawners import (
 )
 from src.interfaces.qt.workers.project_list_workers import ProjectInstallWorker
 from src.interfaces.qt.workers.task_file_workers import TaskFileWorker
-from src.interfaces.qt.workers.worker_keepalive import keep_worker_alive
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class BlendBuilderViewModel(BaseViewModel):
@@ -82,8 +82,7 @@ class BlendBuilderViewModel(BaseViewModel):
         self.current_project_id: Optional[str] = None
         self.current_project_name: str = ""
         self.project_map: dict = {}
-        self._task_file_worker: Optional[TaskFileWorker] = None
-        self._install_worker: Optional[ProjectInstallWorker] = None
+        self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -118,19 +117,43 @@ class BlendBuilderViewModel(BaseViewModel):
     # Project loading
     # ------------------------------------------------------------------
     def load_projects(self) -> None:
-        self.worker_projects = FetchProjectsWorker(self.production_service)
-        self.worker_projects.data_ready.connect(self._on_projects_loaded)
-        self.worker_projects.error_occurred.connect(lambda e: self.report_status(f"Project fetch error: {e}", "red"))
-        self.worker_projects.start()
+        """Fetch the Kitsu project catalog (safe to call repeatedly)."""
+        worker = FetchProjectsWorker(self.production_service)
+        worker.data_ready.connect(self._on_projects_loaded)
+        worker.error_occurred.connect(lambda e: self.report_status(f"Project fetch error: {e}", "red"))
+        self.workers.start("projects", worker)
 
     def _on_projects_loaded(self, projects: list) -> None:
         self.project_map = {p.get("name", "Unknown"): p.get("id") for p in projects}
         self.projects_loaded.emit(projects)
 
     def select_project(self, project_name: str) -> None:
+        """Select a project by its Kitsu name, ignoring case differences."""
+        key = self._resolve_project_key(project_name)
+        if key is None:
+            self.current_project_id = None
+            self.current_project_name = ""
+            return
+        self.current_project_id = self.project_map[key]
+        self.current_project_name = key
+
+    def _resolve_project_key(self, project_name: str) -> Optional[str]:
         if project_name in self.project_map:
-            self.current_project_id = self.project_map[project_name]
-            self.current_project_name = project_name
+            return project_name
+        target = (project_name or "").strip().lower()
+        for name in self.project_map:
+            if name.strip().lower() == target:
+                return name
+        return None
+
+    def _emit_for_current_project(self, project_id: str, signal, *args) -> None:
+        """Drop results that belong to a project the user has already left.
+
+        Since stale workers are skipped rather than cancelled, an in-flight
+        fetch for the previous project can still deliver after a new selection.
+        """
+        if project_id == self.current_project_id:
+            signal.emit(*args)
 
     # ------------------------------------------------------------------
     # Local installation gate
@@ -159,7 +182,7 @@ class BlendBuilderViewModel(BaseViewModel):
         if self.installation_service is None:
             self.report_status("Installation service unavailable.", "red")
             return False
-        if self._install_worker is not None and self._install_worker.isRunning():
+        if self.workers.is_running("install"):
             self.report_status("Please wait, an installation is already running...", "red")
             return False
 
@@ -174,22 +197,17 @@ class BlendBuilderViewModel(BaseViewModel):
         vcs_user, vcs_pwd = creds
 
         self.report_status("Installing project workspace...", "yellow")
-        self._install_worker = ProjectInstallWorker(
+        worker = ProjectInstallWorker(
             self.installation_service,
             self.project_root(),
             vcs_user,
             vcs_pwd,
             self.user_role,
         )
-        self._install_worker.progress_update.connect(self.install_progress.emit)
-        self._install_worker.finished_install.connect(self._on_install_finished)
-        self._install_worker.finished.connect(self._on_install_worker_finished)
-        keep_worker_alive(self._install_worker)
-        self._install_worker.start()
+        worker.progress_update.connect(self.install_progress.emit)
+        worker.finished_install.connect(self._on_install_finished)
+        self.workers.start("install", worker)
         return True
-
-    def _on_install_worker_finished(self) -> None:
-        self._install_worker = None
 
     def _on_install_finished(self, success: bool, message: str) -> None:
         self.install_finished.emit(success, message)
@@ -205,52 +223,72 @@ class BlendBuilderViewModel(BaseViewModel):
         if not self.current_project_id:
             return
         vfs_svn = self.config_factory.get_vfs_svn_name()
-        self.worker_seqs = FetchSequencesWorker(
+        worker = FetchSequencesWorker(
             self.production_service, self.current_project_id, self.project_root(), vfs_svn
         )
-        self.worker_seqs.data_ready.connect(self.sequences_loaded.emit)
-        self.worker_seqs.error_occurred.connect(lambda e: self.report_status(f"Seq fetch error: {e}", "red"))
-        self.worker_seqs.start()
+        worker.data_ready.connect(
+            lambda *a, pid=self.current_project_id: self._emit_for_current_project(
+                pid, self.sequences_loaded, *a
+            )
+        )
+        worker.error_occurred.connect(lambda e: self.report_status(f"Seq fetch error: {e}", "red"))
+        self.workers.start("sequences", worker)
 
     def load_editorial_status(self) -> None:
         if not self.current_project_id:
             return
+        if self.workers.is_running("edit"):
+            return
         self.report_status("Auditing Editorial Master...", "yellow")
         vfs_svn = self.config_factory.get_vfs_svn_name()
-        self.worker_edit = FetchEditStatusWorker(
+        worker = FetchEditStatusWorker(
             self.production_service,
             self.current_project_id,
             self.current_project_name,
             self.project_root(),
             vfs_svn,
         )
-        self.worker_edit.data_ready.connect(self.editorial_status_loaded.emit)
-        self.worker_edit.error_occurred.connect(lambda e: self.report_status(f"Edit fetch error: {e}", "red"))
-        self.worker_edit.start()
+        worker.data_ready.connect(
+            lambda *a, pid=self.current_project_id: self._emit_for_current_project(
+                pid, self.editorial_status_loaded, *a
+            )
+        )
+        worker.error_occurred.connect(lambda e: self.report_status(f"Edit fetch error: {e}", "red"))
+        self.workers.start("edit", worker)
 
     def load_assets(self) -> None:
         if not self.current_project_id:
             return
         self.report_status("Auditing assets from Kitsu and SVN...", "yellow")
         vfs_svn = self.config_factory.get_vfs_svn_name()
-        self.worker_assets = FetchAssetsWorker(
+        worker = FetchAssetsWorker(
             self.production_service, self.current_project_id, self.project_root(), vfs_svn
         )
-        self.worker_assets.data_ready.connect(self.assets_loaded.emit)
-        self.worker_assets.error_occurred.connect(lambda e: self.report_status(f"Asset fetch error: {e}", "red"))
-        self.worker_assets.start()
+        worker.data_ready.connect(
+            lambda *a, pid=self.current_project_id: self._emit_for_current_project(
+                pid, self.assets_loaded, *a
+            )
+        )
+        worker.error_occurred.connect(lambda e: self.report_status(f"Asset fetch error: {e}", "red"))
+        self.workers.start("assets", worker)
 
     def load_shots(self) -> None:
         if not self.current_project_id:
             return
+        if self.workers.is_running("shots"):
+            return
         self.report_status("Fetching pending shots from Kitsu...", "yellow")
         vfs_svn = self.config_factory.get_vfs_svn_name()
-        self.worker_shots = FetchShotsWorker(
+        worker = FetchShotsWorker(
             self.production_service, self.current_project_id, self.project_root(), vfs_svn
         )
-        self.worker_shots.data_ready.connect(self.shots_loaded.emit)
-        self.worker_shots.error_occurred.connect(lambda e: self.report_status(f"Shot fetch error: {e}", "red"))
-        self.worker_shots.start()
+        worker.data_ready.connect(
+            lambda *a, pid=self.current_project_id: self._emit_for_current_project(
+                pid, self.shots_loaded, *a
+            )
+        )
+        worker.error_occurred.connect(lambda e: self.report_status(f"Shot fetch error: {e}", "red"))
+        self.workers.start("shots", worker)
 
     # ------------------------------------------------------------------
     # Spawning use cases
@@ -264,13 +302,13 @@ class BlendBuilderViewModel(BaseViewModel):
         self.report_status("Spawning Storyboard sequences...", "yellow")
         self.inject_credentials()
 
-        self.spawn_worker = StoryboardBatchWorker(
+        worker = StoryboardBatchWorker(
             self.pm_core, self.config_factory, self.current_project_id, self.current_project_name, sequence_names
         )
-        self.spawn_worker.progress_updated.connect(self.spawn_progress.emit)
-        self.spawn_worker.log_stream.connect(self.spawn_log.emit)
-        self.spawn_worker.finished_batch.connect(self.spawn_finished.emit)
-        self.spawn_worker.start()
+        worker.progress_updated.connect(self.spawn_progress.emit)
+        worker.log_stream.connect(self.spawn_log.emit)
+        worker.finished_batch.connect(self.spawn_finished.emit)
+        self.workers.start("spawn", worker, skip_if_running=False)
 
     def spawn_edit_master(self) -> None:
         if not self.current_project_id:
@@ -279,13 +317,13 @@ class BlendBuilderViewModel(BaseViewModel):
         if not self._ensure_vcs_credentials():
             return
         self.inject_credentials()
-        self.spawn_worker = MasterSpawningWorker(
+        worker = MasterSpawningWorker(
             self.config_factory, self.current_project_name, "EDIT", self.current_project_id
         )
-        self.spawn_worker.progress_updated.connect(self.spawn_progress.emit)
-        self.spawn_worker.log_stream.connect(self.spawn_log.emit)
-        self.spawn_worker.finished_spawn.connect(self.spawn_finished.emit)
-        self.spawn_worker.start()
+        worker.progress_updated.connect(self.spawn_progress.emit)
+        worker.log_stream.connect(self.spawn_log.emit)
+        worker.finished_spawn.connect(self.spawn_finished.emit)
+        self.workers.start("spawn", worker, skip_if_running=False)
 
     def spawn_batch(self, entities: list, task_types: list) -> None:
         if not self.current_project_id:
@@ -294,7 +332,7 @@ class BlendBuilderViewModel(BaseViewModel):
         if not self._ensure_vcs_credentials():
             return
         self.inject_credentials()
-        self.worker_batch = BatchCreationWorker(
+        worker = BatchCreationWorker(
             pm_core=self.pm_core,
             config_factory=self.config_factory,
             project_id=self.current_project_id,
@@ -302,10 +340,10 @@ class BlendBuilderViewModel(BaseViewModel):
             entities=entities,
             task_types=task_types,
         )
-        self.worker_batch.progress_updated.connect(self.spawn_progress.emit)
-        self.worker_batch.log_stream.connect(self.spawn_log.emit)
-        self.worker_batch.finished_batch.connect(self.spawn_finished.emit)
-        self.worker_batch.start()
+        worker.progress_updated.connect(self.spawn_progress.emit)
+        worker.log_stream.connect(self.spawn_log.emit)
+        worker.finished_batch.connect(self.spawn_finished.emit)
+        self.workers.start("spawn", worker, skip_if_running=False)
 
     # ------------------------------------------------------------------
     # Task <-> file mapping
@@ -314,22 +352,20 @@ class BlendBuilderViewModel(BaseViewModel):
         return self.task_file_service.suggest_relative_path(task)
 
     def _start_task_file_worker(self, task: Task, action: str, relative_path: str = "") -> None:
-        if self._task_file_worker is not None and self._task_file_worker.isRunning():
+        if self.workers.is_running("task_file"):
             self.report_status("Another file operation is already running...", "red")
             return
-        self._task_file_worker = TaskFileWorker(
+        worker = TaskFileWorker(
             service=self.task_file_service,
             task=task,
             project_root=self.project_root(),
             action=action,
             relative_path=relative_path,
         )
-        self._task_file_worker.finished_link.connect(self._on_task_file_finished)
-        self._task_file_worker.finished.connect(self._task_file_worker.deleteLater)
-        self._task_file_worker.start()
+        worker.finished_link.connect(self._on_task_file_finished)
+        self.workers.start("task_file", worker)
 
     def _on_task_file_finished(self, success: bool, message: str) -> None:
-        self._task_file_worker = None
         self.task_file_finished.emit(success, message)
 
     def link_task_file(self, task: Task, relative_path: str) -> None:

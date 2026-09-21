@@ -26,6 +26,7 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     vcs_requires_credentials,
 )
 from src.interfaces.qt.workers.project_repair_workers import ProjectRepairWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class ProjectRepairViewModel(BaseViewModel):
@@ -45,7 +46,7 @@ class ProjectRepairViewModel(BaseViewModel):
         self.credential_vault = credential_vault
         self.config_factory = config_factory
         self.vcs_prompt = vcs_prompt
-        self._worker = None
+        self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
     # Helpers
@@ -64,23 +65,15 @@ class ProjectRepairViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     def is_busy(self) -> bool:
         """True while a repair worker is running."""
-        return self._worker is not None and self._worker.isRunning()
+        return self.workers.is_running("repair")
 
     def _start_worker(self, worker: ProjectRepairWorker) -> bool:
         if self.is_busy():
             self.report_status("A repair is already in progress...", "red")
             return False
-        self._worker = worker
         worker.result.connect(self._on_repair_finished)
-        worker.finished.connect(self._on_worker_finished)
-        worker.start()
+        self.workers.start("repair", worker)
         return True
-
-    def _on_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._worker = None
 
     def repair_nas_ghost(self, project_name: str, template_name: str = "") -> None:
         worker = ProjectRepairWorker(

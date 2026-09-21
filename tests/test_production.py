@@ -47,7 +47,9 @@ def test_naming_asset():
 
 def test_naming_storyboard_and_edit():
     assert NamingPolicy.storyboard_path("sq01") == "edit/storyboards/sq01-storyboard.blend"
+    # File names are always lower-cased, including the edit master.
     assert NamingPolicy.edit_path("Neon Chase") == "edit/neon-chase-edit.blend"
+    assert NamingPolicy.edit_path("MIDEQ_promo") == "edit/mideq_promo-edit.blend"
 
 
 def test_normalize_task_name():
@@ -221,3 +223,59 @@ def test_task_filepath_helpers(tmp_path):
     assert task.with_filepath("other.blend").filepath == "other.blend"
     assert task.without_filepath().filepath == ""
     assert task.filepath == "pro/assets/character/prota/character-prota-model.blend"
+
+
+# ----------------------------------------------------------------------
+# Launch target resolution (mixed-case DCC masters)
+# ----------------------------------------------------------------------
+def test_find_latest_versioned_matches_mixed_case_and_orders_numerically(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    edit_dir = tmp_path / "edit"
+    edit_dir.mkdir()
+    for name in (
+        "MIDEQ_promo-edit-v001.blend",
+        "MIDEQ_promo-edit-v010.blend",
+        "MIDEQ_promo-edit-v002.blend",
+    ):
+        (edit_dir / name).write_bytes(b"")
+
+    latest = LaunchService._find_latest_versioned(edit_dir / "mideq_promo-edit")
+
+    assert latest is not None
+    assert latest.name == "MIDEQ_promo-edit-v010.blend"
+
+
+def test_find_latest_versioned_returns_none_when_absent(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    assert LaunchService._find_latest_versioned(tmp_path / "edit" / "missing") is None
+
+
+def test_find_case_insensitive_unversioned(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    edit_dir = tmp_path / "edit"
+    edit_dir.mkdir()
+    (edit_dir / "MIDEQ_promo-edit.blend").write_bytes(b"")
+
+    found = LaunchService._find_case_insensitive(edit_dir / "mideq_promo-edit.blend")
+
+    assert found is not None
+    assert found.name == "MIDEQ_promo-edit.blend"
+
+
+def test_resolve_target_file_finds_mixed_case_edit_master(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    project_root = tmp_path / "project"
+    edit_dir = project_root / "svn" / "edit"
+    edit_dir.mkdir(parents=True)
+    (edit_dir / "MIDEQ_promo-edit-v001.blend").write_bytes(b"")
+
+    # The Hub often only has the lower-cased folder/project name.
+    task_data = {"entity_type_name": "Edit", "project_name": "mideq_promo"}
+    resolved = LaunchService._resolve_target_file(project_root, "svn", task_data, None)
+
+    assert resolved is not None
+    assert resolved.name == "MIDEQ_promo-edit-v001.blend"

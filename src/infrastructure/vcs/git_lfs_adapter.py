@@ -16,7 +16,7 @@ Concrete adapter for Git LFS operations.
 Anchored to English standard.
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 from .abstract_vcs import AbstractVCS
 
@@ -62,3 +62,14 @@ class GitLFSAdapter(AbstractVCS):
 
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
+
+    def destroy_server_repository(self, project_name: str, vfs_svn: str) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."
+
+    def check_server_health(
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        timeout: float = 5.0,
+    ) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."

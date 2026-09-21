@@ -37,15 +37,68 @@ class VCSRouter:
         if not self.workspace_dir.exists():
             self.workspace_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _build_adapter(vcs_type: str, repo_url: str, workspace_dir: Path) -> AbstractVCS:
+        if vcs_type == "svn":
+            return SVNAdapter(repo_url, workspace_dir)
+        elif vcs_type == "git-lfs":
+            return GitLFSAdapter(repo_url, workspace_dir)
+        elif vcs_type == "none":
+            return None
+        else:
+            raise ValueError(f"Unsupported or unknown VCS engine: '{vcs_type}'")
+
     def get_adapter(self) -> AbstractVCS:
         """
         Returns the instance of the concrete adapter to use.
         """
-        if self.vcs_type == "svn":
-            return SVNAdapter(self.repo_url, self.workspace_dir)
-        elif self.vcs_type == "git-lfs":
-            return GitLFSAdapter(self.repo_url, self.workspace_dir)
-        elif self.vcs_type == "none":
-            return None
-        else:
-            raise ValueError(f"Unsupported or unknown VCS engine: '{self.vcs_type}'")
+        return self._build_adapter(self.vcs_type, self.repo_url, self.workspace_dir)
+
+    @classmethod
+    def probe_health(
+        cls,
+        vcs_type: str,
+        repo_url: str,
+        username: str = None,
+        password: str = None,
+        timeout: float = 5.0,
+    ):
+        """
+        Side-effect free pre-flight probe for a VCS server.
+
+        Unlike :meth:`check_health`, this does not create the workspace folder, so
+        it is safe to run before any project data has been written.
+        """
+        vcs_type = (vcs_type or "").strip().lower()
+        if vcs_type in ("", "none"):
+            return True, "VCS disabled (NAS only)."
+        adapter = cls._build_adapter(vcs_type, repo_url, Path("."))
+        return adapter.check_server_health(username, password, timeout)
+
+    @classmethod
+    def destroy_repository(
+        cls,
+        vcs_type: str,
+        repo_url: str,
+        project_name: str,
+        vfs_svn: str,
+    ):
+        """
+        Side-effect free rollback of a server-side repository.
+
+        Uses a throwaway workspace so it does not recreate the project folder
+        while the NAS cleanup is in progress.
+        """
+        vcs_type = (vcs_type or "").strip().lower()
+        if vcs_type in ("", "none"):
+            return True, "VCS disabled (NAS only)."
+        adapter = cls._build_adapter(vcs_type, repo_url, Path("."))
+        return adapter.destroy_server_repository(project_name, vfs_svn)
+
+    def check_health(self, username: str = None, password: str = None, timeout: float = 5.0):
+        """Pre-flight probe for the configured VCS server."""
+        return self.probe_health(self.vcs_type, self.repo_url, username, password, timeout)
+
+    def destroy_server_repository(self, project_name: str, vfs_svn: str):
+        """Best-effort rollback of the server-side repository."""
+        return self.destroy_repository(self.vcs_type, self.repo_url, project_name, vfs_svn)
