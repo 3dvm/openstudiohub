@@ -236,6 +236,10 @@ class ProductionService:
                 "id": asset["id"],
                 "name": final_name,
                 "type": asset["asset_type_name"],
+                # Forward the Kitsu asset type so the headless builder can stamp
+                # it onto the scene (``build_new_asset`` requires both type + asset).
+                "asset_type_id": asset["asset_type_id"],
+                "asset_type_name": asset["asset_type_name"],
                 "parent": "N/A",
                 "frame_in": 0,
                 "tasks": tasks_data,

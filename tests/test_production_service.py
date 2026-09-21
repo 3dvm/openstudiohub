@@ -98,6 +98,8 @@ def test_audit_assets_maps_per_task_files(tmp_path):
     result = ProductionService(FakeKitsuAssets()).audit_assets("p1", tmp_path, "svn")
     asset = result[0]
     assert asset["has_file"] is False  # one task still missing its file
+    assert asset["asset_type_id"] == "at1"
+    assert asset["asset_type_name"] == "Character"
     assert asset["tasks"]["Modeling"]["has_file"] is True
     assert asset["tasks"]["Rigging"]["has_file"] is False
     assert asset["tasks"]["Modeling"]["filepath"].endswith("monkey-model.blend")

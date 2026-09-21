@@ -339,6 +339,7 @@ def forge_shot():
         # ==========================================================
         # 5. REGISTRAR RUTA EN EL CUSTOM FIELD DE LA TAREA EN KITSU
         # ==========================================================
+        mapped = False
         try:
             from src.infrastructure.kitsu_manager import KitsuManager
 
@@ -359,6 +360,7 @@ def forge_shot():
                 task_data["filepath"] = rel_path
                 task["data"] = task_data
                 kitsu_mgr.update_task(task)
+                mapped = True
 
                 print(f"[HeadlessBuilder] ✓ Metadata guardada en Kitsu Task ({task_type.name}): {rel_path}")
             else:
@@ -366,6 +368,10 @@ def forge_shot():
         except Exception as api_e:  # noqa: BLE001
             print(f"[HeadlessBuilder] ❌ Error actualizando la Tarea en Kitsu: {api_e}")
         # ==========================================================
+
+        if not mapped:
+            print("[HeadlessBuilder] ❌ El Shot se guardó pero no se pudo enlazar a su tarea en Kitsu.")
+            return False
 
         return True
 
@@ -452,6 +458,7 @@ def forge_asset():
         out_path = _guardar_entidad_forjada(str(out_path), "ASSET")
 
         # 6. MAPEAR LA RUTA EN LA TAREA DE KITSU (data.filepath)
+        mapped = False
         if task_type_name:
             try:
                 rel_path = out_path.relative_to(vfs_root).as_posix()
@@ -463,11 +470,19 @@ def forge_asset():
                         task_data["filepath"] = rel_path
                         task["data"] = task_data
                         kitsu_mgr.update_task(task)
+                        mapped = True
                         print(f"[HeadlessBuilder] ✓ Ruta mapeada a la tarea Asset ({task_type_name}): {rel_path}")
                     else:
                         print(f"[HeadlessBuilder] ⚠️ Tarea '{task_type_name}' no encontrada para mapear.")
             except Exception as api_error:  # noqa: BLE001
                 print(f"[HeadlessBuilder] ❌ Error mapeando la tarea del Asset: {api_error}")
+
+        if task_type_name and not mapped:
+            print(
+                f"[HeadlessBuilder] ❌ El Asset se guardó pero no se pudo enlazar "
+                f"a la tarea '{task_type_name}' en Kitsu. Revisa que la tarea exista."
+            )
+            return False
 
         return True
 

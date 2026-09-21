@@ -75,6 +75,19 @@ class BatchCreationWorker(ManagedWorker):
                     
                     self.log_stream.emit(f"\n[{display_name}] Spawning physical file via Headless Engine...")
                     
+                    raw_data = entity.get("raw_data") or {}
+                    asset_type_id = (
+                        entity.get("asset_type_id")
+                        or raw_data.get("asset_type_id")
+                        or raw_data.get("entity_type_id")
+                        or ""
+                    )
+                    asset_type_name = (
+                        entity.get("asset_type_name")
+                        or raw_data.get("asset_type_name")
+                        or ""
+                    )
+
                     sandbox = SandboxEnvironment(
                         build_target=build_target,
                         project_root=str(project_root),
@@ -84,8 +97,8 @@ class BatchCreationWorker(ManagedWorker):
                         kitsu_project_id=str(self.project_id),
                         target_entity_id=str(e_id),
                         kitsu_entity_name=str(e_name),
-                        kitsu_asset_type_id=str(entity.get("asset_type_id", "")),
-                        kitsu_asset_type_name=str(entity.get("asset_type_name", "")),
+                        kitsu_asset_type_id=str(asset_type_id),
+                        kitsu_asset_type_name=str(asset_type_name),
                         kitsu_host=self.config.get_kitsu_api_url(),
                         kitsu_user=os.environ.get("OPENSTUDIO_KITSU_USER", ""),
                         kitsu_pwd=os.environ.get("OPENSTUDIO_KITSU_PWD", ""),

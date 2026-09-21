@@ -432,8 +432,18 @@ class KitsuManager:
         return gazu.task.all_task_types()
 
     def get_task_type_by_name(self, task_type_name: str, for_entity: str = None, department=None) -> dict:
-        """Busca un Task Type por su nombre (y opcionalmente entidad/departamento)."""
-        return gazu.task.get_task_type_by_name(task_type_name, for_entity=for_entity, department=department)
+        """Busca un Task Type por su nombre (y opcionalmente entidad/departamento).
+
+        The ``for_entity``/``department`` kwargs only exist in newer gazu. The
+        Blender add-on sandbox bundles an older gazu (0.9.x), so fall back to a
+        plain name lookup when the running gazu rejects them.
+        """
+        try:
+            return gazu.task.get_task_type_by_name(
+                task_type_name, for_entity=for_entity, department=department
+            )
+        except TypeError:
+            return gazu.task.get_task_type_by_name(task_type_name)
 
     def create_task(self, entity, task_type, name: str = None, task_status=None) -> dict:
         """Crea una tarea para una entidad y un Task Type dados."""
@@ -449,8 +459,15 @@ class KitsuManager:
         )
 
     def get_task_by_entity(self, entity, task_type, name: str = "main") -> dict:
-        """Busca la tarea de una entidad para un Task Type y nombre dados."""
-        return gazu.task.get_task_by_entity(entity, task_type, name=name)
+        """Busca la tarea de una entidad para un Task Type y nombre dados.
+
+        Newer gazu accepts a ``name`` kwarg on ``get_task_by_entity``; older gazu
+        (bundled with the Blender add-on) only exposes it on ``get_task_by_name``.
+        """
+        try:
+            return gazu.task.get_task_by_entity(entity, task_type, name=name)
+        except TypeError:
+            return gazu.task.get_task_by_name(entity, task_type, name=name)
 
     def update_task(self, task: dict) -> dict:
         """Persiste los cambios (incluida la metadata) de una tarea."""

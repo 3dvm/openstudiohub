@@ -209,6 +209,7 @@ class BlendBuilderWidget(QFrame):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(True)
         self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
 
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Fixed)
@@ -292,6 +293,11 @@ class BlendBuilderWidget(QFrame):
         dot.setStyleSheet(f"background-color: {color_hex}; border-radius: 6px;")
         return dot
 
+    def _status_text(self, text: str, color_hex: str) -> QLabel:
+        lbl = QLabel(text)
+        lbl.setStyleSheet(f"color: {color_hex}; font-size: 11px; font-weight: bold;")
+        return lbl
+
     def _task_filepath(self, task_info: dict) -> str:
         """Resolve the linked file path across asset/shot audit shapes."""
         if not task_info:
@@ -299,8 +305,21 @@ class BlendBuilderWidget(QFrame):
         raw = task_info.get("raw_task") or {}
         return task_info.get("filepath") or ((raw.get("data") or {}).get("filepath") or "")
 
+    def _icon_button(
+        self, object_name: str, icon_name: str, color_hex: str, tooltip: str, slot
+    ) -> QPushButton:
+        btn = QPushButton()
+        btn.setObjectName(object_name)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedSize(24, 24)
+        btn.setIconSize(QSize(16, 16))
+        btn.setIcon(self._create_colored_icon(Path(f"assets/icons/{icon_name}"), color_hex))
+        btn.setToolTip(tooltip)
+        btn.clicked.connect(slot)
+        return btn
+
     def _build_task_cell(self, entity: dict, task_info: dict | None, task_type_name: str) -> QWidget:
-        """Status dot + folder link button for one entity/task-type intersection."""
+        """Status marker + link and regenerate actions for one task intersection."""
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(4, 0, 4, 0)
@@ -308,24 +327,49 @@ class BlendBuilderWidget(QFrame):
         layout.setAlignment(Qt.AlignCenter)
 
         if not task_info:
+            layout.addWidget(self._status_text(self.tr("N/A"), "#4B5563"))
             layout.addWidget(self._status_dot("#4B5563"))
             return widget
 
         ready = bool(task_info.get("has_file"))
-        layout.addWidget(self._status_dot("#10B981" if ready else "#F59E0B"))
+        color = "#10B981" if ready else "#F59E0B"
+        layout.addWidget(self._status_text(self.tr("Ready") if ready else self.tr("Pending"), color))
+        layout.addWidget(self._status_dot(color))
 
-        btn = QPushButton()
-        btn.setObjectName("TaskLinkButton")
-        btn.setCursor(Qt.PointingHandCursor)
-        btn.setFixedSize(24, 24)
-        btn.setIconSize(QSize(16, 16))
-        btn.setIcon(self._create_colored_icon(Path("assets/icons/folder.svg"), "#3B82F6"))
-        btn.setToolTip(self._task_filepath(task_info) or self.tr("Link a physical file to this task"))
-        btn.clicked.connect(
-            lambda _=False, e=entity, ti=task_info, tt=task_type_name: self._open_task_file_dialog(e, ti, tt)
+        layout.addWidget(
+            self._icon_button(
+                "TaskLinkButton",
+                "folder.svg",
+                "#3B82F6",
+                self._task_filepath(task_info) or self.tr("Link a physical file to this task"),
+                lambda _=False, e=entity, ti=task_info, tt=task_type_name: self._open_task_file_dialog(e, ti, tt),
+            )
         )
-        layout.addWidget(btn)
+
+        # Only offer regeneration while the file is missing/invalid.
+        if not ready:
+            layout.addWidget(
+                self._icon_button(
+                    "TaskRegenButton",
+                    "redo-2.svg",
+                    "#F97316",
+                    self.tr("Regenerate this file"),
+                    lambda _=False, e=entity, tt=task_type_name: self._regenerate_task_file(e, tt),
+                )
+            )
         return widget
+
+    def _reset_table(self) -> None:
+        """Drop stale items and cell widgets so assets/shots never mix.
+
+        Assets and shots share the same ``QTableWidget`` but have different
+        schemas (e.g. shots use column 3 for Frames while assets use it for the
+        first task). Without a full clear, a cell's ``QTableWidgetItem`` and its
+        cell widget survive across renders and bleed into the wrong table.
+        """
+        self.table.clearContents()
+        self.table.setRowCount(0)
+        self.table.setColumnCount(0)
 
     def _render_task_checkboxes(self, task_types: list) -> None:
         """Rebuild the spawn-task selector so it always matches the current step."""
@@ -544,6 +588,7 @@ class BlendBuilderWidget(QFrame):
         base_headers = ["", self.tr("Asset Name"), self.tr("Type")]
         all_headers = base_headers + task_types
 
+        self._reset_table()
         self.table.setColumnCount(len(all_headers))
         self.table.setHorizontalHeaderLabels(all_headers)
 
@@ -635,6 +680,7 @@ class BlendBuilderWidget(QFrame):
         base_headers = ["", self.tr("Shot Name"), self.tr("Sequence"), self.tr("Frames")]
         all_headers = base_headers + task_types
 
+        self._reset_table()
         self.table.setColumnCount(len(all_headers))
         self.table.setHorizontalHeaderLabels(all_headers)
 
@@ -814,11 +860,11 @@ class BlendBuilderWidget(QFrame):
         self.progress_modal.accept()
 
     def _trigger_batch_creation(self, step_id: int) -> None:
-        selected_entities = [
-            self.table.item(r, 0).data(Qt.UserRole)
-            for r in range(self.table.rowCount())
-            if self.table.item(r, 0).checkState() == Qt.Checked
-        ]
+        selected_entities = []
+        for r in range(self.table.rowCount()):
+            anchor = self.table.item(r, 0)
+            if anchor is not None and anchor.checkState() == Qt.Checked:
+                selected_entities.append(anchor.data(Qt.UserRole))
         if not selected_entities:
             QMessageBox.information(self, self.tr("System Checked"), self.tr("No pending entities selected to spawn."))
             return
@@ -847,13 +893,42 @@ class BlendBuilderWidget(QFrame):
             if success:
                 dialog.update_progress(100, self.tr("Done!"))
                 dialog.finalize(True, self.tr("Success: Files Spawned."), "Assign in Kitsu", self._open_kitsu_assets)
-                if step_id == 3:
-                    self.vm.load_assets()
-                elif step_id == 4:
-                    self.vm.load_shots()
+                self._reload_current_table()
             else:
                 dialog.finalize(False, message or self.tr("Process completed with errors. Check logs."))
                 QMessageBox.critical(self, self.tr("Batch Creation Failed"), message)
 
         self.vm.spawn_finished.connect(on_batch_finished)
         self.vm.spawn_batch(selected_entities, selected_tasks)
+
+    def _reload_current_table(self) -> None:
+        """Re-audit the table that is currently displayed (assets or shots)."""
+        if self._table_mode == "shots":
+            self.vm.load_shots()
+        else:
+            self.vm.load_assets()
+
+    def _regenerate_task_file(self, entity: dict, task_type_name: str) -> None:
+        """Re-forge a single task file from a per-cell regenerate button."""
+        if not self.vm.current_project_id or not self.vm.is_current_project_installed():
+            self.vm.report_status(self.tr("Install the project workspace before generating files."), "yellow")
+            return
+
+        dialog = self._begin_spawn(self.tr("Regenerating File"))
+
+        def on_finished(success: bool, message: str, dialog=dialog) -> None:
+            try:
+                self.vm.spawn_finished.disconnect(on_finished)
+            except (RuntimeError, TypeError):
+                pass
+            self._end_spawn(dialog)
+            if success:
+                dialog.update_progress(100, self.tr("Done!"))
+                dialog.finalize(True, self.tr("Success: File Regenerated."))
+                self._reload_current_table()
+            else:
+                dialog.finalize(False, message or self.tr("Process completed with errors. Check logs."))
+                QMessageBox.critical(self, self.tr("Regeneration Failed"), message)
+
+        self.vm.spawn_finished.connect(on_finished)
+        self.vm.spawn_batch([entity], [task_type_name])
