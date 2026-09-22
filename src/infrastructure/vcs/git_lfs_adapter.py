@@ -45,7 +45,7 @@ class GitLFSAdapter(AbstractVCS):
     def revert(self, path: str) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
-    def get_status(self) -> Dict[str, str]:
+    def get_status(self, path: Optional[str] = None) -> Dict[str, str]:
         raise NotImplementedError("Git LFS support is currently under development.")
 
     def set_needs_lock(self, path: str) -> bool:
@@ -58,6 +58,9 @@ class GitLFSAdapter(AbstractVCS):
         raise NotImplementedError("Git LFS support is currently under development.")
 
     def add_all(self, path: str = ".") -> bool:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def add(self, paths: List[str]) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:

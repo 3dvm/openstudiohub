@@ -143,8 +143,10 @@ class SVNAdapter(AbstractVCS):
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 
-    def get_status(self) -> Dict[str, str]:
+    def get_status(self, path: Optional[str] = None) -> Dict[str, str]:
         cmd = ["svn", "status"]
+        if path:
+            cmd.append(path)
         output = self._run_subprocess(cmd, cwd=self.workspace_dir)
         # Raw parsing to return dict: {'A': 'path/file.blend', 'M': 'path/other.blend'}
         status_dict = {}
@@ -196,6 +198,15 @@ class SVNAdapter(AbstractVCS):
     def add_all(self, path: str = ".") -> bool:
         """Registra archivos forzando la recursividad, ignorando los no-versionados por regla."""
         cmd = ["svn", "add", "--force", path]
+        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        return True
+
+    def add(self, paths: List[str]) -> bool:
+        """Registra explícitamente una selección de archivos nuevos para commit."""
+        selected = [path for path in paths if path]
+        if not selected:
+            return True
+        cmd = ["svn", "add", "--force", "--parents", *selected]
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 

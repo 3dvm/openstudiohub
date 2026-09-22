@@ -91,6 +91,8 @@ class TaskCard(QFrame):
         host: str,
         on_launch_callback,
         on_install_callback,
+        pending_change_count: int = 0,
+        on_update_callback=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -105,6 +107,8 @@ class TaskCard(QFrame):
 
         self.on_launch_callback = on_launch_callback
         self.on_install_callback = on_install_callback
+        self.pending_change_count = max(0, int(pending_change_count or 0))
+        self.on_update_callback = on_update_callback
 
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 280)
@@ -272,6 +276,33 @@ class TaskCard(QFrame):
         btn_layout.addWidget(self.action_btn)
 
         main_layout.addLayout(btn_layout)
+
+        self.update_vcs_btn = QPushButton()
+        self.update_vcs_btn.setCursor(Qt.PointingHandCursor)
+        self.update_vcs_btn.setFixedHeight(32)
+        self.update_vcs_btn.setStyleSheet("""
+            QPushButton { border: 1px solid #3B82F6; color: #93C5FD; background: rgba(59, 130, 246, 0.08); border-radius: 6px; font-weight: bold; font-size: 12px; }
+            QPushButton:hover { background-color: rgba(59, 130, 246, 0.2); color: #DBEAFE; }
+        """)
+        self.update_vcs_btn.clicked.connect(self._on_update_clicked)
+        main_layout.addWidget(self.update_vcs_btn)
+        self._sync_update_button()
+
+    def _on_update_clicked(self) -> None:
+        if self.on_update_callback is not None:
+            self.on_update_callback()
+
+    def _sync_update_button(self) -> None:
+        count = self.pending_change_count
+        visible = count > 0 and self.on_update_callback is not None
+        self.update_vcs_btn.setText(self.tr(f"⤴ Update VCS ({count})"))
+        self.update_vcs_btn.setVisible(visible)
+        self.setFixedSize(320, 320 if visible else 280)
+
+    def set_pending_change_count(self, count: int) -> None:
+        """Update the live badge for uncommitted VCS changes on this task."""
+        self.pending_change_count = max(0, int(count or 0))
+        self._sync_update_button()
 
     def _load_thumbnail(self) -> None:
         entity_id = self.task_data.get("entity_id")

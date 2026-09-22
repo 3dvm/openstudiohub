@@ -44,3 +44,28 @@ class FilePath:
 
     def __fspath__(self) -> str:
         return self.value
+
+
+# VCS status codes that mean "the working copy differs from the server".
+CHANGED_STATUS_CODES = frozenset({"M", "A", "D", "R", "C", "!", "~"})
+
+# VCS status code for a file that is not tracked yet (needs ``add`` before commit).
+UNVERSIONED_STATUS_CODE = "?"
+
+
+@dataclass(frozen=True)
+class FileChange:
+    """A single working-copy entry reported by the VCS status scan."""
+
+    relative_path: str
+    status: str
+
+    @property
+    def is_unversioned(self) -> bool:
+        """True when the file is new and must be added before being committed."""
+        return self.status == UNVERSIONED_STATUS_CODE
+
+    @property
+    def is_changed(self) -> bool:
+        """True when the entry represents a real, committable change."""
+        return self.status in CHANGED_STATUS_CODES or self.is_unversioned

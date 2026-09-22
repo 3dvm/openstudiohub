@@ -11,7 +11,7 @@ blocked), and orchestrates the launch and install use cases. It exposes plain
 ``ArtistTaskCardModel`` dataclasses so the View only renders.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -21,6 +21,7 @@ from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
+from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     VcsPrompt,
@@ -28,9 +29,11 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     vcs_requires_credentials,
 )
 from src.interfaces.qt.workers.artist_workers import (
+    CheckVcsChangesWorker,
     FetchArtistTasksWorker,
     InstallProjectWorker,
     LaunchTaskWorker,
+    PublishVcsChangesWorker,
 )
 from src.interfaces.qt.workers.worker_manager import WorkerManager
 
@@ -47,10 +50,14 @@ class ArtistTaskCardModel:
     blocked_reason: str
     project_id: str
     project_name: str
+    task_file_path: Optional[str] = None
+    pending_changes: list = field(default_factory=list)
 
 
 class ArtistViewModel(BaseViewModel):
     tasks_loaded = Signal(list)  # list[ArtistTaskCardModel]
+    vcs_changes_ready = Signal(str, list)  # (task_id, list[FileChange])
+    vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
 
     def __init__(
         self,
@@ -73,6 +80,8 @@ class ArtistViewModel(BaseViewModel):
         self.register_instance = register_instance
         self.vcs_prompt = vcs_prompt
 
+        self.task_file_sync_service = TaskFileSyncService(config_factory)
+        self._launching_card: Optional[ArtistTaskCardModel] = None
         self._cards: List[ArtistTaskCardModel] = []
         self.workers = WorkerManager(self)
 
@@ -135,6 +144,8 @@ class ArtistViewModel(BaseViewModel):
 
         config_path = project_root / vfs_local / "project_config.json" if project_root else None
 
+        task_file_path = (task_data.get("data") or {}).get("filepath") or None
+
         return ArtistTaskCardModel(
             task_data=task_data,
             project_root=project_root,
@@ -144,6 +155,7 @@ class ArtistViewModel(BaseViewModel):
             blocked_reason=blocked_reason,
             project_id=task_data.get("project_id", ""),
             project_name=project_name,
+            task_file_path=task_file_path,
         )
 
     # ------------------------------------------------------------------
@@ -201,11 +213,107 @@ class ArtistViewModel(BaseViewModel):
 
         worker = LaunchTaskWorker(kwargs)
         worker.finished_launch.connect(self._on_launch_finished)
+        self._launching_card = card
         self.workers.start("launch", worker)
 
     def _on_launch_finished(self, success: bool, message: str) -> None:
         self.register_instance(False)
         self.report_status(message, "green" if success else "red")
+
+        card = self._launching_card
+        self._launching_card = None
+        if card and self.is_vcs_enabled() and card.task_file_path and card.project_root:
+            self.check_vcs_changes(card)
+
+    # ------------------------------------------------------------------
+    # VCS publish use case
+    # ------------------------------------------------------------------
+    def is_vcs_enabled(self) -> bool:
+        return self.task_file_sync_service.is_vcs_enabled()
+
+    def check_vcs_changes(self, card: ArtistTaskCardModel) -> None:
+        """Scan the project workspace for files not yet committed to the VCS."""
+        if not self.is_vcs_enabled() or not card.project_root:
+            return
+        if self.workers.is_running("vcs_check"):
+            return
+
+        self.report_status("Checking for uncommitted files on the VCS...", "yellow")
+        worker = CheckVcsChangesWorker(self.task_file_sync_service, self._task_id(card), card.project_root)
+        worker.changes_ready.connect(self._on_vcs_changes_ready)
+        worker.error_occurred.connect(lambda e: self.report_status(f"VCS scan error: {e}", "red"))
+        self.workers.start("vcs_check", worker)
+
+    def _on_vcs_changes_ready(self, task_id: str, changes: list) -> None:
+        for card in self._cards:
+            if self._task_id(card) == task_id:
+                card.pending_changes = list(changes)
+                break
+        if changes:
+            self.report_status(f"⚠️ {len(changes)} file(s) with pending changes on the VCS.", "yellow")
+        else:
+            self.report_status("✓ Everything is up to date on the VCS.", "green")
+        self.vcs_changes_ready.emit(task_id, list(changes))
+
+    def publish_vcs_changes(self, card: ArtistTaskCardModel, selected_changes: list) -> bool:
+        """Commit the selected files (adding the new ones first).
+
+        Returns ``True`` when the publish worker actually started, ``False`` when
+        it was aborted (nothing selected, no project, already running or the
+        credentials prompt was cancelled).
+        """
+        if not selected_changes:
+            self.report_status("No files selected for publishing.", "yellow")
+            return False
+        if not card.project_root:
+            self.report_status("Cannot publish: project folder is missing on NAS.", "red")
+            return False
+        if self.workers.is_running("vcs_publish"):
+            self.report_status("A publish is already in progress...", "red")
+            return False
+
+        creds = self._ensure_vcs_credentials()
+        if creds is None:
+            return False
+        vcs_user, vcs_pwd = creds
+
+        selected_paths = [change.relative_path for change in selected_changes]
+        unversioned_paths = [change.relative_path for change in selected_changes if change.is_unversioned]
+        message = self._commit_message(card, len(selected_paths))
+
+        worker = PublishVcsChangesWorker(
+            sync_service=self.task_file_sync_service,
+            task_id=self._task_id(card),
+            project_root=card.project_root,
+            selected_paths=selected_paths,
+            unversioned_paths=unversioned_paths,
+            username=vcs_user,
+            password=vcs_pwd,
+            message=message,
+        )
+        worker.finished_publish.connect(self._on_vcs_publish_finished)
+        self.workers.start("vcs_publish", worker)
+        return True
+
+    def _on_vcs_publish_finished(self, task_id: str, success: bool, message: str) -> None:
+        if success:
+            for card in self._cards:
+                if self._task_id(card) == task_id:
+                    card.pending_changes = []
+                    break
+            self.report_status(f"🟢 {message}", "green")
+        else:
+            self.report_status(f"🔴 Publish Error: {message}", "red")
+        self.vcs_publish_finished.emit(task_id, success, message)
+
+    @staticmethod
+    def _task_id(card: ArtistTaskCardModel) -> str:
+        return str(card.task_data.get("id", ""))
+
+    @staticmethod
+    def _commit_message(card: ArtistTaskCardModel, file_count: int) -> str:
+        file_name = Path(card.task_file_path).name if card.task_file_path else "task files"
+        return f"OpenStudioHub: {file_count} file(s) for {card.project_name} ({file_name})."
 
     # ------------------------------------------------------------------
     # Install use case

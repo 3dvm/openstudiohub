@@ -31,6 +31,7 @@ from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
+from src.interfaces.qt.views.vcs_publish_dialog import VcsPublishDialog
 
 
 class ViewArtist(BaseDashboardView):
@@ -51,6 +52,8 @@ class ViewArtist(BaseDashboardView):
         self._host = auth_service.host
 
         self._task_widgets = []
+        self._task_cards_by_id = {}
+        self._vcs_dialogs = []
         self._cards = []
         self._current_cols = 0
 
@@ -61,6 +64,8 @@ class ViewArtist(BaseDashboardView):
 
         self._build_content()
         self.vm.tasks_loaded.connect(self._on_tasks_loaded)
+        self.vm.vcs_changes_ready.connect(self._on_vcs_changes_ready)
+        self.vm.vcs_publish_finished.connect(self._on_vcs_publish_finished)
         self.vm.load_tasks()
 
     def _build_content(self) -> None:
@@ -213,17 +218,57 @@ class ViewArtist(BaseDashboardView):
                 host=self._host,
                 on_launch_callback=lambda c=card: self.vm.launch(c),
                 on_install_callback=lambda c=card: self.vm.install(c),
+                pending_change_count=len(card.pending_changes),
+                on_update_callback=lambda c=card: self.vm.check_vcs_changes(c),
             )
             self._task_widgets.append(task_card)
+            self._task_cards_by_id[str(card.task_data.get("id", ""))] = task_card
 
         self._current_cols = 0
         self._rearrange_grid()
+
+    # ------------------------------------------------------------------
+    # VCS publish flow
+    # ------------------------------------------------------------------
+    def _on_vcs_changes_ready(self, task_id: str, changes: list) -> None:
+        widget = self._task_cards_by_id.get(task_id)
+        if widget is not None:
+            widget.set_pending_change_count(len(changes))
+
+        if not changes:
+            return
+
+        card = next((c for c in self._cards if str(c.task_data.get("id", "")) == task_id), None)
+        if card is None:
+            return
+
+        if any(getattr(dialog, "task_id", None) == task_id for dialog in self._vcs_dialogs):
+            return
+
+        label = f"{card.project_name} • {card.task_data.get('entity_name', '')} - {card.task_data.get('task_type_name', '')}"
+        dialog = VcsPublishDialog(self, self.vm, card, changes, task_label=label)
+        self._vcs_dialogs.append(dialog)
+        dialog.finished.connect(lambda _result, d=dialog: self._release_vcs_dialog(d))
+        dialog.show()
+
+    def _release_vcs_dialog(self, dialog) -> None:
+        if dialog in self._vcs_dialogs:
+            self._vcs_dialogs.remove(dialog)
+        dialog.deleteLater()
+
+    def _on_vcs_publish_finished(self, task_id: str, success: bool, message: str) -> None:
+        if not success:
+            return
+        widget = self._task_cards_by_id.get(task_id)
+        if widget is not None:
+            widget.set_pending_change_count(0)
 
     def _clear_grid(self) -> None:
         for widget in self._task_widgets:
             widget.hide()
             widget.deleteLater()
         self._task_widgets.clear()
+        self._task_cards_by_id.clear()
 
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)

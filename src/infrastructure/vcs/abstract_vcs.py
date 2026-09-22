@@ -59,8 +59,13 @@ class AbstractVCS(ABC):
         pass
 
     @abstractmethod
-    def get_status(self) -> Dict[str, str]:
-        """Devuelve el estado de los archivos locales (modificados, añadidos, etc)."""
+    def get_status(self, path: Optional[str] = None) -> Dict[str, str]:
+        """Devuelve el estado de los archivos locales (modificados, añadidos, etc).
+
+        Cuando se entrega ``path`` el sondeo se restringe a esa ruta (relativa al
+        workspace); si es ``None`` se sondea todo el workspace. El diccionario
+        resultante mapea la ruta relativa al código de estado del motor VCS.
+        """
         pass
 
     @abstractmethod
@@ -92,6 +97,14 @@ class AbstractVCS(ABC):
         """
         Registra todos los archivos nuevos o modificados en la ruta dada, 
         preparándolos para el commit.
+        """
+        pass
+
+    @abstractmethod
+    def add(self, paths: List[str]) -> bool:
+        """
+        Registra explícitamente una selección de archivos nuevos (unversioned)
+        para prepararlos para el commit.
         """
         pass
 
