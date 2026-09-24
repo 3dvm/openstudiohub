@@ -67,23 +67,38 @@ class StubService(VCSMigrationService):
     def __init__(self, config, working_copy_url="svn://localhost/neon/svn") -> None:
         super().__init__(config)
         self.created = []
+        self.created_with_topology = []
         self.destroyed = []
         self.transferred = False
         self._url = working_copy_url
-        self._youngest_value = None
+        self._urls = None  # optional FIFO of working-copy URLs
+        self._wc_reads = 0
+        self._source_id = getattr(config, "_project_server", "")
+        self._source_youngest = 3
+        self._target_youngest = None  # absent until the transfer "loads" it
+        self._target_youngest_after = None  # force a mismatch when set
+        self._uuids_match = True
 
     def _working_copy_url(self, workspace):  # noqa: D102
+        if self._urls is not None:
+            return self._urls.pop(0) if self._urls else self._url
+        self._wc_reads += 1
+        if self._wc_reads > 1 and FakeSvnAdapter.relocated:
+            return FakeSvnAdapter.relocated[-1]
         return self._url
 
     def _youngest(self, server, path):  # noqa: D102
-        return self._youngest_value
+        if server.id == self._source_id:
+            return self._source_youngest
+        return self._target_youngest
 
     def _admin(self, server):  # noqa: D102
         svc = self
 
         class _Admin:
-            def create(self, repo_name, vfs_svn):
+            def create(self, repo_name, vfs_svn, initialize_topology=True):
                 svc.created.append(server.id)
+                svc.created_with_topology.append(initialize_topology)
                 return True
 
             def destroy(self, repo_name, vfs_svn):
@@ -92,8 +107,19 @@ class StubService(VCSMigrationService):
 
         return _Admin()
 
-    def _transfer(self, source, target, repo_name):  # noqa: D102
+    def _repo_size_bytes(self, server, path):  # noqa: D102
+        return None
+
+    def _uuid(self, server, path):  # noqa: D102
+        uuid = "same-uuid" if self._uuids_match else f"uuid-{server.id}"
+        return uuid
+
+    def _transfer(self, source, target, repo_name, total_revisions=None, total_bytes=None):  # noqa: D102
         self.transferred = True
+        if self._target_youngest_after is not None:
+            self._target_youngest = self._target_youngest_after
+        else:
+            self._target_youngest = self._source_youngest
         return True, "ok"
 
 
@@ -130,6 +156,8 @@ def test_migrate_project_happy_path(monkeypatch, tmp_path):
     assert ok is True
     assert "migrated" in message.lower()
     assert service.created == ["vps"]
+    # The target must be created empty so the dump can restore revision 1.
+    assert service.created_with_topology == [False]
     assert service.transferred is True
     assert FakeSvnAdapter.relocated == ["svn://svn-vps/neon/svn"]
 
@@ -156,7 +184,30 @@ def test_migrate_project_requires_a_server(tmp_path):
     ok, message = service.migrate_project(_make_project(tmp_path))
 
     assert ok is False
-    assert "no vcs server" in message.lower()
+    assert "current vcs server" in message.lower()
+
+
+def test_migrate_project_rejects_unknown_target(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
+    project_root = _make_project(tmp_path)
+    service = StubService(FakeConfig([_local_server(), _remote_server()], "vps", "local"))
+
+    ok, message = service.migrate_project(project_root, target_server_id="ghost")
+
+    assert ok is False
+    assert "not found" in message.lower()
+
+
+def test_migrate_project_rejects_non_svn_target(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
+    git_server = VCSServer(id="git", name="Git", adapter="git-lfs", repository_url="git@host/repo")
+    project_root = _make_project(tmp_path)
+    service = StubService(FakeConfig([_local_server(), _remote_server(), git_server], "vps", "local"))
+
+    ok, message = service.migrate_project(project_root, target_server_id="git")
+
+    assert ok is False
+    assert "only svn" in message.lower()
 
 
 def test_migrate_project_skips_when_working_copy_already_on_target(monkeypatch, tmp_path):
@@ -172,3 +223,58 @@ def test_migrate_project_skips_when_working_copy_already_on_target(monkeypatch, 
     assert ok is True
     assert "already" in message.lower()
     assert service.created == []
+
+
+def test_migrate_project_resumes_when_target_already_matches(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
+    FakeSvnAdapter.relocated = []
+    project_root = _make_project(tmp_path)
+    service = StubService(FakeConfig([_local_server(), _remote_server()], "vps", "local"))
+    service._target_youngest = service._source_youngest  # a previous attempt already loaded it
+
+    ok, message = service.migrate_project(project_root, target_server_id="vps")
+
+    assert ok is True
+    assert service.transferred is False
+    assert service.created == []
+    assert FakeSvnAdapter.relocated == ["svn://svn-vps/neon/svn"]
+
+
+def test_migrate_project_rejects_preexisting_mismatched_target(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
+    project_root = _make_project(tmp_path)
+    service = StubService(FakeConfig([_local_server(), _remote_server()], "vps", "local"))
+    service._target_youngest = service._source_youngest
+    service._uuids_match = False
+
+    ok, message = service.migrate_project(project_root, target_server_id="vps")
+
+    assert ok is False
+    assert "does not match" in message.lower()
+    assert service.transferred is False
+
+
+def test_migrate_project_fails_when_revision_verification_mismatches(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
+    project_root = _make_project(tmp_path)
+    service = StubService(FakeConfig([_local_server(), _remote_server()], "vps", "local"))
+    service._target_youngest_after = 99  # simulate a bad load
+
+    ok, message = service.migrate_project(project_root, target_server_id="vps")
+
+    assert ok is False
+    assert "verification failed" in message.lower()
+    assert service.transferred is True
+
+
+def test_migrate_project_fails_when_working_copy_not_repointed(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
+    project_root = _make_project(tmp_path)
+    service = StubService(FakeConfig([_local_server(), _remote_server()], "vps", "local"))
+    # First read (pre-check) is the old URL; second read (post-relocate) is wrong.
+    service._urls = ["svn://localhost/neon/svn", "svn://stale/neon/svn"]
+
+    ok, message = service.migrate_project(project_root, target_server_id="vps")
+
+    assert ok is False
+    assert "verification failed" in message.lower()

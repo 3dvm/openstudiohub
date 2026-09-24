@@ -197,7 +197,7 @@ class ProjectCard(QFrame):
 
         if self.user_role == "td":
             self.options_menu.addSeparator()
-            action_migrate = self.options_menu.addAction(self.tr("🚚 Migrate VCS to Remote"))
+            action_migrate = self.options_menu.addAction(self.tr("🚚 Migrate VCS…"))
             action_migrate.triggered.connect(self._on_migrate_requested)
             self.options_menu.addSeparator()
             self.options_menu.addAction(self.tr("📦 Archive Project"))
@@ -449,16 +449,7 @@ class ProjectCard(QFrame):
     def _on_migrate_requested(self) -> None:
         if not self.on_migrate:
             return
-        confirm = QMessageBox.question(
-            self,
-            self.tr("Migrate VCS Repository"),
-            self.tr(
-                "This will copy the project repository to the configured remote server "
-                "and repoint the local working copy. Continue?"
-            ),
-        )
-        if confirm == QMessageBox.Yes:
-            self.on_migrate(self.project_name, self.project_dir)
+        self.on_migrate(self.project_name, self.project_dir)
 
     def _load_thumbnail(self) -> None:
         project_id = self.project_data.get("id")

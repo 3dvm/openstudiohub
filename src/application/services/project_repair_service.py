@@ -51,10 +51,11 @@ class ProjectRepairService:
             return get_default()
         return None
 
-    def _ssh_passphrase_provider(self):
+    def _ssh_passphrase_provider(self, server=None):
         if self.credential_vault is None:
             return None
-        return self.credential_vault.get_ssh_passphrase
+        server_id = server.id if server is not None else ""
+        return lambda: self.credential_vault.get_ssh_passphrase(server_id)
 
     # ------------------------------------------------------------------
     # NAS Ghost: filesystem exists, Kitsu project missing
@@ -132,7 +133,7 @@ class ProjectRepairService:
             repo_url=f"{base_repo_url}/{folder_name}/{vfs_svn}",
             workspace_dir=project_root / vfs_svn,
             server_profile=profile,
-            ssh_passphrase_provider=self._ssh_passphrase_provider(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(server),
         )
 
         provisioner = VCSProvisioner(vcs_router, is_enabled=vcs_enabled)

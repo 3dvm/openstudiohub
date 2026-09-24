@@ -9,22 +9,33 @@
 This replaces the credential half of the old ``VaultManager`` (which also mixed
 in software-inventory manifest CRUD). Credentials are kept strictly in RAM and
 injected into the OS environment; nothing is written to disk.
+
+VCS credentials are stored **per server** (keyed by ``VCSServer.id``) because a
+studio can operate several version-control backends at once.
 """
 
 import os
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 
 from src.domain.shared_kernel.env_contract import EnvKey
+
+
+@dataclass
+class ServerCredentials:
+    """RAM-only credentials bound to a single VCS server."""
+
+    username: str = ""
+    password: str = ""
+    enabled: bool = False
+    ssh_passphrase: str = ""
 
 
 class CredentialVault:
     def __init__(self) -> None:
         self._kitsu_email: Optional[str] = None
         self._kitsu_password: Optional[str] = None
-        self._svn_user: Optional[str] = None
-        self._svn_password: Optional[str] = None
-        self._svn_enabled: bool = False
-        self._ssh_passphrase: Optional[str] = None
+        self._vcs: Dict[str, ServerCredentials] = {}
 
     # ------------------------------------------------------------------
     # Kitsu
@@ -39,38 +50,61 @@ class CredentialVault:
         return self._kitsu_email, self._kitsu_password
 
     # ------------------------------------------------------------------
-    # SVN / VCS
+    # VCS (per server)
     # ------------------------------------------------------------------
-    def save_svn_credentials(self, username: str, password: str, enabled: bool = True) -> None:
-        self._svn_user = username
-        self._svn_password = password
-        self._svn_enabled = enabled
-        os.environ[EnvKey.SVN_USER] = username
-        os.environ[EnvKey.SVN_PASSWORD] = password
+    def _entry(self, server_id: str) -> ServerCredentials:
+        return self._vcs.setdefault(server_id, ServerCredentials())
 
-    def get_svn_credentials(self) -> Tuple[Optional[str], Optional[str]]:
-        return self._svn_user, self._svn_password
+    def save_server_credentials(
+        self,
+        server_id: str,
+        username: str,
+        password: str,
+        enabled: bool = True,
+        ssh_passphrase: Optional[str] = None,
+    ) -> None:
+        entry = self._entry(server_id)
+        entry.username = username or ""
+        entry.password = password or ""
+        entry.enabled = enabled
+        if ssh_passphrase is not None:
+            entry.ssh_passphrase = ssh_passphrase or ""
 
-    def has_svn_credentials(self) -> bool:
-        return bool(self._svn_user and self._svn_password)
+    def get_server_credentials(self, server_id: str) -> Tuple[Optional[str], Optional[str]]:
+        entry = self._vcs.get(server_id)
+        if entry is None:
+            return None, None
+        return entry.username or None, entry.password or None
 
-    def set_svn_enabled(self, enabled: bool) -> None:
-        self._svn_enabled = enabled
+    def has_server_credentials(self, server_id: str) -> bool:
+        user, pwd = self.get_server_credentials(server_id)
+        return bool(user and pwd)
 
-    def is_svn_enabled(self) -> bool:
-        return self._svn_enabled
+    def set_server_enabled(self, server_id: str, enabled: bool) -> None:
+        self._entry(server_id).enabled = enabled
 
-    # ------------------------------------------------------------------
-    # SSH passphrase (RAM-only, used by infrastructure provisioning)
-    # ------------------------------------------------------------------
-    def save_ssh_passphrase(self, passphrase: str) -> None:
-        self._ssh_passphrase = passphrase or None
+    def is_server_enabled(self, server_id: str) -> bool:
+        entry = self._vcs.get(server_id)
+        return bool(entry and entry.enabled)
 
-    def get_ssh_passphrase(self) -> Optional[str]:
-        return self._ssh_passphrase
+    def save_ssh_passphrase(self, server_id: str, passphrase: str) -> None:
+        self._entry(server_id).ssh_passphrase = passphrase or ""
 
-    def has_ssh_passphrase(self) -> bool:
-        return bool(self._ssh_passphrase)
+    def get_ssh_passphrase(self, server_id: str) -> Optional[str]:
+        entry = self._vcs.get(server_id)
+        return (entry.ssh_passphrase or None) if entry else None
+
+    def has_ssh_passphrase(self, server_id: str) -> bool:
+        return bool(self.get_ssh_passphrase(server_id))
+
+    def clear_server(self, server_id: str) -> None:
+        self._vcs.pop(server_id, None)
+
+    def export_server_env(self, server_id: str) -> None:
+        """Expose a server's credentials to the OS environment (DCC subprocesses)."""
+        user, pwd = self.get_server_credentials(server_id)
+        os.environ[EnvKey.SVN_USER] = user or ""
+        os.environ[EnvKey.SVN_PASSWORD] = pwd or ""
 
     # ------------------------------------------------------------------
     # Teardown
@@ -78,10 +112,7 @@ class CredentialVault:
     def clear(self) -> None:
         self._kitsu_email = None
         self._kitsu_password = None
-        self._svn_user = None
-        self._svn_password = None
-        self._svn_enabled = False
-        self._ssh_passphrase = None
+        self._vcs.clear()
         for key in (
             EnvKey.KITSU_USER,
             EnvKey.KITSU_PWD,

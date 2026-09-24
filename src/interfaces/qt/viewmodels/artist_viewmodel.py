@@ -161,10 +161,26 @@ class ArtistViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Launch use case
     # ------------------------------------------------------------------
-    def _ensure_vcs_credentials(self) -> Optional[tuple[str, str]]:
-        """Gate VCS-backed actions behind the session credentials prompt."""
+    def _resolve_server(self, project_root=None):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if callable(getter) and project_root:
+            try:
+                server = getter(project_root)
+                if server is not None:
+                    return server
+            except Exception:  # noqa: BLE001
+                pass
+        getter = getattr(self.config_factory, "get_default_server", None)
+        return getter() if callable(getter) else None
+
+    def _ensure_vcs_credentials(self, project_root=None) -> Optional[tuple[str, str]]:
+        """Gate VCS-backed actions behind the per-server credentials prompt."""
+        server = self._resolve_server(project_root)
         return ensure_vcs_credentials(
-            required=vcs_requires_credentials(self.config_factory),
+            required=vcs_requires_credentials(self.config_factory, server=server),
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
@@ -176,7 +192,7 @@ class ArtistViewModel(BaseViewModel):
             self.report_status("Config file missing. Reinstall workspace.", "red")
             return
 
-        creds = self._ensure_vcs_credentials()
+        creds = self._ensure_vcs_credentials(card.project_root)
         if creds is None:
             return
         svn_user, svn_pwd = creds
@@ -224,7 +240,7 @@ class ArtistViewModel(BaseViewModel):
         worker = LaunchTaskWorker(kwargs)
         worker.finished_launch.connect(self._on_launch_finished)
         self._launching_card = card
-        self.workers.start("launch", worker)
+        self.workers.start("launch", worker, critical=True)
 
     def _on_launch_finished(self, success: bool, message: str) -> None:
         self.register_instance(False)
@@ -282,7 +298,7 @@ class ArtistViewModel(BaseViewModel):
             self.report_status("A publish is already in progress...", "red")
             return False
 
-        creds = self._ensure_vcs_credentials()
+        creds = self._ensure_vcs_credentials(card.project_root)
         if creds is None:
             return False
         vcs_user, vcs_pwd = creds
@@ -302,7 +318,7 @@ class ArtistViewModel(BaseViewModel):
             message=message,
         )
         worker.finished_publish.connect(self._on_vcs_publish_finished)
-        self.workers.start("vcs_publish", worker)
+        self.workers.start("vcs_publish", worker, critical=True)
         return True
 
     def _on_vcs_publish_finished(self, task_id: str, success: bool, message: str) -> None:
@@ -321,7 +337,9 @@ class ArtistViewModel(BaseViewModel):
         """Release the write lock after the task files have been synced."""
         if not self.is_vcs_enabled() or not card.task_file_path or not card.project_root:
             return
-        user, pwd = self.credential_vault.get_svn_credentials()
+        server = self._resolve_server(card.project_root)
+        server_id = server.id if server is not None else ""
+        user, pwd = self.credential_vault.get_server_credentials(server_id)
         ok, message = self.task_file_sync_service.unlock_task_file(
             card.project_root, card.task_file_path, user, pwd
         )
@@ -349,7 +367,7 @@ class ArtistViewModel(BaseViewModel):
             self.report_status("Please wait, an installation is already running...", "red")
             return
 
-        creds = self._ensure_vcs_credentials()
+        creds = self._ensure_vcs_credentials(card.project_root)
         if creds is None:
             return
         vcs_user, vcs_pwd = creds
@@ -363,7 +381,7 @@ class ArtistViewModel(BaseViewModel):
         )
         worker.progress_updated.connect(self.report_status)
         worker.finished_install.connect(self._on_install_finished)
-        self.workers.start("install", worker)
+        self.workers.start("install", worker, critical=True)
 
     def _on_install_finished(self, success: bool, message: str) -> None:
         if success:
@@ -373,14 +391,30 @@ class ArtistViewModel(BaseViewModel):
             self.report_status(f"🔴 Install Error: {message}", "red")
 
     # ------------------------------------------------------------------
-    # Session VCS settings (RAM-only)
+    # Session VCS settings (RAM-only, per server)
     # ------------------------------------------------------------------
-    def vcs_settings(self) -> tuple[str, bool]:
-        username, _ = self.credential_vault.get_svn_credentials()
-        return username or "", self.credential_vault.is_svn_enabled()
+    def list_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
 
-    def save_vcs_settings(self, username: str, password: str, enabled: bool) -> None:
+    def vcs_settings(self, server_id: str = "") -> tuple[str, bool]:
+        if not server_id:
+            return "", False
+        username, _ = self.credential_vault.get_server_credentials(server_id)
+        return username or "", self.credential_vault.is_server_enabled(server_id)
+
+    def has_ssh_passphrase(self, server_id: str = "") -> bool:
+        if not server_id:
+            return False
+        return self.credential_vault.has_ssh_passphrase(server_id)
+
+    def save_vcs_settings(self, server_id: str, username: str, password: str, enabled: bool) -> None:
+        if not server_id:
+            return
         if not username:
             username = self.auth_service.current_user.email if self.auth_service.current_user else "artist"
-        self.credential_vault.save_svn_credentials(username, password, enabled)
+        self.credential_vault.save_server_credentials(server_id, username, password, enabled)
         self.report_status("✓ VCS credentials stored in RAM for this session.", "green")

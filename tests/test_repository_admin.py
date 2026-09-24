@@ -92,6 +92,26 @@ def test_remote_create_provisions_repo_and_topology(monkeypatch):
     assert b"password-db = /var/opt/svn/passwd" in written
 
 
+def test_remote_create_can_skip_topology(monkeypatch):
+    calls = []
+    inputs = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        inputs.append(kwargs.get("input"))
+        return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(ssh_runner.subprocess, "run", fake_run)
+
+    admin = RemoteSSHRepositoryAdmin(_remote_profile(), SshRunner(_remote_profile().remote))
+    assert admin.create("Neon", "svn", initialize_topology=False) is True
+
+    flat = _flat(calls)
+    assert "svnadmin create /var/opt/svn/neon" in flat
+    # Migration targets are created empty so the dump restores revision 1.
+    assert "svn mkdir" not in flat
+
+
 def test_remote_create_is_idempotent(monkeypatch):
     calls = []
 

@@ -293,9 +293,8 @@ class NewProjectDialog(QDialog):
         if not main_template:
             main_template = "Macuare_Estudio"
 
-        vcs_user, vcs_pwd = self.vm.resolve_vcs_credentials()
-
         server_id = self.combo_vcs.currentData() or ""
+        vcs_user, vcs_pwd = self.vm.resolve_vcs_credentials(server_id)
         vcs_enabled = bool(server_id)
 
         self.btn_create.setEnabled(False)

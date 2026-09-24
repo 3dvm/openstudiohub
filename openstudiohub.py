@@ -19,10 +19,19 @@ from _version import __version__
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QStackedWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QInputDialog,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+)
 
 from src.domain.identity.value_objects import Role
 from src.infrastructure.kitsu_manager import KitsuManager
+from src.infrastructure.qt_worker import active_critical_workers, wait_for_all
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
 from src.interfaces.qt.components.vcs_credentials_dialog import VcsCredentialsDialog
 from src.interfaces.qt.composition import AppContext
@@ -34,6 +43,7 @@ from src.interfaces.qt.viewmodels.login_viewmodel import LoginViewModel
 from src.interfaces.qt.viewmodels.new_project_viewmodel import NewProjectViewModel
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
 from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
+from src.interfaces.qt.viewmodels.vcs_credential_gate import VcsPromptResult
 from src.interfaces.qt.views.artist_view import ViewArtist
 from src.interfaces.qt.views.login_view import ViewLogin
 from src.interfaces.qt.views.new_project_dialog import NewProjectDialog
@@ -75,16 +85,32 @@ class OpenStudioHub(QMainWindow):
     # ------------------------------------------------------------------
     # VCS credential gate
     # ------------------------------------------------------------------
-    def _prompt_vcs_credentials(self) -> tuple[str, str] | None:
-        """Show the modal VCS credentials prompt; return the pair or None on cancel."""
-        default_user, _ = self.ctx.credential_vault.get_svn_credentials()
+    def _prompt_vcs_credentials(self, server_id: str, server_label: str, needs_passphrase: bool) -> VcsPromptResult | None:
+        """Show the modal VCS credentials prompt; return the values or None on cancel."""
+        default_user, _ = self.ctx.credential_vault.get_server_credentials(server_id)
         if not default_user and self.ctx.auth_service.current_user is not None:
             default_user = self.ctx.auth_service.current_user.email
 
-        dialog = VcsCredentialsDialog(self, default_user or "")
+        dialog = VcsCredentialsDialog(
+            self,
+            default_user or "",
+            server_label=server_label,
+            include_passphrase=needs_passphrase,
+        )
         if dialog.exec() == QDialog.Accepted:
-            return dialog.credentials()
+            user, pwd = dialog.credentials()
+            return VcsPromptResult(username=user, password=pwd, ssh_passphrase=dialog.ssh_passphrase())
         return None
+
+    def _prompt_ssh_passphrase(self, server_label: str) -> str | None:
+        """Ask for the SSH key passphrase when a remote server needs it."""
+        text, accepted = QInputDialog.getText(
+            self,
+            self.tr("SSH Passphrase"),
+            self.tr(f"SSH key passphrase for '{server_label}':"),
+            QLineEdit.Password,
+        )
+        return text if accepted and text else None
 
     # ------------------------------------------------------------------
     # Process guardian
@@ -105,11 +131,25 @@ class OpenStudioHub(QMainWindow):
 
             QMessageBox.warning(self, self.tr("Blocked Operation"), message)
             event.ignore()
-        else:
-            if self.ctx.auth_service.access_token():
-                self.ctx.auth_service.logout()
-            self.ctx.credential_vault.clear()
-            event.accept()
+            return
+
+        if active_critical_workers():
+            QMessageBox.warning(
+                self,
+                self.tr("Blocked Operation"),
+                self.tr(
+                    "A background operation (migration, installation or project creation) "
+                    "is still running.\n\nPlease wait for it to finish before closing the Hub."
+                ),
+            )
+            event.ignore()
+            return
+
+        wait_for_all(2000)
+        if self.ctx.auth_service.access_token():
+            self.ctx.auth_service.logout()
+        self.ctx.credential_vault.clear()
+        event.accept()
 
     # ------------------------------------------------------------------
     # Login
@@ -173,6 +213,10 @@ class OpenStudioHub(QMainWindow):
             self._retired_views = []
         self._retired_views.append(view)
 
+        # Never destroy a view whose critical threads are still working.
+        if active_critical_workers():
+            return
+
         try:
             view.deleteLater()
         except RuntimeError:
@@ -193,6 +237,7 @@ class OpenStudioHub(QMainWindow):
             status_sink=self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,
             vcs_prompt=self._prompt_vcs_credentials,
+            ssh_passphrase_prompt=self._prompt_ssh_passphrase,
         )
 
     def _build_td_view(self, nas_dir):
@@ -202,6 +247,7 @@ class OpenStudioHub(QMainWindow):
             self.ctx.production_service,
             self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,
+            ssh_passphrase_prompt=self._prompt_ssh_passphrase,
         )
         settings_vm = SettingsViewModel(
             self.ctx.config_factory,
@@ -385,6 +431,17 @@ class OpenStudioHub(QMainWindow):
     def ejecutar_logout(self) -> None:
         if self.blender_instances > 0:
             self.close()
+            return
+
+        if active_critical_workers():
+            QMessageBox.warning(
+                self,
+                self.tr("Blocked Operation"),
+                self.tr(
+                    "A background operation (migration, installation or project creation) "
+                    "is still running.\n\nPlease wait for it to finish before logging out."
+                ),
+            )
             return
 
         self.ctx.auth_service.logout()

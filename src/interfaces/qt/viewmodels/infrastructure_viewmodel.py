@@ -40,12 +40,14 @@ class InfrastructureViewModel(BaseViewModel):
         production_service: ProductionService,
         status_sink: StatusSink | None = None,
         credential_vault=None,
+        ssh_passphrase_prompt=None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.config_factory = config_factory
         self.production_service = production_service
         self.credential_vault = credential_vault
+        self.ssh_passphrase_prompt = ssh_passphrase_prompt
         self.migration_service = VCSMigrationService(
             config_factory,
             credential_vault=credential_vault,
@@ -104,6 +106,16 @@ class InfrastructureViewModel(BaseViewModel):
         if server is None:
             self.report_status("Select a saved VCS server before testing.", "red")
             return
+        if (
+            server.is_remote
+            and target == "ssh"
+            and self.credential_vault is not None
+            and not self.credential_vault.has_ssh_passphrase(server_id)
+            and self.ssh_passphrase_prompt is not None
+        ):
+            passphrase = self.ssh_passphrase_prompt(server.name)
+            if passphrase:
+                self.credential_vault.save_ssh_passphrase(server_id, passphrase)
         self.report_status(f"Testing {server.name} {target.upper()} connection...", "yellow")
         worker = RemoteServerTestWorker(self.migration_service, target, server=server)
         worker.finished_signal.connect(self._on_worker_finished)
@@ -187,7 +199,7 @@ SECRET_KEY={DEV_KITSU_SECRET_KEY}
         self.report_status("Running Seeder against the Database...", "yellow")
         worker = KitsuSeederWorker(self.production_service, action)
         worker.finished_signal.connect(self._on_worker_finished)
-        self.workers.start("seeder", worker)
+        self.workers.start("seeder", worker, critical=True)
 
     def _run_docker_worker(self, command: list, cwd: Path | None = None) -> None:
         if self.workers.is_running("docker"):
@@ -195,7 +207,7 @@ SECRET_KEY={DEV_KITSU_SECRET_KEY}
             return
         worker = DockerWorker(command, cwd)
         worker.finished_signal.connect(self._on_worker_finished)
-        self.workers.start("docker", worker)
+        self.workers.start("docker", worker, critical=True)
 
     def _on_worker_finished(self, success: bool, message: str) -> None:
         color = "green" if success else "red"

@@ -89,6 +89,7 @@ class ViewPM(BaseDashboardView):
         layout.addWidget(lbl_title)
 
         self.tab_credentials = TabCredentials()
+        self.tab_credentials.server_changed.connect(self._load_credentials_for)
         layout.addWidget(self.tab_credentials)
 
         btn_save = QPushButton(self.tr("Save Session Credentials"))
@@ -103,12 +104,35 @@ class ViewPM(BaseDashboardView):
 
     def _save_credentials(self) -> None:
         creds = self.tab_credentials.credentials_payload()
+        server_id = creds["server_id"]
+        if not server_id or self.credential_vault is None:
+            return
         username = creds["username"]
         if not username:
             user = self.auth.current_user
             username = user.email if user else "pm"
-        self.credential_vault.save_svn_credentials(username, creds["password"], creds["enabled"])
+        self.credential_vault.save_server_credentials(
+            server_id, username, creds["password"], creds["enabled"], creds.get("ssh_passphrase") or None
+        )
         self.update_status(self.tr("✓ VCS credentials stored in RAM for this session."), "green")
+
+    def _load_credentials_for(self, server_id: str) -> None:
+        if not server_id or self.credential_vault is None:
+            self.tab_credentials.load_data("", False, False)
+            return
+        username, _ = self.credential_vault.get_server_credentials(server_id)
+        self.tab_credentials.load_data(
+            username or "",
+            self.credential_vault.is_server_enabled(server_id),
+            self.credential_vault.has_ssh_passphrase(server_id),
+        )
+
+    def _pm_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
 
     def _switch_panel(self, panel_id: str) -> None:
         self.set_active_sidebar_button(panel_id)
@@ -120,8 +144,10 @@ class ViewPM(BaseDashboardView):
         elif panel_id == "btn_batch":
             self.blend_builder.refresh_projects()
         elif panel_id == "settings" and self.credential_vault is not None:
-            username, _ = self.credential_vault.get_svn_credentials()
-            self.tab_credentials.load_data(username or "", self.credential_vault.is_svn_enabled())
+            servers = self._pm_servers()
+            default_id = next((s["id"] for s in servers if s.get("is_default")), "")
+            self.tab_credentials.set_servers(servers, default_id)
+            self._load_credentials_for(default_id)
 
     def _open_wizard_for_project(self, project_name: str) -> None:
         self._switch_panel("btn_batch")

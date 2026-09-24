@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -40,7 +41,18 @@ class InfrastructureWidget(QFrame):
         self.vm.operation_finished.connect(self._on_operation_finished)
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea(self)
+        scroll.setObjectName("InvisibleScrollArea")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+
+        container = QWidget()
+        container.setObjectName("TransparentGridContainer")
+        layout = QVBoxLayout(container)
         layout.setContentsMargins(30, 30, 30, 30)
         layout.setSpacing(20)
 
@@ -71,6 +83,9 @@ class InfrastructureWidget(QFrame):
         layout.addLayout(grid)
         layout.addWidget(self._build_remote_server_card())
         layout.addStretch()
+
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
 
     def _build_service_card(self, title: str, desc: str, port: str, start_callback, stop_callback) -> QFrame:
         card = QFrame()

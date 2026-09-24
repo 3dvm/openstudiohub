@@ -6,17 +6,29 @@
 
 """Shared guard that ensures VCS credentials exist before a VCS-backed action.
 
-The flow is intentionally UI-agnostic: the ViewModels receive a ``prompt``
-callable (implemented by the shell, which owns the modal dialog) and this module
-decides *when* it has to be shown. Once collected, credentials are stored with
-the exact same API used by the Session Credentials settings tab
-(``CredentialVault.save_svn_credentials``), so they remain RAM-only.
+Credentials are stored **per server** in the RAM-only ``CredentialVault``. The
+flow is intentionally UI-agnostic: the ViewModels receive a ``prompt`` callable
+(implemented by the shell, which owns the modal dialog) and this module decides
+*when* it has to be shown.
 """
 
+from dataclasses import dataclass
 from typing import Callable, Optional, Tuple
 
 VcsCredentials = Tuple[str, str]
-VcsPrompt = Callable[[], Optional[VcsCredentials]]
+
+
+@dataclass
+class VcsPromptResult:
+    """Values collected by the credentials prompt."""
+
+    username: str
+    password: str
+    ssh_passphrase: str = ""
+
+
+# (server_id, server_label, needs_ssh_passphrase) -> collected values or None
+VcsPrompt = Callable[[str, str, bool], Optional[VcsPromptResult]]
 ReportStatus = Callable[[str, str], None]
 
 
@@ -35,8 +47,15 @@ def vcs_requires_credentials(config_factory, server=None) -> bool:
     return adapter not in ("none", "")
 
 
+def needs_ssh_passphrase(server) -> bool:
+    return bool(server is not None and getattr(server, "is_remote", False))
+
+
 def ensure_vcs_credentials(
     required: bool,
+    server_id: str,
+    server_label: str,
+    needs_passphrase: bool,
     credential_vault,
     prompt: Optional[VcsPrompt],
     report_status: ReportStatus,
@@ -44,15 +63,15 @@ def ensure_vcs_credentials(
     """Return ``(username, password)`` when the action may proceed.
 
     * ``required=False`` -> ``("", "")`` (no VCS, nothing to collect).
-    * Credentials already in the vault -> returned as-is.
-    * Otherwise -> invokes ``prompt()``; on accept the pair is saved to the vault
-      and returned, on cancel/empty it reports the failure and returns ``None``.
+    * Credentials already in the vault for ``server_id`` -> returned as-is.
+    * Otherwise -> invokes ``prompt(server_id, server_label, needs_passphrase)``;
+      on accept the pair (and optional SSH passphrase) is saved for that server.
     """
     if not required:
         return ("", "")
 
-    if credential_vault is not None:
-        user, pwd = credential_vault.get_svn_credentials()
+    if credential_vault is not None and server_id:
+        user, pwd = credential_vault.get_server_credentials(server_id)
         if user and pwd:
             return (user, pwd)
 
@@ -60,17 +79,23 @@ def ensure_vcs_credentials(
         report_status("VCS credentials are required to continue. Configure them in Settings.", "red")
         return None
 
-    collected = prompt()
+    collected = prompt(server_id, server_label, needs_passphrase)
     if not collected:
         report_status("Operation cancelled: VCS credentials are required.", "red")
         return None
 
-    user, pwd = collected
+    user, pwd = collected.username, collected.password
     if not (user and pwd):
         report_status("Operation cancelled: VCS credentials are required.", "red")
         return None
 
-    if credential_vault is not None:
-        credential_vault.save_svn_credentials(user, pwd, enabled=True)
+    if credential_vault is not None and server_id:
+        credential_vault.save_server_credentials(
+            server_id,
+            user,
+            pwd,
+            enabled=True,
+            ssh_passphrase=collected.ssh_passphrase or None,
+        )
 
     return (user, pwd)

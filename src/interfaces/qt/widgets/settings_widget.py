@@ -133,6 +133,7 @@ class SettingsWidget(QFrame):
         self.tab_topography.modified.connect(self._on_field_modified)
         self.tab_software.modified.connect(self._on_field_modified)
         self.tab_credentials.modified.connect(self._on_field_modified)
+        self.tab_credentials.server_changed.connect(self._load_credentials_for)
 
     def _on_field_modified(self) -> None:
         self.lbl_unsaved_warning.setText(self.tr("● Unsaved Changes"))
@@ -158,10 +159,19 @@ class SettingsWidget(QFrame):
         self.tab_topography.load_data(topo)
         self.tab_software.load_data(manifest)
 
-        vcs_username, vcs_enabled = self.vm.load_session_credentials()
-        self.tab_credentials.load_data(vcs_username, vcs_enabled, self.vm.has_ssh_passphrase())
+        servers = self.vm.list_servers()
+        default_id = next((server["id"] for server in servers if server.get("is_default")), "")
+        self.tab_credentials.set_servers(servers, default_id)
+        self._load_credentials_for(default_id)
 
         self.lbl_unsaved_warning.setText("")
+
+    def _load_credentials_for(self, server_id: str) -> None:
+        if not server_id:
+            self.tab_credentials.load_data("", False, False)
+            return
+        username, enabled = self.vm.load_session_credentials(server_id)
+        self.tab_credentials.load_data(username, enabled, self.vm.has_ssh_passphrase(server_id))
 
     def _collect_payload(self) -> dict:
         payload = {}
@@ -212,7 +222,11 @@ class SettingsWidget(QFrame):
 
         creds = self.tab_credentials.credentials_payload()
         self.vm.save_session_credentials(
-            creds["username"], creds["password"], creds["enabled"], creds.get("ssh_passphrase", "")
+            creds["server_id"],
+            creds["username"],
+            creds["password"],
+            creds["enabled"],
+            creds.get("ssh_passphrase", ""),
         )
 
         if config_ok and vault_ok:

@@ -124,6 +124,7 @@ class ViewArtist(BaseDashboardView):
         layout.addWidget(lbl_title)
 
         self.tab_credentials = TabCredentials()
+        self.tab_credentials.server_changed.connect(self._load_credentials_for)
         layout.addWidget(self.tab_credentials)
 
         btn_save = QPushButton(self.tr("Save Session Credentials"))
@@ -138,7 +139,16 @@ class ViewArtist(BaseDashboardView):
 
     def _save_credentials(self) -> None:
         creds = self.tab_credentials.credentials_payload()
-        self.vm.save_vcs_settings(creds["username"], creds["password"], creds["enabled"])
+        self.vm.save_vcs_settings(
+            creds["server_id"], creds["username"], creds["password"], creds["enabled"]
+        )
+
+    def _load_credentials_for(self, server_id: str) -> None:
+        if not server_id:
+            self.tab_credentials.load_data("", False, False)
+            return
+        username, enabled = self.vm.vcs_settings(server_id)
+        self.tab_credentials.load_data(username, enabled, self.vm.has_ssh_passphrase(server_id))
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -175,8 +185,10 @@ class ViewArtist(BaseDashboardView):
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
 
         if panel_id == "settings":
-            username, enabled = self.vm.vcs_settings()
-            self.tab_credentials.load_data(username, enabled)
+            servers = self.vm.list_servers()
+            default_id = next((s["id"] for s in servers if s.get("is_default")), "")
+            self.tab_credentials.set_servers(servers, default_id)
+            self._load_credentials_for(default_id)
 
     def _on_tasks_loaded(self, cards: list) -> None:
         self._cards = cards

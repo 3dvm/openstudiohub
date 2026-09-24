@@ -58,10 +58,10 @@ class NewProjectViewModel(BaseViewModel):
         self.workers = WorkerManager(self)
         self._last_outcome: CreationOutcome | None = None
 
-    def resolve_vcs_credentials(self) -> tuple[str, str]:
+    def resolve_vcs_credentials(self, server_id: str = "") -> tuple[str, str]:
         user, pwd = "", ""
-        if self.credential_vault is not None:
-            user, pwd = self.credential_vault.get_svn_credentials()
+        if self.credential_vault is not None and server_id:
+            user, pwd = self.credential_vault.get_server_credentials(server_id)
         return user or "", pwd or ""
 
     def load_templates(self) -> None:
@@ -94,6 +94,9 @@ class NewProjectViewModel(BaseViewModel):
         required = vcs_enabled and vcs_requires_credentials(self.config_factory, server=server)
         creds = ensure_vcs_credentials(
             required=required,
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
@@ -127,7 +130,7 @@ class NewProjectViewModel(BaseViewModel):
             server_id=server_id,
         )
         worker.result.connect(self._on_creation_finished)
-        self.workers.start("creation", worker)
+        self.workers.start("creation", worker, critical=True)
 
     def retry_creation(self) -> None:
         """Resume the last failed creation from its recorded context."""
@@ -140,7 +143,7 @@ class NewProjectViewModel(BaseViewModel):
             self.project_creation_service, outcome.context
         )
         worker.result.connect(self._on_creation_finished)
-        self.workers.start("retry", worker)
+        self.workers.start("retry", worker, critical=True)
 
     def rollback_creation(self) -> None:
         """Delete everything created by the last failed project creation."""
@@ -153,7 +156,7 @@ class NewProjectViewModel(BaseViewModel):
             self.project_creation_service, outcome.context
         )
         worker.result.connect(self._on_rollback_finished)
-        self.workers.start("rollback", worker)
+        self.workers.start("rollback", worker, critical=True)
 
     def _on_creation_finished(self, outcome: CreationOutcome) -> None:
         self.set_busy(False)

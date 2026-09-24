@@ -15,10 +15,10 @@ from typing import Callable, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
+    QDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -27,7 +27,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.interfaces.qt.components.migration_progress_dialog import MigrationProgressDialog
 from src.interfaces.qt.components.project_card import ProjectCard
+from src.interfaces.qt.components.vcs_migration_dialog import MigrationServerDialog
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
 from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
@@ -126,6 +128,10 @@ class ProjectListWidget(QFrame):
         self.vm.install_finished.connect(self._on_install_finished)
         self.vm.delete_warning.connect(lambda msg: QMessageBox.warning(self, self.tr("Warning"), msg))
         self.vm.delete_completed.connect(lambda msg: QMessageBox.information(self, self.tr("Deleted"), msg))
+        self.vm.migration_started.connect(self._on_migration_started)
+        self.vm.migration_detail.connect(self._on_migration_detail)
+        self.vm.migration_log.connect(self._on_migration_log)
+        self.vm.migration_phase.connect(self._on_migration_phase)
         self.vm.migration_finished.connect(self._on_migration_finished)
         self.vm.cleanup_finished.connect(lambda name, ok, msg: QMessageBox.information(self, self.tr("VCS Cleanup"), msg))
         self.audit_vm.audit_completed.connect(self._on_project_audited)
@@ -161,33 +167,87 @@ class ProjectListWidget(QFrame):
     def _request_migration(self, project_name: str, project_dir) -> None:
         """Ask which VCS server the project should migrate to, then run it."""
         servers = self.vm.list_servers()
-        if not servers:
+        source = self.vm.server_for_project(project_dir)
+        if source is None:
             QMessageBox.information(
                 self, self.tr("Migrate VCS"),
-                self.tr("No VCS server is configured. Add one in the Infrastructure panel."),
+                self.tr("Could not resolve the project's current VCS server."),
             )
             return
 
-        labels = [server["name"] + ("  (default)" if server.get("is_default") else "") for server in servers]
-        choice, accepted = QInputDialog.getItem(
-            self, self.tr("Migrate VCS"), self.tr("Target server:"), labels, 0, False
-        )
-        if not accepted:
+        targets = [
+            server for server in servers
+            if server.get("adapter") == "svn" and server.get("id") != source.get("id")
+        ]
+        if not targets:
+            QMessageBox.information(
+                self, self.tr("Migrate VCS"),
+                self.tr("No other SVN server is available to migrate to."),
+            )
             return
-        target = servers[labels.index(choice)]
-        self.vm.migrate_project(project_name, project_dir, target_server_id=target["id"])
+
+        default_target = next((s["id"] for s in targets if s.get("is_default")), targets[0]["id"])
+        dialog = MigrationServerDialog(self, project_name, source, targets, default_target)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        self.vm.migrate_project(project_name, project_dir, target_server_id=dialog.selected_target_id())
+
+    # ------------------------------------------------------------------
+    # Migration progress window
+    # ------------------------------------------------------------------
+    def _on_migration_started(self, project_name: str, source: dict, target: dict) -> None:
+        self._migration_dialog = MigrationProgressDialog(self, project_name, source, target)
+        self._migration_dialog.set_phase(self.tr("Starting transfer..."))
+        self._migration_dialog.cancel_requested.connect(
+            lambda p=project_name: self._on_migration_cancelled(p)
+        )
+        self._migration_dialog.show()
+
+    def _on_migration_detail(self, detail: dict) -> None:
+        dialog = getattr(self, "_migration_dialog", None)
+        if dialog is not None:
+            dialog.update_detail(detail)
+
+    def _on_migration_log(self, line: str) -> None:
+        dialog = getattr(self, "_migration_dialog", None)
+        if dialog is not None:
+            dialog.append_log(line)
+
+    def _on_migration_phase(self, message: str) -> None:
+        dialog = getattr(self, "_migration_dialog", None)
+        if dialog is not None:
+            dialog.set_phase(message)
+
+    def _on_migration_cancelled(self, project_name: str) -> None:
+        self.vm.cancel_migration(project_name)
+        dialog = getattr(self, "_migration_dialog", None)
+        if dialog is not None:
+            dialog.append_log("Cancellation requested; terminating processes...")
 
     def _on_migration_finished(self, project_name: str, success: bool, message: str) -> None:
+        dialog = getattr(self, "_migration_dialog", None)
+        if dialog is not None:
+            dialog.finalize(success, message)
+
         if not success:
-            QMessageBox.critical(self, self.tr("VCS Migration Failed"), message)
+            answer = QMessageBox.question(
+                self,
+                self.tr("VCS Migration Failed"),
+                self.tr(
+                    f"{message}\n\nThe target repository may be partially loaded. "
+                    "Delete it now?"
+                ),
+            )
+            if answer == QMessageBox.Yes:
+                self.vm.delete_target_repository(project_name)
             return
 
-        QMessageBox.information(self, self.tr("VCS Migration"), message)
+        source_name = self.vm.migration_source_name(project_name)
         answer = QMessageBox.question(
             self,
             self.tr("Delete Old Repository"),
             self.tr(
-                "The old local repository can be deleted now.\n\n"
+                f"The old repository on '{source_name}' can be deleted now.\n\n"
                 "Delete it, or keep it orphaned?"
             ),
         )

@@ -18,6 +18,7 @@ class ProjectInstallWorker(ManagedWorker):
     """Runs the workspace installation for a project without freezing the UI."""
 
     progress_update = Signal(str, str)
+    progress = Signal(int)
     finished_install = Signal(bool, str)
 
     def __init__(self, installation_service: InstallationService, project_root, vcs_user: str, vcs_pwd: str, user_role: str) -> None:
@@ -35,6 +36,7 @@ class ProjectInstallWorker(ManagedWorker):
             vcs_pwd=self.vcs_pwd,
             status_callback=self._emit_status,
             user_role=self.user_role,
+            progress_callback=self.progress.emit,
         )
         self.finished_install.emit(success, msg)
 

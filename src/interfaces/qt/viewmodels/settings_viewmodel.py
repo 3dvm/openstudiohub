@@ -51,22 +51,31 @@ class SettingsViewModel(BaseViewModel):
         return self.config_factory.export_seed(config_payload, dest_dir)
 
     # ------------------------------------------------------------------
-    # Session VCS credentials (RAM-only, never persisted)
+    # Session VCS credentials (RAM-only, per server, never persisted)
     # ------------------------------------------------------------------
-    def load_session_credentials(self) -> tuple[str, bool]:
-        if self.credential_vault is None:
+    def list_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
+
+    def load_session_credentials(self, server_id: str = "") -> tuple[str, bool]:
+        if self.credential_vault is None or not server_id:
             return "", False
-        username, _ = self.credential_vault.get_svn_credentials()
-        return username or "", self.credential_vault.is_svn_enabled()
+        username, _ = self.credential_vault.get_server_credentials(server_id)
+        return username or "", self.credential_vault.is_server_enabled(server_id)
 
-    def save_session_credentials(self, username: str, password: str, enabled: bool, ssh_passphrase: str = "") -> None:
-        if self.credential_vault is None:
+    def save_session_credentials(
+        self, server_id: str, username: str, password: str, enabled: bool, ssh_passphrase: str = ""
+    ) -> None:
+        if self.credential_vault is None or not server_id:
             return
-        self.credential_vault.save_svn_credentials(username, password, enabled)
-        if ssh_passphrase:
-            self.credential_vault.save_ssh_passphrase(ssh_passphrase)
+        self.credential_vault.save_server_credentials(
+            server_id, username, password, enabled, ssh_passphrase or None
+        )
 
-    def has_ssh_passphrase(self) -> bool:
-        if self.credential_vault is None:
+    def has_ssh_passphrase(self, server_id: str = "") -> bool:
+        if self.credential_vault is None or not server_id:
             return False
-        return self.credential_vault.has_ssh_passphrase()
+        return self.credential_vault.has_ssh_passphrase(server_id)

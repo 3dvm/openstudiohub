@@ -81,10 +81,13 @@ class ProjectCreationService:
             profile,
         )
 
-    def _ssh_passphrase_provider(self):
+    def _ssh_passphrase_provider(self, context: CreationContext = None, server=None):
         if self.credential_vault is None:
             return None
-        return self.credential_vault.get_ssh_passphrase
+        if server is None and context is not None:
+            server = self._server_for_context(context)
+        server_id = server.id if server is not None else ""
+        return lambda: self.credential_vault.get_ssh_passphrase(server_id)
 
     # ------------------------------------------------------------------
     # Public API
@@ -171,7 +174,7 @@ class ProjectCreationService:
                     context.folder_name,
                     context.blueprint.topography.vfs_svn,
                     server_profile=profile,
-                    ssh_passphrase_provider=self._ssh_passphrase_provider(),
+                    ssh_passphrase_provider=self._ssh_passphrase_provider(context),
                 )
                 ok = ok and deleted
                 reports.append(message)
@@ -246,7 +249,7 @@ class ProjectCreationService:
             context.vcs_user,
             context.vcs_pwd,
             server_profile=profile,
-            ssh_passphrase_provider=self._ssh_passphrase_provider(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(context),
         )
         if not online:
             raise StageError(CreationStep.PREFLIGHT_VCS, message)
@@ -329,7 +332,7 @@ class ProjectCreationService:
             context.vcs_user,
             context.vcs_pwd,
             server_profile=profile,
-            ssh_passphrase_provider=self._ssh_passphrase_provider(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(context),
         )
         if not online:
             raise StageError(CreationStep.VCS, message)
@@ -421,7 +424,7 @@ class ProjectCreationService:
             repo_url=f"{base_repo_url}/{context.folder_name}/{context.blueprint.topography.vfs_svn}",
             workspace_dir=context.project_path / context.blueprint.topography.vfs_svn,
             server_profile=profile,
-            ssh_passphrase_provider=self._ssh_passphrase_provider(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(context),
         )
 
     def _failure_outcome(self, step: CreationStep, message: str, context: CreationContext) -> CreationOutcome:

@@ -92,21 +92,37 @@ class BlendBuilderViewModel(BaseViewModel):
         folder_name = self.current_project_name.strip().lower().replace(" ", "-")
         return nas_root / folder_name
 
+    def _resolve_server(self):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if callable(getter):
+            try:
+                server = getter(self.project_root())
+                if server is not None:
+                    return server
+            except Exception:  # noqa: BLE001
+                pass
+        getter = getattr(self.config_factory, "get_default_server", None)
+        return getter() if callable(getter) else None
+
     def inject_credentials(self) -> None:
         """Expose the transient Kitsu/VCS credentials to the headless subprocess."""
-        if self.credential_vault:
-            kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
-            os.environ["OPENSTUDIO_KITSU_USER"] = kitsu_user or ""
-            os.environ["OPENSTUDIO_KITSU_PWD"] = kitsu_pwd or ""
+        if not self.credential_vault:
+            return
+        kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
+        os.environ["OPENSTUDIO_KITSU_USER"] = kitsu_user or ""
+        os.environ["OPENSTUDIO_KITSU_PWD"] = kitsu_pwd or ""
 
-            svn_user, svn_pwd = self.credential_vault.get_svn_credentials()
-            os.environ["OPENSTUDIO_SVN_USER"] = svn_user or ""
-            os.environ["OPENSTUDIO_SVN_PASSWORD"] = svn_pwd or ""
+        server = self._resolve_server()
+        self.credential_vault.export_server_env(server.id if server is not None else "")
 
     def _ensure_vcs_credentials(self) -> bool:
-        """Gate VCS-backed batch spawning behind the session credentials prompt."""
+        """Gate VCS-backed batch spawning behind the per-server credentials prompt."""
+        server = self._resolve_server()
         creds = ensure_vcs_credentials(
-            required=vcs_requires_credentials(self.config_factory),
+            required=vcs_requires_credentials(self.config_factory, server=server),
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
@@ -186,8 +202,12 @@ class BlendBuilderViewModel(BaseViewModel):
             self.report_status("Please wait, an installation is already running...", "red")
             return False
 
+        server = self._resolve_server()
         creds = ensure_vcs_credentials(
-            required=vcs_requires_credentials(self.config_factory),
+            required=vcs_requires_credentials(self.config_factory, server=server),
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
@@ -206,7 +226,7 @@ class BlendBuilderViewModel(BaseViewModel):
         )
         worker.progress_update.connect(self.install_progress.emit)
         worker.finished_install.connect(self._on_install_finished)
-        self.workers.start("install", worker)
+        self.workers.start("install", worker, critical=True)
         return True
 
     def _on_install_finished(self, success: bool, message: str) -> None:
@@ -308,7 +328,7 @@ class BlendBuilderViewModel(BaseViewModel):
         worker.progress_updated.connect(self.spawn_progress.emit)
         worker.log_stream.connect(self.spawn_log.emit)
         worker.finished_batch.connect(self.spawn_finished.emit)
-        self.workers.start("spawn", worker, skip_if_running=False)
+        self.workers.start("spawn", worker, skip_if_running=False, critical=True)
 
     def spawn_edit_master(self) -> None:
         if not self.current_project_id:
@@ -323,7 +343,7 @@ class BlendBuilderViewModel(BaseViewModel):
         worker.progress_updated.connect(self.spawn_progress.emit)
         worker.log_stream.connect(self.spawn_log.emit)
         worker.finished_spawn.connect(self.spawn_finished.emit)
-        self.workers.start("spawn", worker, skip_if_running=False)
+        self.workers.start("spawn", worker, skip_if_running=False, critical=True)
 
     def spawn_batch(self, entities: list, task_types: list) -> None:
         if not self.current_project_id:
@@ -343,7 +363,7 @@ class BlendBuilderViewModel(BaseViewModel):
         worker.progress_updated.connect(self.spawn_progress.emit)
         worker.log_stream.connect(self.spawn_log.emit)
         worker.finished_batch.connect(self.spawn_finished.emit)
-        self.workers.start("spawn", worker, skip_if_running=False)
+        self.workers.start("spawn", worker, skip_if_running=False, critical=True)
 
     # ------------------------------------------------------------------
     # Task <-> file mapping

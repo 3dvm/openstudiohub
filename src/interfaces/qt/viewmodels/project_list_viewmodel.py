@@ -14,8 +14,9 @@ delegated to shell callbacks injected at construction time.
 from os import error
 from pathlib import Path
 from typing import Callable, List, Optional
+import queue
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 
 from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
@@ -50,6 +51,10 @@ class ProjectListViewModel(BaseViewModel):
     delete_warning = Signal(str)
     delete_completed = Signal(str)
     migration_finished = Signal(str, bool, str)
+    migration_started = Signal(str, dict, dict)  # (project_name, source, target)
+    migration_detail = Signal(dict)
+    migration_log = Signal(str)
+    migration_phase = Signal(str)
     cleanup_finished = Signal(str, bool, str)
 
     def __init__(
@@ -67,6 +72,7 @@ class ProjectListViewModel(BaseViewModel):
         status_sink: StatusSink | None = None,
         credential_vault=None,
         vcs_prompt: VcsPrompt | None = None,
+        ssh_passphrase_prompt: Callable[[str], Optional[str]] | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -82,14 +88,22 @@ class ProjectListViewModel(BaseViewModel):
         self.audit_service = audit_service
         self.credential_vault = credential_vault
         self.vcs_prompt = vcs_prompt
+        self.ssh_passphrase_prompt = ssh_passphrase_prompt
 
         self.nas_manager = NasManager(self.nas_dir)
+        self._migration_events: "queue.Queue" = queue.Queue()
         self.migration_service = VCSMigrationService(
             self.config_factory,
             credential_vault=self.credential_vault,
             status_callback=self.report_status,
+            progress_callback=self.report_progress,
+            event_sink=self._migration_events,
         )
         self._migration_source_servers: dict = {}
+        self._migration_target_servers: dict = {}
+        self._migration_timer = QTimer(self)
+        self._migration_timer.setInterval(200)
+        self._migration_timer.timeout.connect(self._drain_migration_events)
         self._projects: List[dict] = []
         self.workers = WorkerManager(self)
         self._refresh_pending = False
@@ -195,10 +209,41 @@ class ProjectListViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Commands
     # ------------------------------------------------------------------
-    def _ensure_vcs_credentials(self) -> Optional[tuple[str, str]]:
-        """Gate VCS-backed actions behind the session credentials prompt."""
+    def _resolve_server(self, project_dir: Path | None = None):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if callable(getter) and project_dir:
+            try:
+                return getter(project_dir)
+            except Exception:  # noqa: BLE001
+                return None
+        getter = getattr(self.config_factory, "get_default_server", None)
+        return getter() if callable(getter) else None
+
+    def server_for_project(self, project_dir: Path | None = None) -> Optional[dict]:
+        """Return the project's currently bound server as a plain dict."""
+        server = self._resolve_server(project_dir)
+        return server.to_dict() if server is not None else None
+
+    def _ensure_target_passphrase(self, target) -> None:
+        """Collect the target server's SSH passphrase when it is remote and missing."""
+        if target is None or not getattr(target, "is_remote", False):
+            return
+        if self.credential_vault is None or self.credential_vault.has_ssh_passphrase(target.id):
+            return
+        if self.ssh_passphrase_prompt is None:
+            return
+        passphrase = self.ssh_passphrase_prompt(target.name)
+        if passphrase:
+            self.credential_vault.save_ssh_passphrase(target.id, passphrase)
+
+    def _ensure_vcs_credentials(self, project_dir: Path | None = None) -> Optional[tuple[str, str]]:
+        """Gate VCS-backed actions behind the per-server session credentials prompt."""
+        server = self._resolve_server(project_dir)
         return ensure_vcs_credentials(
-            required=vcs_requires_credentials(self.config_factory),
+            required=vcs_requires_credentials(self.config_factory, server=server),
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
@@ -209,17 +254,18 @@ class ProjectListViewModel(BaseViewModel):
             self.report_status("Please wait, an installation is already running...", "red")
             return
 
-        creds = self._ensure_vcs_credentials()
+        creds = self._ensure_vcs_credentials(project_dir)
         if creds is None:
             return
         vcs_user, vcs_pwd = creds
 
         worker = self._build_install_worker(project_dir, vcs_user, vcs_pwd)
         worker.progress_update.connect(self.report_status)
+        worker.progress.connect(self.report_progress)
         worker.finished_install.connect(
             lambda success, msg, p=project_dir: self._on_install_finished(p, success, msg)
         )
-        self.workers.start("install", worker)
+        self.workers.start("install", worker, critical=True)
 
     def _build_install_worker(self, project_dir: Path, vcs_user: str, vcs_pwd: str):
         from src.interfaces.qt.workers.project_list_workers import ProjectInstallWorker
@@ -230,9 +276,12 @@ class ProjectListViewModel(BaseViewModel):
         self.install_finished.emit(project_dir, success, message)
         if success:
             self.report_status("✓ Workspace deployed", "green")
+            self.report_progress(100)
             self.refresh_requested.emit()
         else:
             self.report_status(f"✗ Install Failed: {message}", "red")
+            self.clear_progress()
+        QTimer.singleShot(2500, self.clear_progress)
 
     def launch_project(self, project_dir: Path) -> None:
         config_path = project_dir / "local" / "project_config.json"
@@ -240,7 +289,7 @@ class ProjectListViewModel(BaseViewModel):
             self.report_status("Error: config missing.", "red")
             return
 
-        creds = self._ensure_vcs_credentials()
+        creds = self._ensure_vcs_credentials(project_dir)
         if creds is None:
             return
 
@@ -295,7 +344,7 @@ class ProjectListViewModel(BaseViewModel):
             except Exception:  # noqa: BLE001
                 source_server = None
 
-        if not vcs_requires_credentials(self.config_factory, server=source_server):
+        if source_server is not None and not source_server.is_enabled:
             self.report_status("Version Control is disabled for this project.", "red")
             return
 
@@ -303,13 +352,40 @@ class ProjectListViewModel(BaseViewModel):
             self.report_status("A migration is already running...", "red")
             return
 
-        creds = self._ensure_vcs_credentials()
+        target = None
+        getter = getattr(self.config_factory, "get_server", None)
+        if target_server_id and callable(getter):
+            target = getter(target_server_id)
+        if target is None:
+            self.report_status("Select a valid target VCS server.", "red")
+            return
+
+        # The relocate (and any follow-up work) authenticates against the TARGET
+        # server, so gate on the target's credentials, not the source's.
+        creds = ensure_vcs_credentials(
+            required=target.is_enabled,
+            server_id=target.id,
+            server_label=target.name,
+            needs_passphrase=target.is_remote,
+            credential_vault=self.credential_vault,
+            prompt=self.vcs_prompt,
+            report_status=self.report_status,
+        )
         if creds is None:
             return
         vcs_user, vcs_pwd = creds
+        self._ensure_target_passphrase(target)
 
         if source_server is not None:
             self._migration_source_servers[project_name] = source_server.id
+        self._migration_target_servers[project_name] = target.id
+
+        # Drain stale events and start the UI poll timer before the worker runs.
+        self._drain_migration_events(flush=True)
+        self._migration_timer.start()
+
+        source_dict = source_server.to_dict() if source_server is not None else {}
+        self.migration_started.emit(project_name, source_dict, target.to_dict())
 
         worker = VCSMigrationWorker(
             self.migration_service, project_name, project_dir, vcs_user, vcs_pwd,
@@ -317,12 +393,60 @@ class ProjectListViewModel(BaseViewModel):
         )
         worker.progress_update.connect(self.report_status)
         worker.finished_migration.connect(self._on_migration_finished)
-        self.workers.start("migrate", worker)
+        self.workers.start("migrate", worker, critical=True)
+
+    def _drain_migration_events(self, flush: bool = False) -> None:
+        """Move queued migration events to UI signals (runs on the main thread)."""
+        drained = 0
+        while True:
+            try:
+                kind, payload = self._migration_events.get_nowait()
+            except queue.Empty:
+                break
+            drained += 1
+            if kind == "stats" and isinstance(payload, dict):
+                self.report_progress(payload.get("percent", 0))
+                self.migration_detail.emit(payload)
+            elif kind == "log":
+                self.migration_log.emit(str(payload))
+            elif kind == "phase":
+                self.migration_phase.emit(str(payload))
+            elif kind == "stalled":
+                self.migration_log.emit("⚠ No data received for a while; the transfer may be stalled.")
+            elif kind == "log_path":
+                self.migration_log.emit(f"Diagnostics saved to: {payload}")
+            if not flush and drained >= 500:
+                break
+
+    def cancel_migration(self, project_name: str = "") -> None:
+        """Ask the running migration to stop (terminates dump/load)."""
+        self.migration_service.cancel()
+
+    def delete_target_repository(self, project_name: str) -> None:
+        """Delete the partially-loaded target repository after a cancel/failure."""
+        target_id = self._migration_target_servers.get(project_name, "")
+        if not target_id:
+            return
+        ok, message = self.migration_service.delete_repository(target_id, project_name)
+        self.report_status(message, "yellow" if ok else "red")
 
     def _on_migration_finished(self, project_name: str, success: bool, message: str) -> None:
+        self._drain_migration_events(flush=True)
+        self._migration_timer.stop()
         color = "green" if success else "red"
         self.report_status(message, color)
+        if success:
+            self.report_progress(100)
+        else:
+            self.clear_progress()
+        QTimer.singleShot(2500, self.clear_progress)
         self.migration_finished.emit(project_name, success, message)
+
+    def migration_source_name(self, project_name: str) -> str:
+        server_id = self._migration_source_servers.get(project_name, "")
+        getter = getattr(self.config_factory, "get_server", None)
+        server = getter(server_id) if callable(getter) and server_id else None
+        return server.name if server is not None else "the old server"
 
     def cleanup_local_repository(self, project_name: str) -> None:
         """Optionally delete the old repository after a successful migration."""
@@ -332,7 +456,7 @@ class ProjectListViewModel(BaseViewModel):
         server_id = self._migration_source_servers.get(project_name, "")
         worker = VCSLocalCleanupWorker(self.migration_service, project_name, server_id=server_id)
         worker.finished_cleanup.connect(self._on_cleanup_finished)
-        self.workers.start("cleanup", worker)
+        self.workers.start("cleanup", worker, critical=True)
 
     def _on_cleanup_finished(self, project_name: str, success: bool, message: str) -> None:
         self.report_status(message, "green" if success else "yellow")
@@ -355,9 +479,10 @@ class ProjectListViewModel(BaseViewModel):
                 server = None
 
         if vcs_requires_credentials(self.config_factory, server=server):
+            server_id = server.id if server is not None else ""
             provider = None
             if self.credential_vault is not None:
-                provider = self.credential_vault.get_ssh_passphrase
+                provider = lambda sid=server_id: self.credential_vault.get_ssh_passphrase(sid)
             if server is not None:
                 adapter, repository_url, profile = server.adapter, server.repository_url, server.profile
             else:

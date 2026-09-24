@@ -32,6 +32,7 @@ class BaseDashboardView(QWidget):
 
         if status_sink is not None:
             status_sink.message.connect(self.update_status)
+            status_sink.progress.connect(self.update_progress)
 
     def _build_shell(self) -> None:
         """Build the immutable shell by composing the submodules."""
@@ -78,3 +79,6 @@ class BaseDashboardView(QWidget):
 
     def update_status(self, message: str, color: str = "white") -> None:
         self.status_bar.update_status(message, color)
+
+    def update_progress(self, percent: int) -> None:
+        self.status_bar.set_progress(percent)

@@ -31,7 +31,9 @@ Each server entry has:
   * **`local_docker`** — the bundled developer SVN container (`openstudio_local_svn`).
   * **`remote_ssh`** — a production VPS whose `svnserve` runs inside a Docker container and is only reachable over the tailnet. The Hub creates and deletes **per-project repositories** by running `docker exec` over OpenSSH; it does not manage the daemon itself.
 
-For `remote_ssh` you provide: the SSH host/port/user, the private key (and optional OpenSSH certificate), an optional `known_hosts` file, the **Docker container name** (mandatory), the in-container repository root (svnserve `-r`, e.g. `/var/opt/svn`), and the in-container path to the studio-wide `passwd` file. Leave the passwd path blank to default to `<repo_root>/passwd`. The SSH passphrase is entered in the Session Credentials tab and kept in RAM for provisioning only.
+For `remote_ssh` you provide: the SSH host/port/user, the private key (and optional OpenSSH certificate), an optional `known_hosts` file, the **Docker container name** (mandatory), the in-container repository root (svnserve `-r`, e.g. `/var/opt/svn`), and the in-container path to the studio-wide `passwd` file. Leave the passwd path blank to default to `<repo_root>/passwd`.
+
+**Credentials are per server.** The Session Credentials tab (and the just-in-time prompt before a VCS action) pick the target server from a dropdown and store the VCS username/password and, for remote servers, the SSH key passphrase in RAM for the session only. Nothing is written to disk.
 
 New projects pick their server in the creation dialog; the binding is recorded as `vcs_server_id` in the project's `project_init.json`, so a studio can run some projects on the local sandbox and others on a VPS at the same time.
 

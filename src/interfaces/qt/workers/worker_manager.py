@@ -36,22 +36,30 @@ class WorkerManager(QObject):
         *,
         skip_if_running: bool = True,
         on_finished: Optional[Callable[[], None]] = None,
+        critical: bool = False,
     ) -> bool:
         """Start ``worker`` under ``key``.
 
         Returns ``False`` (and does not start) when a worker with the same key is
-        already running and ``skip_if_running`` is set.
+        already running and ``skip_if_running`` is set. ``critical`` marks
+        long-running, data-mutating operations the shell must not interrupt by
+        closing.
         """
         current = self._workers.get(key)
         if current is not None and self._is_running(current):
             if skip_if_running:
                 return False
 
+        try:
+            worker._critical = critical
+        except Exception:  # noqa: BLE001
+            pass
+
         self._workers[key] = worker
         if on_finished is not None:
             worker.finished.connect(on_finished)
         worker.finished.connect(lambda k=key, w=worker: self._on_finished(k, w))
-        keep_worker_alive(worker)
+        keep_worker_alive(worker, critical=critical)
         worker.start()
         return True
 

@@ -6,10 +6,10 @@
 
 """Modal that requests VCS credentials just before a VCS-backed action.
 
-The values collected here are handed back to the caller through
-``credentials()`` and stored exclusively in the RAM-only ``CredentialVault``
-(the same mechanism used by the Session Credentials settings tab). Nothing is
-written to disk.
+The values collected here are handed back to the caller and stored exclusively
+in the RAM-only ``CredentialVault`` for the target server. Nothing is written to
+disk. When the target server is reached over SSH, the dialog also asks for the
+key passphrase so provisioning can run unattended.
 """
 
 from PySide6.QtCore import Qt
@@ -25,17 +25,24 @@ from PySide6.QtWidgets import (
 
 
 class VcsCredentialsDialog(QDialog):
-    """Blocking prompt for the session VCS username / password."""
+    """Blocking prompt for a server's VCS username / password (and passphrase)."""
 
-    def __init__(self, parent=None, default_username: str = "") -> None:
+    def __init__(
+        self,
+        parent=None,
+        default_username: str = "",
+        server_label: str = "",
+        include_passphrase: bool = False,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("VCS Credentials Required"))
-        self.setFixedSize(440, 280)
+        self.setFixedSize(460, 300 if not include_passphrase else 380)
         self.setModal(True)
         self.setObjectName("FloatingCard")
-        self._build_ui(default_username)
+        self._include_passphrase = include_passphrase
+        self._build_ui(default_username, server_label)
 
-    def _build_ui(self, default_username: str) -> None:
+    def _build_ui(self, default_username: str, server_label: str) -> None:
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 25, 30, 25)
         layout.setSpacing(15)
@@ -44,10 +51,15 @@ class VcsCredentialsDialog(QDialog):
         lbl_title.setObjectName("H2Title")
         layout.addWidget(lbl_title)
 
+        if server_label:
+            lbl_server = QLabel(self.tr(f"Server: {server_label}"))
+            lbl_server.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 13px;")
+            layout.addWidget(lbl_server)
+
         lbl_notice = QLabel(
             self.tr(
                 "This action requires access to the version control repository. "
-                "Enter your VCS username and password to continue."
+                "Enter the VCS username and password to continue."
             )
         )
         lbl_notice.setWordWrap(True)
@@ -75,10 +87,22 @@ class VcsCredentialsDialog(QDialog):
         lbl_pwd.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
         form.addRow(lbl_user, self.entry_user)
         form.addRow(lbl_pwd, self.entry_pwd)
+
+        self.entry_passphrase = None
+        if self._include_passphrase:
+            self.entry_passphrase = QLineEdit()
+            self.entry_passphrase.setObjectName("FormInput")
+            self.entry_passphrase.setFixedHeight(35)
+            self.entry_passphrase.setEchoMode(QLineEdit.Password)
+            self.entry_passphrase.setPlaceholderText(self.tr("optional SSH key passphrase"))
+            lbl_pass = QLabel(self.tr("SSH Passphrase:"))
+            lbl_pass.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+            form.addRow(lbl_pass, self.entry_passphrase)
+
         layout.addLayout(form)
 
         lbl_session = QLabel(
-            self.tr("The password is kept in RAM only for this session and is never written to disk.")
+            self.tr("Values are kept in RAM only for this session and are never written to disk.")
         )
         lbl_session.setWordWrap(True)
         lbl_session.setStyleSheet("color: #F59E0B; font-size: 11px;")
@@ -117,3 +141,8 @@ class VcsCredentialsDialog(QDialog):
 
     def credentials(self) -> tuple[str, str]:
         return self.entry_user.text().strip(), self.entry_pwd.text()
+
+    def ssh_passphrase(self) -> str:
+        if self.entry_passphrase is None:
+            return ""
+        return self.entry_passphrase.text()

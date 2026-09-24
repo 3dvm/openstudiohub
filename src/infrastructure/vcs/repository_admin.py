@@ -50,7 +50,7 @@ def validate_repo_name(repo_name: str) -> str:
 class RepositoryAdmin:
     """Interface implemented by the local and remote lifecycle strategies."""
 
-    def create(self, repo_name: str, vfs_svn: str) -> bool:
+    def create(self, repo_name: str, vfs_svn: str, initialize_topology: bool = True) -> bool:
         raise NotImplementedError
 
     def destroy(self, repo_name: str, vfs_svn: str) -> Tuple[bool, str]:
@@ -71,7 +71,7 @@ class LocalDockerRepositoryAdmin(RepositoryAdmin):
     def _repo_path(self, repo_name: str) -> str:
         return f"{self.repo_root}/{repo_name}"
 
-    def create(self, repo_name: str, vfs_svn: str) -> bool:
+    def create(self, repo_name: str, vfs_svn: str, initialize_topology: bool = True) -> bool:
         repo_name = validate_repo_name(normalize_repo_name(repo_name))
         repo_path = self._repo_path(repo_name)
 
@@ -113,12 +113,13 @@ class LocalDockerRepositoryAdmin(RepositoryAdmin):
                 capture_output=True,
             )
 
-            mkdir_cmd = f"svn mkdir file://{repo_path}/{vfs_svn} -m 'Init Hub Topology'"
-            subprocess.run(
-                ["docker", "exec", self.container, "sh", "-c", mkdir_cmd],
-                check=True,
-                capture_output=True,
-            )
+            if initialize_topology:
+                mkdir_cmd = f"svn mkdir file://{repo_path}/{vfs_svn} -m 'Init Hub Topology'"
+                subprocess.run(
+                    ["docker", "exec", self.container, "sh", "-c", mkdir_cmd],
+                    check=True,
+                    capture_output=True,
+                )
 
             print(f"[LocalVCS] Repository '{repo_name}' created successfully.")
             return True
@@ -202,7 +203,7 @@ class RemoteSSHRepositoryAdmin(RepositoryAdmin):
             check=True,
         )
 
-    def create(self, repo_name: str, vfs_svn: str) -> bool:
+    def create(self, repo_name: str, vfs_svn: str, initialize_topology: bool = True) -> bool:
         repo_name = validate_repo_name(normalize_repo_name(repo_name))
         repo_path = self._repo_path(repo_name)
 
@@ -214,11 +215,12 @@ class RemoteSSHRepositoryAdmin(RepositoryAdmin):
         self.runner.run(self._wrap(f"svnadmin create {quoted_path}"), check=True)
         self._write_serve_conf(repo_path)
 
-        quoted_vfs = self.runner.quote(f"file://{repo_path}/{vfs_svn}")
-        self.runner.run(
-            self._wrap(f"svn mkdir {quoted_vfs} -m 'Init Hub Topology' -q"),
-            check=True,
-        )
+        if initialize_topology:
+            quoted_vfs = self.runner.quote(f"file://{repo_path}/{vfs_svn}")
+            self.runner.run(
+                self._wrap(f"svn mkdir {quoted_vfs} -m 'Init Hub Topology' -q"),
+                check=True,
+            )
 
         print(f"[RemoteVCS] Repository '{repo_name}' created on {self.remote.host}.")
         return True
