@@ -27,7 +27,15 @@ class FakeAdapter:
         self.commit_calls = []
         self.lock_calls = []
         self.unlock_calls = []
+        self.full_pull_calls = []
+        self.pull_error = None
         self.lock_info = None
+
+    def full_pull(self, username=None, password=None):
+        self.full_pull_calls.append((username, password))
+        if self.pull_error is not None:
+            raise self.pull_error
+        return True
 
     def get_status(self, path=None):
         return dict(self._status)
@@ -180,3 +188,33 @@ def test_unlock_task_file_releases_lock(tmp_path):
 
     assert ok is True
     assert adapter.unlock_calls == [("pro/a.blend", "artist", "secret")]
+
+
+def test_update_working_copy_pulls_with_credentials(tmp_path):
+    service, adapter = _service(tmp_path, {})
+
+    ok, message = service.update_working_copy(tmp_path / "p", "artist", "secret")
+
+    assert ok is True
+    assert "updated" in message.lower()
+    assert adapter.full_pull_calls == [("artist", "secret")]
+
+
+def test_update_working_copy_rejected_when_vcs_disabled(tmp_path):
+    service, adapter = _service(tmp_path, {}, vcs_type="none")
+
+    ok, message = service.update_working_copy(tmp_path / "p", "artist", "secret")
+
+    assert ok is False
+    assert "disabled" in message.lower()
+    assert adapter.full_pull_calls == []
+
+
+def test_update_working_copy_surfaces_adapter_error(tmp_path):
+    service, adapter = _service(tmp_path, {})
+    adapter.pull_error = RuntimeError("SVN Failure: out of date")
+
+    ok, message = service.update_working_copy(tmp_path / "p", "artist", "secret")
+
+    assert ok is False
+    assert "out of date" in message

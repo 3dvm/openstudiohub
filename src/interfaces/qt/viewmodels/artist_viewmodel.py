@@ -34,6 +34,7 @@ from src.interfaces.qt.workers.artist_workers import (
     InstallProjectWorker,
     LaunchTaskWorker,
     PublishVcsChangesWorker,
+    UpdateVcsWorker,
 )
 from src.interfaces.qt.workers.worker_manager import WorkerManager
 
@@ -52,6 +53,7 @@ class ArtistTaskCardModel:
     project_name: str
     task_file_path: Optional[str] = None
     pending_changes: list = field(default_factory=list)
+    vcs_enabled: bool = False
 
 
 class ArtistViewModel(BaseViewModel):
@@ -60,6 +62,7 @@ class ArtistViewModel(BaseViewModel):
     tasks_load_finished = Signal(bool)  # success
     vcs_changes_ready = Signal(str, list)  # (task_id, list[FileChange])
     vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
+    vcs_update_finished = Signal(str, bool, str)  # (project_id, success, message)
 
     def __init__(
         self,
@@ -176,6 +179,7 @@ class ArtistViewModel(BaseViewModel):
             project_id=task_data.get("project_id", ""),
             project_name=project_name,
             task_file_path=task_file_path,
+            vcs_enabled=self.task_file_sync_service.is_vcs_enabled(project_root),
         )
 
     # ------------------------------------------------------------------
@@ -272,10 +276,65 @@ class ArtistViewModel(BaseViewModel):
             self.check_vcs_changes(card)
 
     # ------------------------------------------------------------------
+    # VCS update use case
+    # ------------------------------------------------------------------
+    def update_vcs(self, project_id: str, project_root: Optional[Path]) -> bool:
+        """Pull the latest revision from the VCS for a project's workspace.
+
+        Returns ``True`` when the update worker started, ``False`` when it was
+        aborted (VCS disabled, project folder missing, already running or the
+        credentials prompt was cancelled).
+        """
+        if not project_root:
+            self.report_status("Cannot update: project folder is missing on NAS.", "red")
+            return False
+        if not self.is_vcs_enabled(project_root):
+            self.report_status("Version Control is disabled for this project.", "yellow")
+            return False
+        if self.workers.is_running("vcs_update"):
+            self.report_status("An update is already in progress...", "red")
+            return False
+
+        creds = self._ensure_vcs_credentials(project_root)
+        if creds is None:
+            return False
+        vcs_user, vcs_pwd = creds
+
+        self.report_status("⟳ Updating the project workspace from the VCS...", "yellow")
+        worker = UpdateVcsWorker(
+            sync_service=self.task_file_sync_service,
+            project_id=str(project_id or ""),
+            project_root=project_root,
+            username=vcs_user,
+            password=vcs_pwd,
+        )
+        worker.finished_update.connect(self._on_vcs_update_finished)
+        self.workers.start("vcs_update", worker, critical=True)
+        return True
+
+    def is_vcs_update_running(self) -> bool:
+        return self.workers.is_running("vcs_update")
+
+    def _on_vcs_update_finished(self, project_id: str, success: bool, message: str) -> None:
+        if success:
+            self.report_status(f"🟢 {message}", "green")
+            self._recheck_project_changes(project_id)
+        else:
+            self.report_status(f"🔴 Update Error: {message}", "red")
+        self.vcs_update_finished.emit(project_id, success, message)
+
+    def _recheck_project_changes(self, project_id: str) -> None:
+        card = next(
+            (c for c in self._cards if str(c.project_id) == str(project_id)), None
+        )
+        if card is not None:
+            self.check_vcs_changes(card)
+
+    # ------------------------------------------------------------------
     # VCS publish use case
     # ------------------------------------------------------------------
-    def is_vcs_enabled(self) -> bool:
-        return self.task_file_sync_service.is_vcs_enabled()
+    def is_vcs_enabled(self, project_root: Optional[Path] = None) -> bool:
+        return self.task_file_sync_service.is_vcs_enabled(project_root)
 
     def check_vcs_changes(self, card: ArtistTaskCardModel) -> None:
         """Scan the project workspace for files not yet committed to the VCS."""

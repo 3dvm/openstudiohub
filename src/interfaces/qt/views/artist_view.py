@@ -68,6 +68,7 @@ class ViewArtist(BaseDashboardView):
         self.vm.tasks_load_finished.connect(self._on_tasks_load_finished)
         self.vm.vcs_changes_ready.connect(self._on_vcs_changes_ready)
         self.vm.vcs_publish_finished.connect(self._on_vcs_publish_finished)
+        self.vm.vcs_update_finished.connect(self._on_vcs_update_finished)
         self.vm.load_tasks()
 
     def _build_content(self) -> None:
@@ -95,9 +96,20 @@ class ViewArtist(BaseDashboardView):
         self.btn_refresh.setToolTip(self.tr("Fetch the latest updates for your assigned tasks."))
         self.btn_refresh.clicked.connect(self._refresh_tasks)
 
+        self.btn_update_vcs = QPushButton(self.tr("⟳ Update from VCS"))
+        self.btn_update_vcs.setObjectName("SecondaryButton")
+        self.btn_update_vcs.setFixedHeight(35)
+        self.btn_update_vcs.setCursor(Qt.PointingHandCursor)
+        self.btn_update_vcs.setEnabled(False)
+        self.btn_update_vcs.setToolTip(
+            self.tr("Pull the selected project's latest revisions from the VCS.")
+        )
+        self.btn_update_vcs.clicked.connect(self._on_update_vcs_clicked)
+
         header_layout.addWidget(lbl_title)
         header_layout.addStretch()
         header_layout.addWidget(self.btn_refresh)
+        header_layout.addWidget(self.btn_update_vcs)
         header_layout.addWidget(QLabel(self.tr("Project:")))
         header_layout.addWidget(self.combo_projects)
 
@@ -264,6 +276,49 @@ class ViewArtist(BaseDashboardView):
 
         self._current_cols = 0
         self._rearrange_grid()
+        self._sync_update_vcs_button()
+
+    # ------------------------------------------------------------------
+    # VCS update flow
+    # ------------------------------------------------------------------
+    def _selected_project_card(self):
+        selected_project_id = self.combo_projects.currentData()
+        if not selected_project_id or selected_project_id == "ALL":
+            return None
+        return next(
+            (c for c in self._cards if c.project_id == selected_project_id), None
+        )
+
+    def _sync_update_vcs_button(self) -> None:
+        card = self._selected_project_card()
+        enabled = (
+            card is not None
+            and card.vcs_enabled
+            and not self.vm.is_vcs_update_running()
+        )
+        self.btn_update_vcs.setEnabled(enabled)
+        if card is None:
+            self.btn_update_vcs.setToolTip(
+                self.tr("Select a specific project to update from the VCS.")
+            )
+        elif not card.vcs_enabled:
+            self.btn_update_vcs.setToolTip(
+                self.tr("This project is not under version control (NAS only).")
+            )
+        else:
+            self.btn_update_vcs.setToolTip(
+                self.tr("Pull the selected project's latest revisions from the VCS.")
+            )
+
+    def _on_update_vcs_clicked(self) -> None:
+        card = self._selected_project_card()
+        if card is None:
+            return
+        if self.vm.update_vcs(card.project_id, card.project_root):
+            self.btn_update_vcs.setEnabled(False)
+
+    def _on_vcs_update_finished(self, _project_id: str, _success: bool, _message: str) -> None:
+        self._sync_update_vcs_button()
 
     # ------------------------------------------------------------------
     # VCS publish flow

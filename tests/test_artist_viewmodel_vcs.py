@@ -122,3 +122,63 @@ def test_publish_finished_keeps_pending_on_failure(tmp_path, qapp):
     vm._on_vcs_publish_finished("t1", False, "SVN Failure: out of date")
 
     assert card.pending_changes == pending
+
+
+def test_update_vcs_skips_when_vcs_disabled(tmp_path, qapp):
+    vm = _vm(tmp_path, vcs_type="none")
+    card = _card(tmp_path)
+
+    assert vm.update_vcs(card.project_id, card.project_root) is False
+
+
+def test_update_vcs_aborts_when_credentials_cancelled(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    vm._ensure_vcs_credentials = lambda _root=None: None
+    card = _card(tmp_path)
+
+    assert vm.update_vcs(card.project_id, card.project_root) is False
+
+
+def test_update_vcs_starts_worker(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    vm._ensure_vcs_credentials = lambda _root=None: ("artist", "secret")
+    started = {}
+
+    def fake_start(key, worker, **kwargs):
+        started["key"] = key
+        started["worker"] = worker
+        return True
+
+    vm.workers.start = fake_start
+    card = _card(tmp_path)
+
+    assert vm.update_vcs(card.project_id, card.project_root) is True
+    assert started["key"] == "vcs_update"
+    assert started["worker"].project_id == "p1"
+
+
+def test_update_finished_emits_and_rescans(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    card = _card(tmp_path)
+    vm._cards = [card]
+    scanned = []
+    vm.check_vcs_changes = lambda c: scanned.append(c)
+    received = []
+    vm.vcs_update_finished.connect(lambda *args: received.append(args))
+
+    vm._on_vcs_update_finished("p1", True, "Workspace updated from the VCS.")
+
+    assert scanned == [card]
+    assert received == [("p1", True, "Workspace updated from the VCS.")]
+
+
+def test_update_finished_skips_rescan_on_failure(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    card = _card(tmp_path)
+    vm._cards = [card]
+    scanned = []
+    vm.check_vcs_changes = lambda c: scanned.append(c)
+
+    vm._on_vcs_update_finished("p1", False, "SVN Failure: out of date")
+
+    assert scanned == []

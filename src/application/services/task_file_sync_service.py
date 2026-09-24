@@ -158,6 +158,38 @@ class TaskFileSyncService:
         return changes
 
     # ------------------------------------------------------------------
+    # Update
+    # ------------------------------------------------------------------
+    def update_working_copy(
+        self,
+        project_root: Path,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Pull the latest changes from the VCS into the project workspace.
+
+        Runs ``svn update`` (or ``git pull``) on ``<project_root>/<vfs>`` so the
+        artist works against the team's latest revision. Authentication uses the
+        per-server username/password only; SSH is reserved for server-side
+        repository administration.
+        """
+        if not self.is_vcs_enabled(project_root):
+            return False, "Version Control is disabled for this project."
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not initialize the VCS adapter: {error}"
+        if adapter is None:
+            return False, "VCS enabled but no adapter is available."
+
+        try:
+            adapter.full_pull(username, password)
+        except Exception as error:  # noqa: BLE001
+            return False, str(error)
+        return True, "Workspace updated from the VCS."
+
+    # ------------------------------------------------------------------
     # Publish
     # ------------------------------------------------------------------
     def publish(

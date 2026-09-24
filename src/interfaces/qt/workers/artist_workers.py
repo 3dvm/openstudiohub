@@ -138,6 +138,38 @@ class CheckVcsChangesWorker(ManagedWorker):
             self.error_occurred.emit(str(error))
 
 
+class UpdateVcsWorker(ManagedWorker):
+    """Pulls the latest VCS revision into the project workspace off the UI thread."""
+
+    finished_update = Signal(str, bool, str)  # (project_id, success, message)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        project_id: str,
+        project_root: Path,
+        username: str,
+        password: str,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.project_id = project_id
+        self.project_root = project_root
+        self.username = username
+        self.password = password
+
+    def run(self) -> None:
+        try:
+            success, message = self.sync_service.update_working_copy(
+                project_root=self.project_root,
+                username=self.username,
+                password=self.password,
+            )
+            self.finished_update.emit(self.project_id, success, message)
+        except Exception as error:  # noqa: BLE001
+            self.finished_update.emit(self.project_id, False, str(error))
+
+
 class PublishVcsChangesWorker(ManagedWorker):
     """Commits the selected task files to the VCS without freezing the UI."""
 
