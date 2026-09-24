@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from src.application.ports import VaultManifestRepository
-from src.domain.vault.manifest import VaultManifest
+from src.domain.vault.manifest import VaultManifest, needs_migration
 
 
 class FileVaultManifestRepository(VaultManifestRepository):
@@ -32,10 +32,16 @@ class FileVaultManifestRepository(VaultManifestRepository):
             return VaultManifest()
         try:
             with open(self.path(), "r", encoding="utf-8") as handle:
-                return VaultManifest.from_dict(json.load(handle))
+                raw = json.load(handle)
         except Exception as error:  # noqa: BLE001 - corrupt manifest -> empty
             print(f"[VAULT MANIFEST] Failed to parse {self.path()}: {error}")
             return VaultManifest()
+
+        manifest = VaultManifest.from_dict(raw)
+        if needs_migration(raw):
+            # Legacy schema detected: rewrite it canonical so the fix persists.
+            self.save(manifest)
+        return manifest
 
     def save(self, manifest: VaultManifest) -> bool:
         try:

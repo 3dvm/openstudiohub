@@ -7,6 +7,7 @@
 """Manifest editor: renders the add-on tree and injects local .zip add-ons."""
 
 import os
+import platform
 import shutil
 import tempfile
 import zipfile
@@ -28,8 +29,15 @@ from PySide6.QtWidgets import (
 )
 
 from src.domain.addon_inspector import AddonInspector
+from src.domain.vault.integrity import base_version, register_disk_versions, remove_version, slugify
 from src.application.services.vault_service import VaultService
-from src.infrastructure.provisioning_workers import StudioToolsFetchWorker
+from src.infrastructure.provisioning_workers import (
+    BlenderDirectDownloadWorker,
+    StudioToolsFetchWorker,
+    VaultIntegrityWorker,
+)
+from src.interfaces.qt.settings_tabs.software_components.integrity_dialog import VaultIntegrityDialog
+from src.interfaces.qt.settings_tabs.software_components.remote_explorer import SubversionScraper
 
 
 class ManifestEditorWidget(QFrame):
@@ -42,6 +50,10 @@ class ManifestEditorWidget(QFrame):
         self._is_loading = True
         self.manifest_data = {}
         self._fetch_worker = None
+        self._integrity_worker = None
+        self._last_integrity_report = None
+        self._binary_scraper = None
+        self._binary_download_worker = None
 
         self.setObjectName("FloatingCard")
         self._build_ui()
@@ -63,6 +75,12 @@ class ManifestEditorWidget(QFrame):
         control_layout.addWidget(self.combo_versions)
 
         control_layout.addStretch()
+
+        self.btn_verify_integrity = QPushButton(self.tr("🩺 Verify Manifest Integrity"))
+        self.btn_verify_integrity.setObjectName("SecondaryButton")
+        self.btn_verify_integrity.setFixedHeight(30)
+        self.btn_verify_integrity.clicked.connect(self._verify_integrity)
+        control_layout.addWidget(self.btn_verify_integrity)
 
         self.btn_addons_fetch_pack = QPushButton(self.tr("Fetch and Pack Pipeline addons"))
         self.btn_addons_fetch_pack.setObjectName("SecondaryButton")
@@ -132,12 +150,16 @@ class ManifestEditorWidget(QFrame):
         categories_block = self.manifest_data[active_version]
 
         for cat_name, items in categories_block.items():
+            if not isinstance(items, dict):
+                continue
             cat_item = QTreeWidgetItem(self.tree_manifest)
             cat_item.setText(0, f"{cat_name.upper()}")
             cat_item.setForeground(0, Qt.lightGray)
             cat_item.setExpanded(True)
 
             for item_name, data in items.items():
+                if not isinstance(data, dict):
+                    continue
                 child = QTreeWidgetItem(cat_item)
                 child.setText(0, item_name)
                 child.setText(1, str(data.get("version", "1.0")))
@@ -166,6 +188,201 @@ class ManifestEditorWidget(QFrame):
         self.btn_addons_fetch_pack.setEnabled(False)
         self._trigger_studio_tools_fetch()
         self._package_local_toolkit()
+
+    # ------------------------------------------------------------------
+    # INTEGRITY AUDIT & REPAIRS
+    # ------------------------------------------------------------------
+    def _verify_integrity(self) -> None:
+        if self._integrity_worker and self._integrity_worker.isRunning():
+            self.status_callback(self.tr("Integrity audit already running."), "yellow")
+            return
+
+        self.btn_verify_integrity.setEnabled(False)
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self.status_callback(self.tr("Auditing vault against the manifest..."), "yellow")
+
+        self._integrity_worker = VaultIntegrityWorker(
+            self.vault_service.vault_root, dict(self.manifest_data)
+        )
+        self._integrity_worker.report_ready.connect(self._on_integrity_report)
+        self._integrity_worker.error_occurred.connect(self._on_integrity_error)
+        self._integrity_worker.finished.connect(self._cleanup_integrity_worker)
+        self._integrity_worker.start()
+
+    def _cleanup_integrity_worker(self) -> None:
+        if self._integrity_worker:
+            self._integrity_worker.deleteLater()
+            self._integrity_worker = None
+
+    def _on_integrity_error(self, error: str) -> None:
+        self.btn_verify_integrity.setEnabled(True)
+        self.progress_bar.hide()
+        self.status_callback(self.tr("Integrity audit failed: {0}").format(error), "red")
+
+    def _on_integrity_report(self, report) -> None:
+        self.btn_verify_integrity.setEnabled(True)
+        self.progress_bar.hide()
+        self._last_integrity_report = report
+
+        if not report.has_issues:
+            self.status_callback(self.tr("✓ Vault manifest is consistent."), "green")
+
+        dialog = VaultIntegrityDialog(self, report, active_version=self.combo_versions.currentText())
+        dialog.apply_safe_fixes_requested.connect(self._apply_integrity_fixes)
+        dialog.redownload_binary_requested.connect(self._redownload_binary)
+        dialog.delete_version_requested.connect(self._delete_version)
+        dialog.redownload_addons_requested.connect(self._redownload_missing_addons)
+        dialog.move_misplaced_requested.connect(self._move_misplaced_binaries)
+        dialog.register_orphan_addons_requested.connect(self._register_orphan_addons)
+        dialog.exec()
+
+    def _apply_integrity_fixes(self) -> None:
+        report = self._last_integrity_report
+        if report is None:
+            return
+
+        added = register_disk_versions(self.manifest_data, report)
+
+        for version, name, _manifest_v, disk_v in report.addon_version_mismatches:
+            categories = self.manifest_data.get(version)
+            if isinstance(categories, dict):
+                entry = categories.get("addons", {}).get(name)
+                if isinstance(entry, dict):
+                    entry["version"] = disk_v
+
+        if added:
+            self.status_callback(
+                self.tr("✓ Registered downloaded Blender version(s): {0}").format(", ".join(added)),
+                "green",
+            )
+        else:
+            self.status_callback(self.tr("✓ Applied manifest fixes."), "green")
+
+        self._refresh_versions()
+        self._on_field_modified()
+
+    def _refresh_versions(self) -> None:
+        active = self.combo_versions.currentText()
+        versions = list(self.manifest_data.keys())
+        self.set_available_versions(versions, auto_select=active if active in versions else None)
+
+    def _delete_version(self, version: str) -> None:
+        if remove_version(self.manifest_data, version):
+            self.status_callback(self.tr("✓ Removed Blender {0} from the manifest.").format(version), "green")
+            self._refresh_versions()
+            self._on_field_modified()
+
+    def _redownload_binary(self, version: str) -> None:
+        self.status_callback(self.tr("Resolving Blender {0} packages...").format(version), "yellow")
+        self._binary_scraper = SubversionScraper(base_version(version))
+        self._binary_scraper.data_ready.connect(lambda data: self._start_binary_download(data, version))
+        self._binary_scraper.error_occurred.connect(
+            lambda msg: self.status_callback(msg, "red")
+        )
+        self._binary_scraper.start()
+
+    def _start_binary_download(self, data: dict, version: str) -> None:
+        os_type = self._current_os()
+        os_map = data.get(version, {}) if isinstance(data, dict) else {}
+        filename = os_map.get(os_type) or next(iter(os_map.values()), None)
+
+        if not filename:
+            self.status_callback(
+                self.tr("✗ No downloadable package found for Blender {0}.").format(version), "red"
+            )
+            return
+
+        dest_dir = self.vault_service.vault_root / "blender_versions"
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+
+        self._binary_download_worker = BlenderDirectDownloadWorker(
+            f"Blender{base_version(version)}/", filename, dest_dir
+        )
+        self._binary_download_worker.progress.connect(self.progress_bar.setValue)
+        self._binary_download_worker.status.connect(self.status_callback)
+        self._binary_download_worker.finished.connect(self._on_binary_download_done)
+        self._binary_download_worker.start()
+
+    def _on_binary_download_done(self, success: bool, filename: str) -> None:
+        self.progress_bar.hide()
+        if self._binary_download_worker:
+            self._binary_download_worker.deleteLater()
+            self._binary_download_worker = None
+        if success:
+            self.status_callback(
+                self.tr("✓ {0} downloaded. Re-run the integrity check to register it.").format(filename),
+                "green",
+            )
+
+    def _move_misplaced_binaries(self) -> None:
+        report = self._last_integrity_report
+        if report is None:
+            return
+        dest_dir = self.vault_service.vault_root / "blender_versions"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        moved = 0
+        for path in report.misplaced_binaries:
+            try:
+                shutil.move(str(path), str(dest_dir / path.name))
+                moved += 1
+            except Exception as error:  # noqa: BLE001
+                self.status_callback(self.tr("✗ Could not move {0}: {1}").format(path.name, error), "red")
+        if moved:
+            self.status_callback(
+                self.tr("✓ Moved {0} archive(s) into blender_versions/.").format(moved), "green"
+            )
+            self._verify_integrity()
+
+    def _register_orphan_addons(self, names: list) -> None:
+        report = self._last_integrity_report
+        active_version = self.combo_versions.currentText()
+        if report is None or not active_version or active_version not in self.manifest_data:
+            self.status_callback(self.tr("✗ Select a target Blender version first."), "yellow")
+            return
+
+        by_slug = {slugify(asset.name): asset for asset in report.orphan_addons}
+        addons = self.manifest_data[active_version].setdefault("addons", {})
+        registered = 0
+        for name in names:
+            asset = by_slug.get(slugify(name))
+            if asset is None:
+                continue
+            try:
+                rel_path = asset.path.relative_to(self.vault_service.vault_root).as_posix()
+            except ValueError:
+                rel_path = str(asset.path)
+            addons[asset.name] = {
+                "version": asset.version,
+                "description": asset.description or "Registered from vault scan",
+                "mandatory": False,
+                "requires": [],
+                "path": rel_path,
+            }
+            registered += 1
+
+        if registered:
+            self._redraw_tree()
+            self._on_field_modified()
+            self.status_callback(
+                self.tr("✓ Registered {0} add-on(s) to Blender {1}.").format(registered, active_version),
+                "green",
+            )
+
+    def _redownload_missing_addons(self) -> None:
+        self.status_callback(self.tr("Re-downloading pipeline add-ons..."), "yellow")
+        self.btn_addons_fetch_pack.setEnabled(False)
+        self._trigger_studio_tools_fetch()
+        self._package_local_toolkit()
+
+    def _current_os(self) -> str:
+        system = platform.system().lower()
+        if system == "windows":
+            return "windows"
+        if system == "darwin":
+            return "macos"
+        return "linux"
 
     # ------------------------------------------------------------------
     # OPERATIONS: FETCH, PACK & INJECT

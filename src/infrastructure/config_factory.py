@@ -37,6 +37,10 @@ from src.domain.workspace.vcs_server_profile import (
 )
 from src.infrastructure.seed_engine import StudioSeedService
 
+# Portable vault folder name (resolved relative to each machine's workspace root).
+DEFAULT_VAULT_DIR = "openstudio_vault"
+
+
 class ConfigFactory:
     def __init__(self, config_path: Path):
         self.config_path = config_path
@@ -44,6 +48,7 @@ class ConfigFactory:
         self._volatile_identity = {}  # Volatile RAM cache for Kitsu identity
         self._seed_service = StudioSeedService(self)
         self._load_config()
+        self._migrate_machine_local_paths()
 
     def _load_config(self):
         """Reads and parses the master B2B file if it exists."""
@@ -102,6 +107,10 @@ class ConfigFactory:
         if not datos_dict:
             return False
 
+        if from_seed:
+            # Machine-specific paths (absolute vault, SSH keys) never come from a seed.
+            datos_dict = self._seed_service.sanitize_payload(datos_dict)
+
         try:
             # 1. Extraction and Normalization
             kitsu_url = datos_dict.get("kitsu_production", {}).get("api_url", "").strip()
@@ -149,8 +158,7 @@ class ConfigFactory:
 
             # Infrastructure & Vault Mapping
             if infra_data:
-                if "vault_path" in infra_data:
-                    self._config["infrastructure_topology"]["vault_path"] = infra_data.get("vault_path", "")
+                self._apply_vault_payload(infra_data, from_seed)
                 if "vcs_server" in infra_data:
                     profile = VCSServerProfile.from_dict(infra_data.get("vcs_server"))
                     self._config["infrastructure_topology"]["vcs_server"] = profile.to_dict()
@@ -183,6 +191,10 @@ class ConfigFactory:
 
             # Keep the legacy single-server mirror in sync with the default server.
             self._sync_legacy_vcs_keys()
+
+            if from_seed:
+                # Fill local SSH defaults now that the (sanitized) servers exist.
+                self._migrate_ssh_paths()
 
             # 4. Atomic Disk Write
             self._persist()
@@ -246,14 +258,135 @@ class ConfigFactory:
     def get_vault_path(self) -> Path:
         """
         Returns the absolute path to the Vault.
-        Calculates dynamic fallback based on workspace_root if unconfigured.
-        """
-        vault_str = self._config.get("infrastructure_topology", {}).get("vault_path", "")
-        if vault_str:
-            return Path(vault_str)
 
-        # Fallback dinámico
-        return self.get_workspace_root() / "openstudio_vault"
+        The Vault is portable: it is resolved from the *local* workspace root.
+        A machine-local absolute override (``vault_path``) is honoured when it
+        exists on this machine; otherwise the portable ``vault_dir`` (default
+        ``openstudio_vault``) is appended to the workspace root. This keeps
+        seeds/devices independent of each other's home folders.
+        """
+        infra = self._config.get("infrastructure_topology", {})
+        local_override = str(infra.get("vault_path") or "").strip()
+        if local_override and Path(local_override).exists():
+            return Path(local_override)
+
+        vault_dir = str(infra.get("vault_dir") or "").strip() or DEFAULT_VAULT_DIR
+        return self.get_workspace_root() / vault_dir
+
+    def get_vault_dir(self) -> str:
+        """Return the portable (relative) vault folder name."""
+        return str(self._config.get("infrastructure_topology", {}).get("vault_dir") or "").strip() or DEFAULT_VAULT_DIR
+
+    def set_vault_dir(self, vault_dir: str) -> bool:
+        """Persist the portable vault folder name (relative to the workspace root)."""
+        try:
+            infra = self._config.setdefault("infrastructure_topology", {})
+            infra["vault_dir"] = (vault_dir or "").strip() or DEFAULT_VAULT_DIR
+            infra.pop("vault_path", None)
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to persist vault dir: {e}")
+            return False
+
+    def _apply_vault_payload(self, infra_data: dict, from_seed: bool) -> None:
+        """Normalize an incoming vault configuration to portable/local form."""
+        infra = self._config.setdefault("infrastructure_topology", {})
+        vault_dir = str(infra_data.get("vault_dir") or "").strip()
+        vault_path = str(infra_data.get("vault_path") or "").strip()
+
+        if vault_dir:
+            infra["vault_dir"] = vault_dir
+            infra.pop("vault_path", None)
+            return
+
+        # Never adopt a seed's machine-specific absolute path.
+        if not vault_path or from_seed:
+            return
+
+        workspace = self.get_workspace_root()
+        if self._is_under(Path(vault_path), workspace):
+            infra["vault_dir"] = Path(vault_path).resolve().relative_to(workspace.resolve()).as_posix()
+            infra.pop("vault_path", None)
+        else:
+            infra["vault_path"] = vault_path
+
+    def portable_vault_config(self, vault_path: str) -> dict:
+        """Return portable ``{"vault_dir": ...}`` when under the workspace, else a local override."""
+        vault_path = str(vault_path or "").strip()
+        if not vault_path:
+            return {}
+        workspace = self.get_workspace_root()
+        if self._is_under(Path(vault_path), workspace):
+            return {"vault_dir": Path(vault_path).resolve().relative_to(workspace.resolve()).as_posix()}
+        return {"vault_path": vault_path}
+
+    @staticmethod
+    def _is_under(path: Path, root: Path) -> bool:
+        try:
+            Path(path).resolve().relative_to(Path(root).resolve())
+            return True
+        except (ValueError, OSError):
+            return False
+
+    def _migrate_machine_local_paths(self) -> None:
+        """Convert machine-specific absolute paths into portable/local ones.
+
+        Runs once at load; only persists when something actually changed.
+        """
+        changed = False
+
+        infra = self._config.setdefault("infrastructure_topology", {})
+        legacy_vault = str(infra.get("vault_path") or "").strip()
+        if legacy_vault:
+            workspace = self.get_workspace_root()
+            default_vault = workspace / DEFAULT_VAULT_DIR
+            if self._is_under(Path(legacy_vault), workspace):
+                infra["vault_dir"] = Path(legacy_vault).resolve().relative_to(workspace.resolve()).as_posix()
+                infra.pop("vault_path", None)
+                changed = True
+            elif not Path(legacy_vault).exists() and default_vault.exists():
+                infra["vault_dir"] = DEFAULT_VAULT_DIR
+                infra.pop("vault_path", None)
+                changed = True
+
+        changed = self._migrate_ssh_paths() or changed
+
+        if changed:
+            self._persist()
+
+    def _migrate_ssh_paths(self) -> bool:
+        """Reset machine-specific SSH paths that do not exist on this machine."""
+        defaults = {
+            "ssh_key_path": Path.home() / ".ssh" / "id_ed25519",
+            "ssh_cert_path": None,
+            "known_hosts_path": Path.home() / ".ssh" / "known_hosts",
+        }
+        changed = False
+
+        for server in self.get_vcs_servers().servers:
+            profile = server.profile
+            remote = profile.remote
+            updated = {}
+
+            for field_name, default in defaults.items():
+                current = str(getattr(remote, field_name) or "").strip()
+                if current and Path(current).exists():
+                    continue
+                if current:
+                    updated[field_name] = str(default) if default and Path(default).exists() else ""
+                elif default and field_name == "ssh_key_path" and Path(default).exists():
+                    updated[field_name] = str(default)
+
+            if not updated:
+                continue
+
+            new_remote = replace(remote, **updated)
+            new_profile = replace(profile, remote=new_remote)
+            self._store_registry(self.get_vcs_servers().with_server(replace(server, profile=new_profile)))
+            changed = True
+
+        return changed
 
     # ---------------------------------------------------------
     # VCS SERVER REGISTRY (MULTI-SERVER)

@@ -12,6 +12,10 @@ The core of the Hub's behavior is driven by a master `settings.json` file. This 
 
 The Hub is OS-agnostic: it dynamically detects the host operating system (Windows, Linux, Darwin) to resolve the correct local workspace root automatically.
 
+### Machine-local paths are never shipped
+
+The seed only carries **portable** configuration. The Vault is stored as a relative folder name (`vault_dir`, default `openstudio_vault`) that each machine resolves against its own local workspace root, so artists with a different home folder still find the shared binaries. Absolute paths that only make sense on the authoring machine (a custom vault override and the per-server `ssh_key_path` / `ssh_cert_path` / `known_hosts_path`) are stripped on export and ignored on import; each machine fills its own SSH defaults locally. When a legacy `settings.json` still holds an absolute vault path, the Hub migrates it to the portable form on load (or self-heals to `<workspace>/openstudio_vault` when the stored path is missing on this machine).
+
 ## Day 0 Provisioning (The `.seed` File)
 To provision multiple workstations without manually configuring paths on each machine, the Hub utilizes a Studio Seed Generator. 
 

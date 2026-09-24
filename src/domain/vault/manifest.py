@@ -28,7 +28,57 @@ Internally the aggregate holds the *normalized* form
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+# Category entry fields carried over when migrating legacy list-based add-ons.
+_ENTRY_FIELDS = ("version", "description", "mandatory", "requires", "path", "config_schema", "default_config")
+
+
+def needs_migration(raw: Optional[Dict[str, Any]]) -> bool:
+    """Whether ``raw`` uses a legacy schema requiring canonicalization.
+
+    Two legacy shapes are recognized:
+
+    * the pre-unification ``{"blender_versions": {<version>: {...}}}`` wrapper;
+    * categories stored as *lists* of ``{"name": ..., "version": ...}`` dicts.
+    """
+    if not isinstance(raw, dict):
+        return False
+    if isinstance(raw.get("blender_versions"), dict):
+        return True
+    for val in raw.values():
+        if not isinstance(val, dict):
+            continue
+        categories = val.get("categories") if "categories" in val else val
+        if isinstance(categories, dict) and any(isinstance(items, list) for items in categories.values()):
+            return True
+    return False
+
+
+def _entry_name(entry: Dict[str, Any], fallback: str) -> str:
+    name = entry.get("name") or entry.get("id")
+    if name:
+        return str(name)
+    path = entry.get("path")
+    if path:
+        return Path(str(path)).stem
+    return fallback
+
+
+def _normalize_category(items: Any) -> Dict[str, Any]:
+    """Coerce a category block into the canonical ``{name: entry}`` mapping."""
+    if isinstance(items, dict):
+        return {name: entry for name, entry in items.items() if isinstance(entry, dict)}
+    if isinstance(items, list):
+        normalized: Dict[str, Any] = {}
+        for index, entry in enumerate(items):
+            if not isinstance(entry, dict):
+                continue
+            name = _entry_name(entry, f"item_{index}")
+            normalized[name] = {field_name: entry[field_name] for field_name in _ENTRY_FIELDS if field_name in entry}
+        return normalized
+    return {}
 
 
 @dataclass
@@ -37,14 +87,21 @@ class VaultManifest:
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "VaultManifest":
+        raw = raw or {}
+        if isinstance(raw.get("blender_versions"), dict):
+            raw = raw["blender_versions"]
+
         versions: Dict[str, Dict[str, Any]] = {}
-        for key, val in (raw or {}).items():
+        for key, val in raw.items():
             if not isinstance(val, dict):
                 continue
             version = str(val.get("blender_version") or key).lstrip("vV ").strip()
             categories = val.get("categories") if "categories" in val else val
             if isinstance(categories, dict):
-                versions[version] = categories
+                versions[version] = {
+                    category: _normalize_category(items)
+                    for category, items in categories.items()
+                }
         return cls(versions=versions)
 
     def to_dict(self) -> Dict[str, Any]:

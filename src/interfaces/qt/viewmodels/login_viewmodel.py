@@ -59,6 +59,9 @@ class LoginViewModel(BaseViewModel):
         if ok and projects_dir is not None:
             self.config_factory.set_local_workspace_root(projects_dir)
         if ok:
+            # Rebind the vault to this machine (portable, relative to the workspace
+            # root) and drop any absolute path inherited from a legacy seed.
+            self.config_factory.set_vault_dir(self.config_factory.get_vault_dir())
             self.load_config_state()
             self.report_status("✓ Configuration imported successfully. You can now log in.", "green")
         else:

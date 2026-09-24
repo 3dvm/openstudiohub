@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from src.infrastructure.config_factory import ConfigFactory
+from src.infrastructure.config_factory import DEFAULT_VAULT_DIR, ConfigFactory
 
 
 def _write(tmp_path, payload: dict) -> Path:
@@ -167,3 +167,127 @@ def test_save_configuration_preserves_server_registry(tmp_path):
 
     assert factory.get_server("vps") is not None
     assert factory.get_vcs_repository_url() == "svn://vps"
+
+
+# ---------------------------------------------------------------------------
+# Portable vault resolution & migration
+# ---------------------------------------------------------------------------
+def _write_vault_config(tmp_path, workspace: Path, vault_path: str) -> Path:
+    return _write(tmp_path, {
+        "vcs_engine": {"local_workspace_root": {"linux": workspace.as_posix()}},
+        "infrastructure_topology": {"vault_path": vault_path},
+    })
+
+
+def test_vault_under_workspace_migrates_to_relative(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.infrastructure.config_factory.platform.system", lambda: "Linux")
+    workspace = tmp_path / "nas" / "projects"
+    vault = workspace / DEFAULT_VAULT_DIR
+    vault.mkdir(parents=True)
+
+    cfg_path = _write_vault_config(tmp_path, workspace, str(vault))
+    factory = ConfigFactory(cfg_path)
+
+    persisted = json.loads(cfg_path.read_text(encoding="utf-8"))["infrastructure_topology"]
+    assert persisted == {"vault_dir": DEFAULT_VAULT_DIR}
+    assert factory.get_vault_dir() == DEFAULT_VAULT_DIR
+    assert factory.get_vault_path() == vault
+
+
+def test_missing_foreign_vault_self_heals_to_workspace_default(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.infrastructure.config_factory.platform.system", lambda: "Linux")
+    workspace = tmp_path / "artist" / "nas"
+    (workspace / DEFAULT_VAULT_DIR).mkdir(parents=True)
+
+    cfg_path = _write_vault_config(tmp_path, workspace, "/home/macuare/Nextcloud/vault")
+    factory = ConfigFactory(cfg_path)
+
+    assert factory.get_vault_path() == workspace / DEFAULT_VAULT_DIR
+    persisted = json.loads(cfg_path.read_text(encoding="utf-8"))["infrastructure_topology"]
+    assert "vault_path" not in persisted
+
+
+def test_external_existing_vault_kept_as_local_override(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.infrastructure.config_factory.platform.system", lambda: "Linux")
+    workspace = tmp_path / "nas"
+    workspace.mkdir()
+    external = tmp_path / "external_vault"
+    external.mkdir()
+
+    cfg_path = _write_vault_config(tmp_path, workspace, str(external))
+    factory = ConfigFactory(cfg_path)
+
+    assert factory.get_vault_path() == external
+    persisted = json.loads(cfg_path.read_text(encoding="utf-8"))["infrastructure_topology"]
+    assert persisted == {"vault_path": str(external)}
+
+
+def test_portable_vault_config_and_set_vault_dir(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.infrastructure.config_factory.platform.system", lambda: "Linux")
+    workspace = tmp_path / "nas"
+    workspace.mkdir()
+    factory = ConfigFactory(tmp_path / "settings.json")
+    factory.set_local_workspace_root(workspace)
+
+    inside = workspace / DEFAULT_VAULT_DIR
+    assert factory.portable_vault_config(str(inside)) == {"vault_dir": DEFAULT_VAULT_DIR}
+    assert factory.portable_vault_config(str(tmp_path / "elsewhere")) == {"vault_path": str(tmp_path / "elsewhere")}
+
+    assert factory.set_vault_dir("studio_vault") is True
+    assert factory.get_vault_path() == workspace / "studio_vault"
+
+
+def test_fresh_install_defaults_vault_under_workspace(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.infrastructure.config_factory.platform.system", lambda: "Linux")
+    workspace = tmp_path / "nas"
+    workspace.mkdir()
+    cfg_path = _write(tmp_path, {"vcs_engine": {"local_workspace_root": {"linux": workspace.as_posix()}}})
+    factory = ConfigFactory(cfg_path)
+    assert factory.get_vault_path() == workspace / DEFAULT_VAULT_DIR
+
+
+def test_seed_import_does_not_inherit_foreign_machine_paths(monkeypatch, tmp_path):
+    monkeypatch.setattr("src.infrastructure.config_factory.platform.system", lambda: "Linux")
+    from src.infrastructure.seed_engine import StudioSeedService
+
+    workspace = tmp_path / "artist_nas"
+    (workspace / DEFAULT_VAULT_DIR).mkdir(parents=True)
+
+    factory = ConfigFactory(tmp_path / "settings.json")
+    seed_payload = {
+        "infrastructure_topology": {
+            "vault_path": "/home/someartist/Nextcloud/vault",
+            "vcs_server": {"mode": "remote_ssh", "remote": {"ssh_key_path": "/home/someartist/.ssh/id_ed25519"}},
+        },
+        "vcs_engine": {
+            "local_workspace_root": {"linux": "/home/someartist/Nextcloud/projects"},
+            "servers": [
+                {
+                    "id": "vps",
+                    "name": "VPS",
+                    "adapter": "svn",
+                    "repository_url": "svn://vps",
+                    "profile": {
+                        "mode": "remote_ssh",
+                        "remote": {
+                            "host": "vps",
+                            "ssh_user": "ops",
+                            "container": "c",
+                            "ssh_key_path": "/home/someartist/.ssh/id_ed25519",
+                        },
+                    },
+                }
+            ],
+            "default_server_id": "vps",
+        },
+    }
+    ok, seed_path = StudioSeedService(factory).export_seed(seed_payload, tmp_path)
+    assert ok is True
+
+    assert factory.import_seed(Path(seed_path)) is True
+    factory.set_local_workspace_root(workspace)
+    factory.set_vault_dir(factory.get_vault_dir())
+
+    assert factory.get_vault_path() == workspace / DEFAULT_VAULT_DIR
+    server = factory.get_server("vps")
+    assert server.profile.remote.ssh_key_path != "/home/someartist/.ssh/id_ed25519"

@@ -191,6 +191,10 @@ class SettingsWidget(QFrame):
             vcs_payload["default_server_id"] = existing_vcs["default_server_id"]
 
         infra_payload = dict(vault_data.get("infrastructure_topology", {}))
+        selected_vault = infra_payload.pop("vault_path", "")
+        # Persist the vault portably (relative to the workspace root) so seeds and
+        # other machines never inherit this machine's absolute home path.
+        infra_payload.update(self.vm.config_factory.portable_vault_config(selected_vault))
         existing_infra = self.vm.config_factory.get_raw_config().get("infrastructure_topology", {})
         if "vcs_server" in existing_infra:
             infra_payload.setdefault("vcs_server", existing_infra["vcs_server"])
