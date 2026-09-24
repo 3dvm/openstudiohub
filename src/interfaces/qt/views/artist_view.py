@@ -64,6 +64,8 @@ class ViewArtist(BaseDashboardView):
 
         self._build_content()
         self.vm.tasks_loaded.connect(self._on_tasks_loaded)
+        self.vm.tasks_load_started.connect(self._on_tasks_load_started)
+        self.vm.tasks_load_finished.connect(self._on_tasks_load_finished)
         self.vm.vcs_changes_ready.connect(self._on_vcs_changes_ready)
         self.vm.vcs_publish_finished.connect(self._on_vcs_publish_finished)
         self.vm.load_tasks()
@@ -86,8 +88,16 @@ class ViewArtist(BaseDashboardView):
         self.combo_projects.setFixedSize(250, 35)
         self.combo_projects.currentIndexChanged.connect(self._apply_project_filter)
 
+        self.btn_refresh = QPushButton(self.tr("⟳ Refresh"))
+        self.btn_refresh.setObjectName("SecondaryButton")
+        self.btn_refresh.setFixedSize(110, 35)
+        self.btn_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_refresh.setToolTip(self.tr("Fetch the latest updates for your assigned tasks."))
+        self.btn_refresh.clicked.connect(self._refresh_tasks)
+
         header_layout.addWidget(lbl_title)
         header_layout.addStretch()
+        header_layout.addWidget(self.btn_refresh)
         header_layout.addWidget(QLabel(self.tr("Project:")))
         header_layout.addWidget(self.combo_projects)
 
@@ -190,8 +200,21 @@ class ViewArtist(BaseDashboardView):
             self.tab_credentials.set_servers(servers, default_id)
             self._load_credentials_for(default_id)
 
+    def _refresh_tasks(self) -> None:
+        """Re-fetch the assigned task list from Kitsu."""
+        self.vm.load_tasks()
+
+    def _on_tasks_load_started(self) -> None:
+        self.btn_refresh.setEnabled(False)
+        self.btn_refresh.setText(self.tr("⟳ Refreshing…"))
+
+    def _on_tasks_load_finished(self, _success: bool) -> None:
+        self.btn_refresh.setEnabled(True)
+        self.btn_refresh.setText(self.tr("⟳ Refresh"))
+
     def _on_tasks_loaded(self, cards: list) -> None:
         self._cards = cards
+        previous_selection = self.combo_projects.currentData()
 
         self.combo_projects.blockSignals(True)
         self.combo_projects.clear()
@@ -205,6 +228,9 @@ class ViewArtist(BaseDashboardView):
         for project_id, project_name in sorted(unique_projects.items(), key=lambda item: item[1]):
             self.combo_projects.addItem(project_name, project_id)
 
+        # Preserve the selected project filter across a refresh when it still exists.
+        index = self.combo_projects.findData(previous_selection) if previous_selection else -1
+        self.combo_projects.setCurrentIndex(index if index >= 0 else 0)
         self.combo_projects.blockSignals(False)
         self._apply_project_filter()
 

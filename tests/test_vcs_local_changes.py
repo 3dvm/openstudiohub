@@ -3,6 +3,9 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.infrastructure.vcs import svn_adapter
 from src.infrastructure.vcs.svn_adapter import SVNAdapter
 
@@ -73,3 +76,50 @@ def test_add_with_no_paths_is_a_noop(monkeypatch):
 
     assert _adapter().add([]) is True
     assert calls == []
+
+
+def test_commit_builds_expected_command(monkeypatch):
+    calls = []
+    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run("", calls))
+
+    assert _adapter().commit("msg", ["pro/a.blend"], "artist", "secret") is True
+
+    # Local Docker URLs force the dev bootstrap credentials.
+    assert calls[0][0] == [
+        "svn", "commit", "-m", "msg", "pro/a.blend",
+        "--non-interactive", "--trust-server-cert",
+        "--username", DEV_SVN_USER, "--password", DEV_SVN_PASSWORD, "--no-auth-cache",
+    ]
+    assert calls[0][1] == "/tmp/workspace"
+
+
+def test_assert_no_conflicts_raises_on_tree_conflict(monkeypatch):
+    output = "\n".join([
+        "D     C pro",
+        "      >   local unversioned, incoming dir add upon update",
+    ])
+    calls = []
+    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run(output, calls))
+
+    with pytest.raises(RuntimeError):
+        _adapter()._assert_no_conflicts()
+
+
+def test_assert_no_conflicts_passes_when_clean(monkeypatch):
+    calls = []
+    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run("", calls))
+
+    _adapter()._assert_no_conflicts()  # must not raise
+    assert calls[0][0] == ["svn", "status"]
+
+
+def test_full_pull_raises_when_conflicts_remain(monkeypatch):
+    output = "\n".join([
+        "D     C tools",
+        "      >   local unversioned, incoming dir add upon update",
+    ])
+    calls = []
+    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run(output, calls))
+
+    with pytest.raises(RuntimeError):
+        _adapter().full_pull("artist", "secret")

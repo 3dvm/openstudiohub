@@ -98,11 +98,22 @@ class KitsuSeederWorker(ManagedWorker):
                 )
 
             elif self.action == "dummy":
-                self.production_service.set_host("http://localhost:8080/api")
-                success, msg = self.production_service.seed_test_database(
-                    admin_email=DEV_KITSU_ADMIN_EMAIL,
-                    admin_pwd=DEV_KITSU_ADMIN_PASSWORD,
-                )
+                # Seed against the local Kitsu without clobbering the session's
+                # real host: restore it once the seeding finishes.
+                previous_host = ""
+                try:
+                    previous_host = self.production_service.kitsu.get_host()
+                except Exception:  # noqa: BLE001
+                    previous_host = ""
+                try:
+                    self.production_service.set_host("http://localhost:8080/api")
+                    success, msg = self.production_service.seed_test_database(
+                        admin_email=DEV_KITSU_ADMIN_EMAIL,
+                        admin_pwd=DEV_KITSU_ADMIN_PASSWORD,
+                    )
+                finally:
+                    if previous_host:
+                        self.production_service.set_host(previous_host)
                 self.finished_signal.emit(success, msg)
 
         except subprocess.CalledProcessError as error:

@@ -123,7 +123,10 @@ class ProjectCard(QFrame):
         on_open_wizard: Optional[Callable] = None,
         on_repair: Optional[Callable] = None,
         on_migrate: Optional[Callable] = None,
-
+        on_export: Optional[Callable] = None,
+        on_publish: Optional[Callable] = None,
+        on_reset: Optional[Callable] = None,
+        on_configure: Optional[Callable] = None,
     ) -> None:
         super().__init__(parent)
 
@@ -141,6 +144,10 @@ class ProjectCard(QFrame):
         self.on_open_wizard = on_open_wizard
         self.on_repair = on_repair
         self.on_migrate = on_migrate
+        self.on_export = on_export
+        self.on_publish = on_publish
+        self.on_reset = on_reset
+        self.on_configure = on_configure
 
         self.status = dict(status) if status else {}
         self.project_dir = self.status.get("project_dir")
@@ -193,10 +200,17 @@ class ProjectCard(QFrame):
         """)
 
         action_config = self.options_menu.addAction(self.tr("⚙️ Configure Project"))
-        action_config.triggered.connect(lambda: self.on_open_kitsu("/production-settings"))
+        action_config.triggered.connect(self._on_configure_requested)
+        action_config.setEnabled(self.on_configure is not None)
 
         if self.user_role == "td":
             self.options_menu.addSeparator()
+            action_export = self.options_menu.addAction(self.tr("📤 Export Kitsu Project…"))
+            action_export.triggered.connect(self._on_export_requested)
+            action_publish = self.options_menu.addAction(self.tr("⬆️ Publish Files to VCS…"))
+            action_publish.triggered.connect(self._on_publish_requested)
+            action_reset = self.options_menu.addAction(self.tr("♻️ Reset VCS Working Copy…"))
+            action_reset.triggered.connect(self._on_reset_requested)
             action_migrate = self.options_menu.addAction(self.tr("🚚 Migrate VCS…"))
             action_migrate.triggered.connect(self._on_migrate_requested)
             self.options_menu.addSeparator()
@@ -264,6 +278,8 @@ class ProjectCard(QFrame):
         kitsu_menu.addAction("To: Shots", lambda: self.on_open_kitsu("/shots"))
         kitsu_menu.addAction("To: Sequences", lambda: self.on_open_kitsu("/sequences"))
         kitsu_menu.addAction("To: Edit", lambda: self.on_open_kitsu("/edits"))
+        kitsu_menu.addSeparator()
+        kitsu_menu.addAction(self.tr("⚙️ Production Settings"), lambda: self.on_open_kitsu("/production-settings"))
         self.btn_kitsu_dropdown.setMenu(kitsu_menu)
 
         self.btn_watchtower = QPushButton("")
@@ -450,6 +466,26 @@ class ProjectCard(QFrame):
         if not self.on_migrate:
             return
         self.on_migrate(self.project_name, self.project_dir)
+
+    def _on_export_requested(self) -> None:
+        if not self.on_export:
+            return
+        self.on_export(self.project_name, self.project_data.get("id", ""))
+
+    def _on_publish_requested(self) -> None:
+        if not self.on_publish:
+            return
+        self.on_publish(self.project_name, self.project_data.get("id", ""))
+
+    def _on_reset_requested(self) -> None:
+        if not self.on_reset:
+            return
+        self.on_reset(self.project_name, self.project_data.get("id", ""))
+
+    def _on_configure_requested(self) -> None:
+        if not self.on_configure:
+            return
+        self.on_configure(self.project_name, self.project_data.get("id", ""), self.project_dir)
 
     def _load_thumbnail(self) -> None:
         project_id = self.project_data.get("id")

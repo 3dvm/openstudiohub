@@ -84,6 +84,44 @@ def test_select_project_is_case_insensitive(tmp_path, qapp):
     assert vm.current_project_name == "MIDEQ_promo"
 
 
+def test_publish_scan_emits_dialog_or_clean(tmp_path, qapp):
+    vm, _ = _make_vm(tmp_path, installed=True)
+    counts = []
+    requested = []
+    clean = []
+    vm.project_changes_ready.connect(lambda changes: counts.append(len(changes)))
+    vm.project_publish_dialog_requested.connect(lambda changes: requested.append(changes))
+    vm.project_publish_up_to_date.connect(lambda: clean.append(True))
+
+    # Non-interactive scan only updates the count.
+    vm._on_project_changes_ready("__project__", [object()])
+    assert counts[-1] == 1
+    assert not requested
+
+    # Interactive with changes → dialog requested.
+    vm._publish_scan_interactive = True
+    vm._on_project_changes_ready("__project__", [object(), object()])
+    assert counts[-1] == 2
+    assert requested and len(requested[-1]) == 2
+
+    # Interactive clean → up-to-date notification.
+    vm._publish_scan_interactive = True
+    vm._on_project_changes_ready("__project__", [])
+    assert clean
+
+
+def test_publish_scan_clean_is_silent_when_not_notifying(tmp_path, qapp):
+    vm, _ = _make_vm(tmp_path, installed=True)
+    clean = []
+    vm.project_publish_up_to_date.connect(lambda: clean.append(True))
+
+    vm._publish_scan_interactive = True
+    vm._publish_scan_notify_clean = False
+    vm._on_project_changes_ready("__project__", [])
+
+    assert not clean
+
+
 def test_select_project_clears_state_when_missing(tmp_path, qapp):
     vm, _ = _make_vm(tmp_path, installed=True)
     vm.select_project("MIDEQ_promo")

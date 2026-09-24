@@ -66,12 +66,24 @@ class TaskFileService:
             raise ValueError(error)
         data = dict(task.data)
         data[TASK_FILE_PATH_KEY] = relative_path.strip()
-        return self.repository.update_task_data(task.id, data)
+        if not self.repository.update_task_data(task.id, data):
+            raise RuntimeError(
+                f"Kitsu did not accept the file link for task '{task.id}'. "
+                "If this is a permissions error, the signed-in account needs the "
+                "'manager' role on this project (or be a global admin). "
+                "Check the application log for the server response."
+            )
+        return True
 
     def unlink(self, task: Task) -> bool:
         data = dict(task.data)
         data.pop(TASK_FILE_PATH_KEY, None)
-        return self.repository.update_task_data(task.id, data)
+        if not self.repository.update_task_data(task.id, data):
+            raise RuntimeError(
+                f"Kitsu did not accept removing the file link for task '{task.id}'. "
+                "Check the application log for the server response."
+            )
+        return True
 
     # ------------------------------------------------------------------
     # Fast file creation

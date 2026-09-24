@@ -20,8 +20,10 @@ task/shot/asset/edit queries, file mapping and metadata updates.
 """
 
 import gazu
+import json
 import requests
 import traceback
+from gazu.exception import NotAllowedException
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -473,11 +475,56 @@ class KitsuManager:
         """Persiste los cambios (incluida la metadata) de una tarea."""
         return gazu.task.update_task(task)
 
+    def get_host(self) -> str:
+        """Return the currently active Kitsu API host."""
+        try:
+            return gazu.client.get_host()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _raw_put(self, path: str, payload: dict):
+        """Low-level PUT used only to capture the server response on failure."""
+        client = gazu.client.default_client
+        url = gazu.client.get_full_url(path, client=client)
+        headers = gazu.client.make_auth_header(client=client)
+        headers["Content-Type"] = "application/json"
+        return client.session.put(
+            url,
+            data=json.dumps(payload, cls=gazu.client.CustomJSONEncoder),
+            headers=headers,
+        )
+
     def update_task_data(self, task: dict, data: dict) -> dict:
-        """Persiste el custom data (metadata) de una tarea."""
-        updated = dict(task)
-        updated["data"] = dict(data)
-        return gazu.task.update_task(updated)
+        """Persiste el custom data (metadata) de una tarea.
+
+        Only ``id`` and ``data`` are sent: Zou merges ``data`` into the task's
+        JSONB metadata, and a minimal payload avoids shipping read-only or
+        expanded fields back to the server.
+        """
+        task_id = task.get("id") if isinstance(task, dict) else str(task or "")
+        payload = {"id": task_id, "data": dict(data)}
+        try:
+            return gazu.task.update_task(payload)
+        except NotAllowedException as error:
+            self._log_task_update_failure(task_id, payload, error)
+            raise PermissionError(
+                "Kitsu denied the task update (403). The signed-in account needs "
+                "the 'manager' role on this project (or be a global admin)."
+            ) from error
+        except Exception as error:  # noqa: BLE001
+            self._log_task_update_failure(task_id, payload, error)
+            raise
+
+    def _log_task_update_failure(self, task_id: str, payload: dict, error: Exception) -> None:
+        try:
+            response = self._raw_put(f"data/tasks/{task_id}", payload)
+            print(
+                f"[KitsuManager] Task '{task_id}' update failed on "
+                f"'{self.get_host()}' ({error}) | HTTP {response.status_code}: "
+                f"{response.text[:500]}"
+            )
+        except Exception as diagnostic_error:  # noqa: BLE001
+            print(f"[KitsuManager] Task '{task_id}' update diagnostics failed: {diagnostic_error}")
 
     def all_tasks_for_asset(self, asset) -> list:
         """Devuelve todas las tareas de un Asset."""
@@ -574,4 +621,315 @@ class KitsuManager:
         return gazu.files.new_working_file(
             task, name=name, mode=mode, software=software,
             comment=comment, person=person, revision=revision, sep=sep
+        )
+
+    # =========================================================================
+    # PHASE 2 — .oshproject export/import wrappers (still the gazu SSoT)
+    # Read, download and write operations used by the Kitsu migration services.
+    # =========================================================================
+
+    # ------------------------------------------------------------------
+    # Project metadata
+    # ------------------------------------------------------------------
+    def update_project_data(self, project, data: dict) -> dict:
+        """Persist the custom data (metadata) of a project."""
+        return gazu.project.update_project_data(project, data=data)
+
+    def update_project(self, project: dict) -> dict:
+        """Persist mutable project fields (name, status, fps, ...)."""
+        return gazu.project.update_project(project)
+
+    def new_software(self, name: str, short_name: str = "") -> dict:
+        """Create a software entry used by working files."""
+        return gazu.files.new_software(name, short_name=short_name or name)
+
+    def all_project_status(self) -> list:
+        """All project statuses defined on the server."""
+        return gazu.project.all_project_status()
+
+    def get_project_status_by_name(self, name: str):
+        """Project status by name, or ``None``."""
+        return gazu.project.get_project_status_by_name(name)
+
+    # ------------------------------------------------------------------
+    # People & studio resources
+    # ------------------------------------------------------------------
+    def all_persons(self) -> list:
+        """Every person registered on the server."""
+        return gazu.person.all_persons()
+
+    def get_person_by_email(self, email: str):
+        """Person by email, or ``None``."""
+        try:
+            return gazu.person.get_person_by_email(email)
+        except Exception:  # noqa: BLE001 - not found / network
+            return None
+
+    def new_person(self, first_name: str, last_name: str, email: str,
+                   role: str = "user", password=None, departments=None,
+                   active: bool = True) -> dict:
+        """Create a person. ``password=None`` creates the account with no password."""
+        return gazu.person.new_person(
+            first_name=first_name, last_name=last_name, email=email,
+            role=role, password=password, departments=departments, active=active,
+        )
+
+    def add_person_to_team(self, project, person, role=None) -> dict:
+        """Add a person to a project team (optionally with a role)."""
+        return gazu.project.add_person_to_team(project, person, role=role)
+
+    def update_team_member_role(self, project, person, role: Optional[str]) -> dict:
+        """Set (or clear with ``None``) a person's project-specific role."""
+        return gazu.project.update_team_member_role(project, person, role=role)
+
+    def all_departments(self) -> list:
+        """All departments defined on the server."""
+        return gazu.person.all_departments()
+
+    def get_department_by_name(self, name: str):
+        """Department by name, or ``None``."""
+        return gazu.person.get_department_by_name(name)
+
+    def new_department(self, name: str, color: str = "") -> dict:
+        """Create a department."""
+        return gazu.person.new_department(name, color=color)
+
+    def all_task_statuses(self) -> list:
+        """All global task statuses."""
+        return gazu.task.all_task_statuses()
+
+    def all_task_statuses_for_project(self, project) -> list:
+        """Task statuses available on a project."""
+        return gazu.task.all_task_statuses_for_project(project)
+
+    def get_task_status_by_name(self, name: str):
+        """Task status by name, or ``None``."""
+        return gazu.task.get_task_status_by_name(name)
+
+    def new_task_status(self, name: str, short_name: str = "", color: str = "#000000") -> dict:
+        """Create a global task status (short name/colour help the UI)."""
+        return gazu.task.new_task_status(name, short_name=short_name or name[:4], color=color)
+
+    def new_asset_type(self, name: str) -> dict:
+        """Create a global asset type."""
+        return gazu.asset.new_asset_type(name)
+
+    def get_asset_type_by_name(self, name: str):
+        """Asset type by name, or ``None``."""
+        return gazu.asset.get_asset_type_by_name(name)
+
+    # ------------------------------------------------------------------
+    # Entities
+    # ------------------------------------------------------------------
+    def all_episodes_for_project(self, project) -> list:
+        """All episodes of a project."""
+        return gazu.shot.all_episodes_for_project(project)
+
+    def get_episode_by_name(self, project, name: str):
+        """Episode by name within a project, or ``None``."""
+        return gazu.shot.get_episode_by_name(project, name)
+
+    def new_episode(self, project, name: str) -> dict:
+        """Create an episode."""
+        return gazu.shot.new_episode(project, name=name)
+
+    def new_shot(self, project, sequence, name: str, nb_frames=None, frame_in=None,
+                 frame_out=None, description=None, data=None) -> dict:
+        """Create a shot."""
+        return gazu.shot.new_shot(
+            project, sequence, name=name, nb_frames=nb_frames, frame_in=frame_in,
+            frame_out=frame_out, description=description, data=data,
+        )
+
+    def get_shot_by_name(self, sequence, name: str):
+        """Shot by name within a sequence, or ``None``."""
+        return gazu.shot.get_shot_by_name(sequence, name)
+
+    def new_asset(self, project, asset_type, name: str, description=None,
+                  extra_data=None, episode=None, is_shared: bool = False) -> dict:
+        """Create an asset."""
+        return gazu.asset.new_asset(
+            project, asset_type, name=name, description=description,
+            extra_data=extra_data, episode=episode, is_shared=is_shared,
+        )
+
+    def get_asset_by_name(self, project, name: str, asset_type=None):
+        """Asset by name within a project, or ``None``."""
+        return gazu.asset.get_asset_by_name(project, name, asset_type=asset_type)
+
+    def new_edit(self, project, name: str, description=None, data=None, episode=None) -> dict:
+        """Create an edit."""
+        return gazu.edit.new_edit(
+            project, name=name, description=description, data=data, episode=episode,
+        )
+
+    def get_edit_by_name(self, project, name: str):
+        """Edit by name within a project, or ``None``."""
+        return gazu.edit.get_edit_by_name(project, name)
+
+    def update_shot_data(self, shot, data: dict) -> dict:
+        """Persist the custom data of a shot."""
+        return gazu.shot.update_shot_data(shot, data=data)
+
+    def update_asset_data(self, asset, data: dict) -> dict:
+        """Persist the custom data of an asset."""
+        return gazu.asset.update_asset_data(asset, data=data)
+
+    def update_edit_data(self, edit, data: dict) -> dict:
+        """Persist the custom data of an edit."""
+        return gazu.edit.update_edit_data(edit, data=data)
+
+    # ------------------------------------------------------------------
+    # Casting
+    # ------------------------------------------------------------------
+    def get_project_shots_casting(self, project) -> dict:
+        """Shot casting map for a project, keyed by shot id."""
+        return gazu.casting.get_project_shots_casting(project)
+
+    def all_entity_links_for_project(self, project) -> list:
+        """Every entity link (asset instances, etc.) of a project."""
+        return gazu.casting.all_entity_links_for_project(project)
+
+    def cast_asset(self, project, entities, asset, nb_occurences=None, label=None) -> dict:
+        """Cast an asset into one or many entities."""
+        return gazu.casting.cast_asset(
+            project, entities, asset, nb_occurences=nb_occurences, label=label,
+        )
+
+    def update_shot_casting(self, project, shot, casting: dict) -> dict:
+        """Replace the casting of a shot."""
+        return gazu.casting.update_shot_casting(project, shot, casting)
+
+    def update_asset_casting(self, project, asset, casting: dict) -> dict:
+        """Replace the casting of an asset."""
+        return gazu.casting.update_asset_casting(project, asset, casting)
+
+    # ------------------------------------------------------------------
+    # Tasks
+    # ------------------------------------------------------------------
+    def create_entity_tasks(self, entity, task_types: list) -> list:
+        """Create the standard set of tasks for an entity in one call."""
+        return gazu.task.create_entity_tasks(entity, task_types)
+
+    def update_task_status(self, task) -> dict:
+        """Persist a task's status (the dict carries the status id)."""
+        return gazu.task.update_task_status(task)
+
+    def assign_task(self, task, person) -> dict:
+        """Assign a task to a person."""
+        return gazu.task.assign_task(task, person)
+
+    # ------------------------------------------------------------------
+    # Comments, previews and attachments
+    # ------------------------------------------------------------------
+    def all_comments_for_project(self, project) -> list:
+        """Every comment of a project."""
+        return gazu.task.all_comments_for_project(project)
+
+    def all_comments_for_task(self, task) -> list:
+        """Every comment of a task."""
+        return gazu.task.all_comments_for_task(task)
+
+    def add_comment(self, task, task_status, comment: str = "", person=None,
+                    attachments=None, created_at=None, checklist=None,
+                    for_client: bool = False) -> dict:
+        """Add a comment (optionally with attachments/checklist) to a task."""
+        return gazu.task.add_comment(
+            task, task_status, comment=comment, person=person,
+            attachments=attachments, created_at=created_at, checklist=checklist,
+            for_client=for_client,
+        )
+
+    def reply_to_comment(self, task, comment, text: str, person=None) -> dict:
+        """Reply to an existing comment."""
+        return gazu.task.reply_to_comment(task, comment, text, person=person)
+
+    def add_attachment_files_to_comment(self, task, comment, attachments) -> dict:
+        """Upload attachment file(s) onto an existing comment."""
+        return gazu.task.add_attachment_files_to_comment(task, comment, attachments)
+
+    def all_previews_for_task(self, task) -> list:
+        """Every preview of a task."""
+        return gazu.task.all_previews_for_task(task)
+
+    def all_preview_files_for_project(self, project) -> list:
+        """Every preview file of a project."""
+        return gazu.task.all_preview_files_for_project(project)
+
+    def publish_preview(self, task, task_status, comment: str = "", person=None,
+                        preview_file_path=None, preview_file_url=None,
+                        attachments=None, revision=None, set_thumbnail: bool = False):
+        """Publish a preview (with an uploaded movie path/url) and return ``(comment, preview)``."""
+        return gazu.task.publish_preview(
+            task, task_status, comment=comment, person=person,
+            preview_file_path=preview_file_path, preview_file_url=preview_file_url,
+            attachments=attachments, revision=revision, set_thumbnail=set_thumbnail,
+        )
+
+    def create_preview(self, task, comment, revision=None) -> dict:
+        """Create an empty preview slot on a comment."""
+        return gazu.task.create_preview(task, comment, revision=revision)
+
+    # ------------------------------------------------------------------
+    # Working files, attachments and time sheets
+    # ------------------------------------------------------------------
+    def get_working_files_for_task(self, task) -> list:
+        """Working-file revision metadata for a task."""
+        return gazu.files.get_working_files_for_task(task)
+
+    def get_all_working_files_for_entity(self, entity, task=None, name=None) -> list:
+        """Working-file revision metadata for an entity."""
+        return gazu.files.get_all_working_files_for_entity(entity, task=task, name=name)
+
+    def get_all_attachment_files_for_project(self, project) -> list:
+        """Attachment file metadata for a project."""
+        return gazu.files.get_all_attachment_files_for_project(project)
+
+    def get_all_attachment_files_for_task(self, task) -> list:
+        """Attachment file metadata for a task."""
+        return gazu.files.get_all_attachment_files_for_task(task)
+
+    def get_time_spent(self, task, date=None) -> dict:
+        """Time-spent sheet of a task (optionally for one date)."""
+        return gazu.task.get_time_spent(task, date=date)
+
+    def add_time_spent(self, task, person, date: str, duration: int) -> dict:
+        """Add a time-spent entry for a person on a date."""
+        return gazu.task.add_time_spent(task, person, date=date, duration=duration)
+
+    def set_time_spent(self, task, person, date: str, duration: int) -> dict:
+        """Set (replace) a time-spent entry for a person on a date."""
+        return gazu.task.set_time_spent(task, person, date=date, duration=duration)
+
+    # ------------------------------------------------------------------
+    # Downloads (streamed to a destination path by gazu)
+    # ------------------------------------------------------------------
+    def download_preview_file(self, preview_file, file_path: str, progress_callback=None):
+        """Download a still preview image to ``file_path``."""
+        return gazu.files.download_preview_file(
+            preview_file, file_path, progress_callback=progress_callback
+        )
+
+    def download_preview_movie(self, preview_file, file_path: str, progress_callback=None):
+        """Download a preview movie to ``file_path``."""
+        return gazu.files.download_preview_movie(
+            preview_file, file_path, progress_callback=progress_callback
+        )
+
+    def download_preview_lowdef_movie(self, preview_file, file_path: str, progress_callback=None):
+        """Download the low-definition preview movie to ``file_path``."""
+        return gazu.files.download_preview_lowdef_movie(
+            preview_file, file_path, progress_callback=progress_callback
+        )
+
+    def download_preview_file_thumbnail(self, preview_file, file_path: str, progress_callback=None):
+        """Download a preview thumbnail to ``file_path``."""
+        return gazu.files.download_preview_file_thumbnail(
+            preview_file, file_path, progress_callback=progress_callback
+        )
+
+    def download_attachment_file(self, attachment_file, file_path: str, progress_callback=None):
+        """Download a comment attachment to ``file_path``."""
+        return gazu.files.download_attachment_file(
+            attachment_file, file_path, progress_callback=progress_callback
         )

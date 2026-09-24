@@ -170,8 +170,9 @@ class ProjectRepairService:
         blueprint.project_name = project_name
         blueprint.kitsu_project_id = kitsu_id or blueprint.kitsu_project_id
 
-        # Rebuild any missing structural folders and regenerate the manifest.
-        WorkspaceScaffolder.build_directories(project_root, blueprint)
+        # Rebuild any missing non-VCS folders and regenerate the manifest. The
+        # VCS folders belong to the working copy, so they are never pre-created.
+        WorkspaceScaffolder.build_directories(project_root, blueprint, include_vcs=False)
         BlueprintGenerator.write_manifests(project_root, blueprint)
 
         # Keep the generated add-on startup scripts in sync with the blueprint.

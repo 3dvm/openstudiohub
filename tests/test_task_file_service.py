@@ -83,6 +83,20 @@ def test_link_rejects_invalid_path():
         service.link(_asset_task(), "../escape.blend")
 
 
+def test_link_raises_when_repository_rejects():
+    service, repo, _ = _service()
+    repo.update_task_data = lambda task_id, data: False
+    with pytest.raises(RuntimeError):
+        service.link(_asset_task(), "pro/assets/char/monkey/monkey-model.blend")
+
+
+def test_unlink_raises_when_repository_rejects():
+    service, repo, _ = _service()
+    repo.update_task_data = lambda task_id, data: False
+    with pytest.raises(RuntimeError):
+        service.unlink(_asset_task())
+
+
 def test_unlink_removes_filepath():
     service, repo, _ = _service()
     task = _asset_task().with_filepath("pro/assets/char/monkey/monkey-model.blend")

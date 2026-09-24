@@ -66,6 +66,23 @@ class AddonConfigPanel(QWidget):
         for widget, _ in self._widgets.values():
             widget.setEnabled(editable)
 
+    def set_values(self, settings: dict | None) -> None:
+        """Apply existing settings, leaving fields absent from ``settings`` untouched."""
+        settings = settings or {}
+        for field_name, (widget, field_type) in self._widgets.items():
+            if field_name not in settings:
+                continue
+            value = settings[field_name]
+            if field_type == "bool":
+                widget.setChecked(bool(value))
+            elif field_type == "int":
+                try:
+                    widget.setValue(int(value))
+                except (TypeError, ValueError):
+                    widget.setValue(0)
+            else:
+                widget.setText("" if value is None else str(value))
+
     def values(self) -> dict:
         result: dict = {}
         for field_name, (widget, field_type) in self._widgets.items():

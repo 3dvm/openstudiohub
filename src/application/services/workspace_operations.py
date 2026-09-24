@@ -14,10 +14,24 @@ class WorkspaceScaffolder:
     """Creates the folder structure based only on the topography Blueprint."""
 
     @staticmethod
-    def build_directories(project_root: Path, blueprint: ProjectBlueprint) -> bool:
+    def build_directories(
+        project_root: Path,
+        blueprint: ProjectBlueprint,
+        include_vcs: bool = True,
+    ) -> bool:
+        """Create the workspace folder tree.
 
+        ``include_vcs=False`` skips the ``<vfs_svn>/*`` folders: those must only
+        be materialized *before the initial commit* (project creation), never
+        before a checkout. Pre-creating them on an existing repository makes SVN
+        raise tree conflicts ("local unversioned, incoming dir add upon update").
+        The non-VCS folders (custom dirs) are always created.
+        """
         try:
-            folders_to_create = blueprint.topography.base_folders()
+            if include_vcs:
+                folders_to_create = blueprint.topography.base_folders()
+            else:
+                folders_to_create = blueprint.topography.custom_dirs
 
             for folder in folders_to_create:
                 (project_root / folder).mkdir(parents=True, exist_ok=True)

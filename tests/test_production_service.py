@@ -103,3 +103,5 @@ def test_audit_assets_maps_per_task_files(tmp_path):
     assert asset["tasks"]["Modeling"]["has_file"] is True
     assert asset["tasks"]["Rigging"]["has_file"] is False
     assert asset["tasks"]["Modeling"]["filepath"].endswith("monkey-model.blend")
+    assert asset["tasks"]["Modeling"]["linked"] is True
+    assert asset["tasks"]["Rigging"]["linked"] is False

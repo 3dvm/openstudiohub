@@ -112,6 +112,7 @@ class ProjectBlueprint:
                 "vfs_shared": self.topography.vfs_shared,
                 "vfs_local": self.topography.vfs_local,
                 "vfs_pipeline": self.topography.vfs_pipeline,
+                "custom_dirs": list(self.topography.custom_dirs),
             },
             "vcs_base_url": self.vcs_base_url,
             "vcs_server_id": self.vcs_server_id,

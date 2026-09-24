@@ -75,6 +75,7 @@ class ViewTD(BaseDashboardView):
             repair_vm=self.repair_vm,
             on_new_project_callback=self.on_new_project_callback,
             on_repair_callback=self.on_repair_callback,
+            vault_service=self.vault_service,
         )
         self.stacked_content.addWidget(self.projects_view)
 

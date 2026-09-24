@@ -20,12 +20,27 @@ class FakeViewModel(QObject):
     spawn_progress = Signal(int, str)
     spawn_log = Signal(str)
     spawn_finished = Signal(bool, str)
+    project_changes_ready = Signal(list)
+    project_publish_dialog_requested = Signal(list)
+    project_publish_up_to_date = Signal()
+    vcs_publish_finished = Signal(str, bool, str)
+    task_file_finished = Signal(bool, str)
 
     def __init__(self):
         super().__init__()
         self.spawned = []
         self.current_project_id = "p1"
         self.current_project_name = "MIDEQ_promo"
+        self.statuses = []
+        self.scan_requests = []
+
+    def project_root(self):
+        from pathlib import Path
+
+        return Path("/tmp/does-not-exist")
+
+    def request_project_publish_scan(self, interactive=False, notify_when_clean=True):
+        self.scan_requests.append((interactive, notify_when_clean))
 
     def load_projects(self):
         pass
@@ -36,8 +51,8 @@ class FakeViewModel(QObject):
     def is_current_project_installed(self):
         return True
 
-    def report_status(self, _message, _color=""):
-        pass
+    def report_status(self, message, _color=""):
+        self.statuses.append(message)
 
     def spawn_batch(self, entities, task_types):
         self.spawned.append((entities, task_types))
@@ -96,6 +111,23 @@ def test_task_cell_shows_ready_status_word(qapp):
     assert "Ready" in [lbl.text() for lbl in cell.findChildren(QLabel)]
     # A valid file has nothing to regenerate.
     assert cell.findChild(QPushButton, "TaskRegenButton") is None
+
+
+def test_task_cell_shows_linked_but_missing_on_disk(qapp):
+    vm = FakeViewModel()
+    widget = BlendBuilderWidget(None, vm)
+    task = {
+        "has_file": False,
+        "filepath": "pro/assets/character/hero/modeling.blend",
+        "raw_task": {},
+    }
+
+    widget._render_assets([_asset("hero", {"Modeling": task})])
+
+    cell = widget.table.cellWidget(0, 3)
+    labels = [lbl.text() for lbl in cell.findChildren(QLabel)]
+    assert any("Linked" in text for text in labels)
+    assert all("Pending" not in text for text in labels)
 
 
 def test_regenerate_button_forwards_single_task(qapp):
@@ -173,3 +205,40 @@ def test_asset_selection_is_forwarded(qapp):
     _entities, task_types = vm.spawned[0]
     assert task_types == ["Modeling"]
     widget.progress_modal.accept()
+
+
+def test_publish_button_count_and_click(qapp):
+    vm = FakeViewModel()
+    widget = BlendBuilderWidget(None, vm)
+
+    widget._on_publish_count_ready([object(), object()])
+    assert "(2)" in widget.btn_publish_vcs.text()
+
+    widget._on_publish_count_ready([])
+    assert "(2)" not in widget.btn_publish_vcs.text()
+
+    widget._on_project_publish_clicked()
+    assert vm.scan_requests[-1][0] is True  # interactive
+
+
+def test_publish_up_to_date_reports_status(qapp):
+    vm = FakeViewModel()
+    widget = BlendBuilderWidget(None, vm)
+
+    widget._on_publish_up_to_date()
+
+    assert any("up to date" in message.lower() for message in vm.statuses)
+
+
+def test_task_file_finished_hints_uncommitted_and_refreshes(qapp):
+    vm = FakeViewModel()
+    widget = BlendBuilderWidget(None, vm)
+
+    widget._on_task_file_finished(True, "Task linked to file.")
+
+    assert any("not committed" in message.lower() for message in vm.statuses)
+    assert vm.scan_requests  # count refresh triggered
+
+    vm.statuses.clear()
+    widget._on_task_file_finished(False, "boom")
+    assert not any("not committed" in message.lower() for message in vm.statuses)

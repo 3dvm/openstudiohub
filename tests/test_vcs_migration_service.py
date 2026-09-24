@@ -278,3 +278,58 @@ def test_migrate_project_fails_when_working_copy_not_repointed(monkeypatch, tmp_
 
     assert ok is False
     assert "verification failed" in message.lower()
+
+
+class ProbeService(VCSMigrationService):
+    """Probe service with server I/O replaced by deterministic stubs."""
+
+    def __init__(self, config, online=True, youngest=3, dirs=("svn",)) -> None:
+        super().__init__(config)
+        self._online = online
+        self._probe_youngest = youngest
+        self._dirs = list(dirs)
+
+    def test_remote_svn(self, server=None):  # noqa: D102
+        return (True, "reachable") if self._online else (False, "unreachable")
+
+    def _youngest(self, server, path):  # noqa: D102
+        return self._probe_youngest
+
+    def _repo_top_level_dirs(self, server, repo_path):  # noqa: D102
+        return list(self._dirs)
+
+
+def test_probe_repository_topography_healthy():
+    service = ProbeService(FakeConfig([_local_server()], "local", "local"))
+    ok, message = service.probe_repository_topography(_local_server(), "Neon")
+    assert ok is True
+    assert "healthy" in message.lower()
+
+
+def test_probe_repository_topography_unreachable():
+    service = ProbeService(FakeConfig([_local_server()], "local", "local"), online=False)
+    ok, message = service.probe_repository_topography(_local_server(), "Neon")
+    assert ok is False
+    assert "unreachable" in message.lower()
+
+
+def test_probe_repository_topography_missing_repo():
+    service = ProbeService(FakeConfig([_local_server()], "local", "local"), youngest=None)
+    ok, message = service.probe_repository_topography(_local_server(), "Neon")
+    assert ok is False
+    assert "not found" in message.lower()
+
+
+def test_probe_repository_topography_missing_vfs_folder():
+    service = ProbeService(FakeConfig([_local_server()], "local", "local"), dirs=("shared",))
+    ok, message = service.probe_repository_topography(_local_server(), "Neon")
+    assert ok is False
+    assert "no 'svn' folder" in message.lower()
+
+
+def test_probe_repository_topography_disabled_server():
+    disabled = VCSServer(id="off", name="Off", adapter="none")
+    service = ProbeService(FakeConfig([disabled], "off", "off"))
+    ok, message = service.probe_repository_topography(disabled, "Neon")
+    assert ok is True
+    assert "disabled" in message.lower()

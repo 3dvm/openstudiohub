@@ -13,20 +13,41 @@ registry independently from the persistence layer.
 """
 
 import re
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, is_dataclass, replace
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlsplit
 
-from .vcs_server_profile import LOCAL_DOCKER, VCSServerProfile
+from .vcs_server_profile import LOCAL_DOCKER, REMOTE_SSH, VCSServerProfile
 
 VALID_ADAPTERS = ("svn", "git-lfs", "none")
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
 def slugify(name: str) -> str:
     """Human-readable, URL/JSON-safe identifier for a server."""
     slug = _SLUG_RE.sub("-", (name or "").strip().lower()).strip("-")
     return slug or "server"
+
+
+def url_host(repository_url: str) -> str:
+    """Return the hostname of a repository URL (empty when absent)."""
+    return (urlsplit(repository_url or "").hostname or "").strip()
+
+
+def infer_mode_from_url(repository_url: str) -> str:
+    """Transport implied by a repository URL.
+
+    Returns ``local_docker`` for the loopback host, ``remote_ssh`` for any other
+    host, and ``""`` when the URL carries no host (nothing to infer from).
+    """
+    host = url_host(repository_url).lower()
+    if not host:
+        return ""
+    if host in _LOCAL_HOSTS:
+        return LOCAL_DOCKER
+    return REMOTE_SSH
 
 
 @dataclass(frozen=True)
@@ -74,6 +95,33 @@ class VCSServer:
             "enable_vendor_sparse_checkout": self.enable_vendor_sparse_checkout,
             "profile": self.profile.to_dict(),
         }
+
+
+def reconcile_server_mode(server: VCSServer) -> VCSServer:
+    """Align a server's ``profile.mode`` with its repository URL.
+
+    A repository URL pointing at the loopback host is served by the local Docker
+    sandbox; anything else is a remote server reached over SSH. When the remote
+    host is unset it is defaulted from the URL so server-side probes have a
+    target. Servers without a URL host are returned untouched.
+    """
+    if not is_dataclass(server) or not hasattr(server, "profile"):
+        return server
+
+    inferred = infer_mode_from_url(server.repository_url)
+    if not inferred:
+        return server
+
+    profile = server.profile
+    remote = profile.remote
+    if inferred == REMOTE_SSH and not remote.host:
+        host = url_host(server.repository_url)
+        if host:
+            remote = replace(remote, host=host)
+    if inferred != profile.mode or remote is not profile.remote:
+        profile = replace(profile, mode=inferred, remote=remote)
+        return replace(server, profile=profile)
+    return server
 
 
 @dataclass(frozen=True)

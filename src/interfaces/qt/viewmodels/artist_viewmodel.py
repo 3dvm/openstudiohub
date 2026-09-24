@@ -56,6 +56,8 @@ class ArtistTaskCardModel:
 
 class ArtistViewModel(BaseViewModel):
     tasks_loaded = Signal(list)  # list[ArtistTaskCardModel]
+    tasks_load_started = Signal()
+    tasks_load_finished = Signal(bool)  # success
     vcs_changes_ready = Signal(str, list)  # (task_id, list[FileChange])
     vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
 
@@ -83,33 +85,51 @@ class ArtistViewModel(BaseViewModel):
         self.task_file_sync_service = TaskFileSyncService(config_factory)
         self._launching_card: Optional[ArtistTaskCardModel] = None
         self._cards: List[ArtistTaskCardModel] = []
+        self._tasks_loading = False
         self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
     # Data loading
     # ------------------------------------------------------------------
     def load_tasks(self) -> None:
-        if self.workers.is_running("tasks"):
+        if self._tasks_loading or self.workers.is_running("tasks"):
             return
 
+        self._tasks_loading = True
+        self.tasks_load_started.emit()
         self.report_status("Fetching your assigned tasks from Kitsu...", "yellow")
-        self._cards = []
 
         worker = FetchArtistTasksWorker(self.production_service)
         worker.data_ready.connect(self._on_tasks_fetched)
-        worker.error_occurred.connect(lambda e: self.report_status(f"Network error: {e}", "red"))
+        worker.error_occurred.connect(self._on_tasks_fetch_failed)
         self.workers.start("tasks", worker)
 
     def _on_tasks_fetched(self, tasks: list) -> None:
+        previous = {str(card.task_data.get("id", "")): card for card in self._cards}
+        self._tasks_loading = False
+
         if not tasks:
+            self._cards = []
             self.report_status("You have no pending tasks. Enjoy your coffee! ☕", "white")
             self.tasks_loaded.emit([])
+            self.tasks_load_finished.emit(True)
             return
 
         cards = [self.enrich_task(task) for task in tasks]
+        # Keep the live per-task VCS badges across a refresh.
+        for card in cards:
+            prior = previous.get(str(card.task_data.get("id", "")))
+            if prior is not None:
+                card.pending_changes = list(prior.pending_changes)
         self._cards = cards
         self.report_status(f"🟢 Synchronized: {len(tasks)} active tasks found.", "green")
         self.tasks_loaded.emit(cards)
+        self.tasks_load_finished.emit(True)
+
+    def _on_tasks_fetch_failed(self, error: str) -> None:
+        self._tasks_loading = False
+        self.report_status(f"Network error: {error}", "red")
+        self.tasks_load_finished.emit(False)
 
     def enrich_task(self, task_data: dict) -> ArtistTaskCardModel:
         """Compute filesystem-backed state for a single raw Kitsu task."""

@@ -136,10 +136,16 @@ class ProductionService:
                 project_task_types.add(tt_name)
 
                 task_data = task.get("data") or {}
-                kitsu_filepath = task_data.get("filepath")
+                kitsu_filepath = task_data.get("filepath") or ""
                 has_file = bool(kitsu_filepath) and (project_root / vfs_svn / kitsu_filepath).exists()
 
-                shot_tasks_data[tt_name] = {"task_id": task["id"], "has_file": has_file, "raw_task": task}
+                shot_tasks_data[tt_name] = {
+                    "task_id": task["id"],
+                    "has_file": has_file,
+                    "filepath": kitsu_filepath,
+                    "linked": bool(kitsu_filepath),
+                    "raw_task": task,
+                }
                 if not has_file:
                     shot_has_all_files = False
 
@@ -207,6 +213,7 @@ class ProductionService:
                     "task_id": task.get("id", ""),
                     "has_file": has_file,
                     "filepath": kitsu_filepath,
+                    "linked": bool(kitsu_filepath),
                     "raw_task": task,
                 }
                 if not has_file:

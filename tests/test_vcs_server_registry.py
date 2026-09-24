@@ -1,7 +1,18 @@
 """Unit tests for the VCS server registry value objects."""
 
-from src.domain.workspace.vcs_server import VCSServer, VCSServerRegistry, slugify
-from src.domain.workspace.vcs_server_profile import REMOTE_SSH, RemoteSSHConfig, VCSServerProfile
+from src.domain.workspace.vcs_server import (
+    VCSServer,
+    VCSServerRegistry,
+    infer_mode_from_url,
+    reconcile_server_mode,
+    slugify,
+)
+from src.domain.workspace.vcs_server_profile import (
+    LOCAL_DOCKER,
+    REMOTE_SSH,
+    RemoteSSHConfig,
+    VCSServerProfile,
+)
 
 
 def _local() -> VCSServer:
@@ -76,3 +87,26 @@ def test_server_invalid_adapter_falls_back():
 def test_server_is_enabled():
     assert _local().is_enabled is True
     assert VCSServer(id="n", name="None", adapter="none").is_enabled is False
+
+
+def test_infer_mode_from_url():
+    assert infer_mode_from_url("svn://localhost") == LOCAL_DOCKER
+    assert infer_mode_from_url("svn://127.0.0.1") == LOCAL_DOCKER
+    assert infer_mode_from_url("svn://academia-core") == REMOTE_SSH
+    assert infer_mode_from_url("") == ""
+
+
+def test_reconcile_server_mode_from_url():
+    # A remote URL stored with the local default mode is corrected to remote.
+    mismatch = VCSServer(id="default", name="Default", repository_url="svn://academia-core")
+    fixed = reconcile_server_mode(mismatch)
+    assert fixed.profile.mode == REMOTE_SSH
+    assert fixed.profile.remote.host == "academia-core"
+
+    # Loopback URLs stay local; no host is invented.
+    local = reconcile_server_mode(_local())
+    assert local.profile.mode == LOCAL_DOCKER
+    assert local.profile.remote.host == ""
+
+    # A fully configured remote server is left as-is.
+    assert reconcile_server_mode(_remote()) == _remote()

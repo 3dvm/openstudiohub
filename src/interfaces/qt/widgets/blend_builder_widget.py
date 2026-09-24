@@ -68,6 +68,65 @@ class BlendBuilderWidget(QFrame):
         self.vm.sequences_loaded.connect(self._render_sequences)
         self.vm.install_progress.connect(self._on_install_progress)
         self.vm.install_finished.connect(self._on_install_finished)
+        self.vm.project_changes_ready.connect(self._on_publish_count_ready)
+        self.vm.project_publish_dialog_requested.connect(self._open_publish_dialog)
+        self.vm.project_publish_up_to_date.connect(self._on_publish_up_to_date)
+        self.vm.task_file_finished.connect(self._on_task_file_finished)
+
+    def _prompt_project_publish(self) -> None:
+        """After spawning, offer to publish the new files (silent when clean)."""
+        self.vm.request_project_publish_scan(interactive=True, notify_when_clean=False)
+
+    def _refresh_publish_count(self) -> None:
+        self.vm.request_project_publish_scan()
+
+    def _on_project_publish_clicked(self) -> None:
+        self.vm.request_project_publish_scan(interactive=True)
+
+    def _on_publish_count_ready(self, changes: list) -> None:
+        count = len(changes)
+        if count:
+            self.btn_publish_vcs.setText(self.tr(f"⤴ Publish to VCS ({count})"))
+        else:
+            self.btn_publish_vcs.setText(self.tr("⤴ Publish to VCS"))
+        self.btn_publish_vcs.setEnabled(self.vm.current_project_id is not None)
+
+    def _on_publish_up_to_date(self) -> None:
+        self.vm.report_status(self.tr("✓ Everything is up to date on the VCS."), "green")
+
+    def _on_task_file_finished(self, success: bool, message: str) -> None:
+        if success:
+            self.vm.report_status(
+                self.tr("Task linked. The file is not committed yet — use Publish to VCS."),
+                "yellow",
+            )
+        # Refresh the count (a created file is now an untracked change).
+        self._refresh_publish_count()
+
+    def _open_publish_dialog(self, changes: list) -> None:
+        if not changes:
+            return
+        from types import SimpleNamespace
+
+        from src.interfaces.qt.views.vcs_publish_dialog import VcsPublishDialog
+
+        card = SimpleNamespace(
+            task_data={"id": "__project__"},
+            project_name=self.vm.current_project_name,
+            project_root=self.vm.project_root(),
+            task_file_path="",
+        )
+        dialog = VcsPublishDialog(
+            self,
+            self.vm,
+            card,
+            changes,
+            task_label=self.tr(
+                f"{len(changes)} file(s) are not committed to the VCS yet. Publish them so "
+                "they are included in checkouts and exports."
+            ),
+        )
+        dialog.exec()
 
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self)
@@ -86,6 +145,18 @@ class BlendBuilderWidget(QFrame):
         project_layout.addWidget(lbl_proj)
         project_layout.addWidget(self.combo_projects)
         project_layout.addStretch()
+
+        self.btn_publish_vcs = QPushButton(self.tr("⤴ Publish to VCS"))
+        self.btn_publish_vcs.setObjectName("SecondaryButton")
+        self.btn_publish_vcs.setCursor(Qt.PointingHandCursor)
+        self.btn_publish_vcs.setFixedHeight(35)
+        self.btn_publish_vcs.setToolTip(
+            self.tr("Commit the project's uncommitted files to the VCS.")
+        )
+        self.btn_publish_vcs.setEnabled(False)
+        self.btn_publish_vcs.clicked.connect(self._on_project_publish_clicked)
+        project_layout.addWidget(self.btn_publish_vcs)
+
         main_layout.addLayout(project_layout)
 
         self.wizard = PipelineWizardWidget(self)
@@ -332,8 +403,14 @@ class BlendBuilderWidget(QFrame):
             return widget
 
         ready = bool(task_info.get("has_file"))
-        color = "#10B981" if ready else "#F59E0B"
-        layout.addWidget(self._status_text(self.tr("Ready") if ready else self.tr("Pending"), color))
+        linked = bool(task_info.get("linked")) or bool(self._task_filepath(task_info))
+        if ready:
+            label, color = self.tr("Ready"), "#10B981"
+        elif linked:
+            label, color = self.tr("Linked (missing on disk)"), "#EF4444"
+        else:
+            label, color = self.tr("Pending"), "#F59E0B"
+        layout.addWidget(self._status_text(label, color))
         layout.addWidget(self._status_dot(color))
 
         layout.addWidget(
@@ -468,6 +545,7 @@ class BlendBuilderWidget(QFrame):
             self.change_step(1)
             self.vm.load_shots()
             self.vm.load_sequences()
+            self._refresh_publish_count()
         else:
             self.lbl_install_status.setText(self.tr(f"Installation failed: {message}"))
             self.btn_install_project.setEnabled(True)
@@ -550,11 +628,15 @@ class BlendBuilderWidget(QFrame):
         project_name = self.combo_projects.currentText()
         self.vm.select_project(project_name)
         if not self.vm.current_project_id:
+            self.btn_publish_vcs.setEnabled(False)
+            self.btn_publish_vcs.setText(self.tr("⤴ Publish to VCS"))
             return
         self.change_step(1)
+        self.btn_publish_vcs.setText(self.tr("⤴ Publish to VCS"))
         if self.vm.is_current_project_installed():
             self.vm.load_shots()
             self.vm.load_sequences()
+            self._refresh_publish_count()
 
     # ------------------------------------------------------------------
     # Rendering callbacks
@@ -817,6 +899,7 @@ class BlendBuilderWidget(QFrame):
                     dialog.finalize(True, self.tr("Success: Storyboards spawned."), "Assign Artists in Kitsu", self._open_kitsu_shots)
                     self.change_step(2)
                     self.vm.load_sequences()
+                    self._prompt_project_publish()
                 else:
                     dialog.finalize(False, msg or self.tr("Process completed with errors. Check logs."))
                     QMessageBox.critical(self, self.tr("Spawn Failed"), msg or self.tr("Unknown error."))
@@ -843,6 +926,7 @@ class BlendBuilderWidget(QFrame):
                 if success:
                     self.change_step(3)
                     dialog.finalize(True, self.tr("Success: EDIT Master forged."))
+                    self._prompt_project_publish()
                 else:
                     dialog.finalize(False, msg or self.tr("Process completed with errors. Check logs."))
                     QMessageBox.critical(self, self.tr("Spawn Failed"), msg or self.tr("Unknown error."))
@@ -894,6 +978,7 @@ class BlendBuilderWidget(QFrame):
                 dialog.update_progress(100, self.tr("Done!"))
                 dialog.finalize(True, self.tr("Success: Files Spawned."), "Assign in Kitsu", self._open_kitsu_assets)
                 self._reload_current_table()
+                self._prompt_project_publish()
             else:
                 dialog.finalize(False, message or self.tr("Process completed with errors. Check logs."))
                 QMessageBox.critical(self, self.tr("Batch Creation Failed"), message)
@@ -926,6 +1011,7 @@ class BlendBuilderWidget(QFrame):
                 dialog.update_progress(100, self.tr("Done!"))
                 dialog.finalize(True, self.tr("Success: File Regenerated."))
                 self._reload_current_table()
+                self._prompt_project_publish()
             else:
                 dialog.finalize(False, message or self.tr("Process completed with errors. Check logs."))
                 QMessageBox.critical(self, self.tr("Regeneration Failed"), message)

@@ -136,7 +136,32 @@ class SVNAdapter(AbstractVCS):
             cmd = ["svn", "checkout", self.repo_url, str(self.workspace_dir)]
             cmd.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd)
+        self._assert_no_conflicts()
         return True
+
+    def _assert_no_conflicts(self) -> None:
+        """Fail loudly when the checkout/update left SVN conflicts behind.
+
+        A common cause is a locally pre-created ``<vfs>`` folder tree shadowing
+        the incoming versioned folders ("local unversioned, incoming dir add
+        upon update"). Surfacing it here points the user at the recovery action
+        instead of leaving a silently broken working copy.
+        """
+        try:
+            output = self._run_subprocess(["svn", "status"], cwd=self.workspace_dir)
+        except Exception:  # noqa: BLE001 - status is best-effort diagnostics
+            return
+        conflicts = [
+            line for line in output.splitlines()
+            if len(line) > 6 and "C" in line[:7]
+        ]
+        if conflicts:
+            detail = "\n".join(conflicts[:10])
+            raise RuntimeError(
+                "The VCS working copy has conflicts after the update (often caused "
+                "by local folders shadowing incoming versioned folders). Use "
+                "'Reset VCS Working Copy' for this project and retry.\n" + detail
+            )
 
     def sparse_pull(self, paths: List[str], username: Optional[str] = None, password: Optional[str] = None) -> bool:
         """Restrictive download (Jailing) for Vendors."""

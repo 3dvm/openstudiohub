@@ -290,6 +290,60 @@ class VCSMigrationService:
             return None
         return (result.stdout or "").strip() or None
 
+    def _repo_top_level_dirs(self, server: VCSServer, repo_path: str) -> list:
+        """Return the repository's top-level folder names (empty when unreadable)."""
+        url = f"file://{repo_path}"
+        result = self._probe(server, f"svn ls {shlex.quote(url)}")
+        if getattr(result, "returncode", 1) != 0:
+            return []
+        stdout = result.stdout or ""
+        if isinstance(stdout, (bytes, bytearray)):
+            stdout = stdout.decode("utf-8", "replace")
+        return [line.strip().rstrip("/") for line in stdout.splitlines() if line.strip()]
+
+    def probe_repository_topography(
+        self,
+        server: Optional[VCSServer],
+        project_name: str,
+        vfs_svn: str = "",
+    ) -> Tuple[bool, str]:
+        """Confirm ``server`` hosts the project repository with the expected topography.
+
+        Checks, in order: the SVN endpoint is reachable, the repository exists
+        and is a valid SVN repository, and it exposes the expected ``vfs_svn``
+        root folder. Never raises: returns ``(ok, human_readable_message)``.
+        """
+        if server is None:
+            return False, "Select a VCS server to validate."
+        if not getattr(server, "is_enabled", False):
+            return True, "Version Control is disabled (NAS only)."
+
+        vfs_svn = vfs_svn or self.config_factory.get_vfs_svn_name()
+        online, message = self.test_remote_svn(server)
+        if not online:
+            return False, message
+
+        repo_name = normalize_repo_name(project_name)
+        repo_path = self._repo_path(server, repo_name)
+        try:
+            youngest = self._youngest(server, repo_path)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not inspect '{repo_name}' on '{server.name}': {error}"
+        if youngest is None:
+            return False, f"Repository '{repo_name}' was not found on '{server.name}'."
+
+        dirs = self._repo_top_level_dirs(server, repo_path)
+        if vfs_svn and vfs_svn not in dirs:
+            found = ", ".join(dirs) or "none"
+            return False, (
+                f"Repository '{repo_name}' exists on '{server.name}' but has no "
+                f"'{vfs_svn}' folder (found: {found})."
+            )
+        return True, (
+            f"Repository '{repo_name}' on '{server.name}' is healthy "
+            f"(revision {youngest})."
+        )
+
     def _dump_popen(self, server: VCSServer, repo_path: str):
         inner = f"svnadmin dump --quiet {shlex.quote(repo_path)}"
         if server.profile.mode == LOCAL_DOCKER:

@@ -24,7 +24,12 @@ from pathlib import Path
 from typing import Optional
 
 from src.domain.workspace.topography import WorkspaceTopography
-from src.domain.workspace.vcs_server import VCSServer, VCSServerRegistry, slugify
+from src.domain.workspace.vcs_server import (
+    VCSServer,
+    VCSServerRegistry,
+    reconcile_server_mode,
+    slugify,
+)
 from src.domain.workspace.vcs_server_profile import (
     LOCAL_DOCKER,
     REMOTE_SSH,
@@ -167,6 +172,10 @@ class ConfigFactory:
                     "servers": servers_payload,
                     "default_server_id": default_server_id,
                 })
+                registry = replace(
+                    registry,
+                    servers=tuple(reconcile_server_mode(s) for s in registry.servers),
+                )
                 self._config["vcs_engine"]["servers"] = [s.to_dict() for s in registry.servers]
                 self._config["vcs_engine"]["default_server_id"] = registry.default_server_id
             elif vcs_sys or repo_url:
@@ -264,21 +273,30 @@ class ConfigFactory:
             return VCSServerRegistry()
 
         profile = VCSServerProfile.from_dict(profile_data)
-        server = VCSServer(
+        server = reconcile_server_mode(VCSServer(
             id="default",
             name="Default",
             adapter=(vcs.get("active_adapter") or "svn"),
             repository_url=vcs.get("repository_url", ""),
             enable_vendor_sparse_checkout=bool(vcs.get("enable_vendor_sparse_checkout", True)),
             profile=profile,
-        )
+        ))
         return VCSServerRegistry(servers=(server,), default_server_id="default")
 
     def get_vcs_servers(self) -> VCSServerRegistry:
-        """Return the configured servers (synthesizing a legacy default if needed)."""
+        """Return the configured servers (synthesizing a legacy default if needed).
+
+        The stored profile mode is reconciled against each repository URL so a
+        server saved with a remote URL and the local default mode is treated as
+        remote (the URL is what checkout uses).
+        """
         vcs = self._config.get("vcs_engine", {})
         if "servers" in vcs:
-            return VCSServerRegistry.from_dict(vcs)
+            registry = VCSServerRegistry.from_dict(vcs)
+            return replace(
+                registry,
+                servers=tuple(reconcile_server_mode(s) for s in registry.servers),
+            )
         return self._legacy_registry()
 
     def _store_registry(self, registry: VCSServerRegistry) -> None:
@@ -345,7 +363,7 @@ class ConfigFactory:
     def save_vcs_server(self, server_data: dict) -> bool:
         """Create or update a server entry, then persist."""
         try:
-            server = VCSServer.from_dict(server_data)
+            server = reconcile_server_mode(VCSServer.from_dict(server_data))
             self._store_registry(self.get_vcs_servers().with_server(server))
             self._persist()
             return True

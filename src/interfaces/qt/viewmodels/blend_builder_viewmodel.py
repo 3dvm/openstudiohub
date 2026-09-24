@@ -21,6 +21,7 @@ from src.application.credential_vault import CredentialVault
 from src.application.production_manager import ProductionManager
 from src.application.services.production_service import ProductionService
 from src.application.services.task_file_service import TaskFileService
+from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.domain.production.entities import Task
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.viewmodels.vcs_credential_gate import (
@@ -34,6 +35,10 @@ from src.interfaces.qt.workers.api_queries import (
     FetchProjectsWorker,
     FetchSequencesWorker,
     FetchShotsWorker,
+)
+from src.interfaces.qt.workers.artist_workers import (
+    CheckVcsChangesWorker,
+    PublishVcsChangesWorker,
 )
 from src.interfaces.qt.workers.blender_spawners import (
     BatchCreationWorker,
@@ -57,6 +62,10 @@ class BlendBuilderViewModel(BaseViewModel):
     task_file_finished = Signal(bool, str)
     install_progress = Signal(str, str)
     install_finished = Signal(bool, str)
+    project_changes_ready = Signal(list)  # list[FileChange] for the current project
+    project_publish_dialog_requested = Signal(list)  # interactive scan with changes
+    project_publish_up_to_date = Signal()  # interactive scan with no changes
+    vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
 
     def __init__(
         self,
@@ -79,6 +88,9 @@ class BlendBuilderViewModel(BaseViewModel):
 
         self.pm_core = ProductionManager(self.config_factory)
         self.task_file_service = TaskFileService(self.config_factory)
+        self.task_file_sync_service = TaskFileSyncService(self.config_factory)
+        self._publish_scan_interactive = False
+        self._publish_scan_notify_clean = True
         self.current_project_id: Optional[str] = None
         self.current_project_name: str = ""
         self.project_map: dict = {}
@@ -396,6 +408,92 @@ class BlendBuilderViewModel(BaseViewModel):
 
     def unlink_task_file(self, task: Task) -> None:
         self._start_task_file_worker(task, "unlink")
+
+    # ------------------------------------------------------------------
+    # Project VCS publish (post-spawn checklist)
+    # ------------------------------------------------------------------
+    def request_project_publish_scan(
+        self, interactive: bool = False, notify_when_clean: bool = True
+    ) -> None:
+        """Scan the current project for uncommitted files.
+
+        ``project_changes_ready`` is always emitted (used to refresh the publish
+        button count). When ``interactive`` the caller also gets either
+        ``project_publish_dialog_requested`` or, if ``notify_when_clean``,
+        ``project_publish_up_to_date``.
+        """
+        if not self.current_project_id:
+            return
+        project_root = self.project_root()
+        if not project_root.exists() or self.workers.is_running("project_vcs_check"):
+            return
+        self._publish_scan_interactive = interactive
+        self._publish_scan_notify_clean = notify_when_clean
+        worker = CheckVcsChangesWorker(self.task_file_sync_service, "__project__", project_root)
+        worker.changes_ready.connect(self._on_project_changes_ready)
+        worker.error_occurred.connect(lambda e: self.report_status(f"VCS scan error: {e}", "red"))
+        self.workers.start("project_vcs_check", worker)
+
+    def _on_project_changes_ready(self, _task_id: str, changes: list) -> None:
+        changes = list(changes or [])
+        self.project_changes_ready.emit(changes)
+        if not self._publish_scan_interactive:
+            return
+        self._publish_scan_interactive = False
+        if changes:
+            self.project_publish_dialog_requested.emit(changes)
+        elif self._publish_scan_notify_clean:
+            self.project_publish_up_to_date.emit()
+        self._publish_scan_notify_clean = True
+
+    def publish_vcs_changes(self, _card, selected_changes: list) -> bool:
+        """Commit the selected project files (used by the publish checklist)."""
+        if not selected_changes:
+            self.report_status("No files selected for publishing.", "yellow")
+            return False
+        project_root = self.project_root()
+        if not project_root.exists():
+            self.report_status("Cannot publish: project folder is missing on NAS.", "red")
+            return False
+        if self.workers.is_running("vcs_publish"):
+            self.report_status("A publish is already in progress...", "red")
+            return False
+        if not self._ensure_vcs_credentials():
+            return False
+        server = self._resolve_server()
+        server_id = server.id if server is not None else ""
+        vcs_user, vcs_pwd = ("", "")
+        if self.credential_vault is not None:
+            vcs_user, vcs_pwd = self.credential_vault.get_server_credentials(server_id)
+        selected_paths = [change.relative_path for change in selected_changes]
+        unversioned_paths = [
+            change.relative_path for change in selected_changes if change.is_unversioned
+        ]
+        worker = PublishVcsChangesWorker(
+            sync_service=self.task_file_sync_service,
+            task_id="__project__",
+            project_root=project_root,
+            selected_paths=selected_paths,
+            unversioned_paths=unversioned_paths,
+            username=vcs_user or "",
+            password=vcs_pwd or "",
+            message=(
+                f"OpenStudioHub: publish {len(selected_paths)} spawned file(s) "
+                f"for {self.current_project_name}."
+            ),
+        )
+        worker.finished_publish.connect(self._on_project_publish_finished)
+        self.workers.start("vcs_publish", worker, critical=True)
+        return True
+
+    def _on_project_publish_finished(self, task_id: str, success: bool, message: str) -> None:
+        self.report_status(
+            ("🟢 " if success else "🔴 ") + message, "green" if success else "red"
+        )
+        self.vcs_publish_finished.emit(task_id, success, message)
+        if success:
+            # Refresh the publish button count.
+            self.request_project_publish_scan()
 
     # ------------------------------------------------------------------
     # Navigation

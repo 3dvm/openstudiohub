@@ -7,6 +7,7 @@ from src.domain.shared_kernel.addon_contract import (
     resolve_addon_entry,
     serialize_addon_configuration,
 )
+from src.application.services.workspace_operations import WorkspaceScaffolder
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.domain.workspace.topography import WorkspaceTopography
 
@@ -33,6 +34,27 @@ def test_base_folders():
     assert "svn/tools" in folders
     assert "svn/pro/assets" in folders
     assert "briefs" in folders
+
+
+def test_scaffold_include_vcs_false_skips_vcs_dirs(tmp_path):
+    bp = ProjectBlueprint(
+        project_name="Neon",
+        topography=WorkspaceTopography(vfs_svn="svn", custom_dirs=("briefs",)),
+    )
+
+    assert WorkspaceScaffolder.build_directories(tmp_path, bp, include_vcs=False) is True
+
+    assert (tmp_path / "briefs").is_dir()
+    assert not (tmp_path / "svn").exists()
+
+
+def test_scaffold_default_creates_vcs_dirs(tmp_path):
+    bp = ProjectBlueprint(project_name="Neon", topography=WorkspaceTopography(vfs_svn="svn"))
+
+    assert WorkspaceScaffolder.build_directories(tmp_path, bp) is True
+
+    assert (tmp_path / "svn" / "tools").is_dir()
+    assert (tmp_path / "svn" / "pro" / "assets").is_dir()
 
 
 def test_project_blueprint_roundtrip():
