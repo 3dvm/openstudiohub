@@ -12,6 +12,7 @@ Renders the service cards and forwards lifecycle commands to the
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -36,7 +37,6 @@ class InfrastructureWidget(QFrame):
 
         self.setObjectName("InfrastructureBase")
         self._build_ui()
-        self._load_remote_server_settings()
         self.vm.operation_finished.connect(self._on_operation_finished)
 
     def _build_ui(self) -> None:
@@ -126,6 +126,11 @@ class InfrastructureWidget(QFrame):
         )
         return field
 
+    def _styled_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px; border: none;")
+        return label
+
     def _browse_into(self, line_edit: QLineEdit) -> None:
         path, _ = QFileDialog.getOpenFileName(self, self.tr("Select File"))
         if path:
@@ -138,26 +143,62 @@ class InfrastructureWidget(QFrame):
         c_layout.setContentsMargins(20, 20, 20, 20)
         c_layout.setSpacing(10)
 
-        title = QLabel(self.tr("Remote VCS Server (VPS over Tailscale)"))
+        title = QLabel(self.tr("VCS Servers"))
         title.setStyleSheet("color: #F8FAFC; font-size: 16px; font-weight: bold; border: none;")
         c_layout.addWidget(title)
 
         desc = QLabel(self.tr(
-            "Administer project repositories on a remote SVN server. Server commands run "
-            "inside the configured Docker container through OpenSSH over the tailnet. "
-            "Artist credentials stay in the Session Credentials tab; the SSH passphrase "
-            "is only needed for provisioning and is kept in RAM."
+            "Manage the version-control servers the studio can use. Each project is bound to "
+            "one server. Remote servers run SVN inside a Docker container reached through OpenSSH "
+            "over the tailnet; artist credentials live in the Session Credentials tab and the SSH "
+            "passphrase is only needed for provisioning (kept in RAM)."
         ))
         desc.setStyleSheet("color: #94A3B8; font-size: 12px; border: none;")
         desc.setWordWrap(True)
         c_layout.addWidget(desc)
 
+        self._servers_by_id = {}
+        self._loading_server = False
+        self._current_server_id = ""
+
+        selector = QHBoxLayout()
+        self.combo_servers = QComboBox()
+        self.combo_servers.setFixedHeight(30)
+        self.combo_servers.setStyleSheet(
+            "QComboBox { background-color: #0F172A; border: 1px solid #475569; color: #F8FAFC; border-radius: 6px; padding-left: 8px; }"
+        )
+        self.combo_servers.currentIndexChanged.connect(self._on_server_selected)
+        selector.addWidget(self.combo_servers, stretch=1)
+
+        btn_new = QPushButton(self.tr("New"))
+        btn_new.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 6px; font-weight: bold; }")
+        btn_new.clicked.connect(self._on_new_server)
+        selector.addWidget(btn_new)
+
+        btn_remove = QPushButton(self.tr("Remove"))
+        btn_remove.setStyleSheet("QPushButton { background-color: #7F1D1D; color: white; border-radius: 6px; padding: 6px; font-weight: bold; }")
+        btn_remove.clicked.connect(self._on_remove_server)
+        selector.addWidget(btn_remove)
+
+        btn_default = QPushButton(self.tr("Set Default"))
+        btn_default.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 6px; font-weight: bold; }")
+        btn_default.clicked.connect(self._on_set_default)
+        selector.addWidget(btn_default)
+        c_layout.addLayout(selector)
+
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignRight)
 
+        self.entry_server_name = self._styled_input("VPS Production")
+        self.combo_adapter = QComboBox()
+        self.combo_adapter.addItems(["svn", "git-lfs", "none"])
+        self.entry_svn_url = self._styled_input("svn://svn-vps")
+        self.chk_sparse = QCheckBox(self.tr("Enable Jailing (Vendor Sparse Checkout)"))
+        self.chk_sparse.setStyleSheet("color: #94A3B8; border: none;")
         self.combo_server_mode = QComboBox()
         self.combo_server_mode.addItems(["local_docker", "remote_ssh"])
-        self.entry_svn_url = self._styled_input("svn://svn-vps")
+        self.entry_local_container = self._styled_input("openstudio_local_svn")
+        self.entry_local_root = self._styled_input("/home/svn")
         self.entry_remote_host = self._styled_input("svn-vps (MagicDNS or 100.x)")
         self.entry_ssh_port = self._styled_input("22")
         self.entry_ssh_user = self._styled_input("openstudio")
@@ -170,8 +211,13 @@ class InfrastructureWidget(QFrame):
         self.entry_password_db = self._styled_input("/var/opt/svn/passwd")
         self.entry_realm = self._styled_input("OpenStudio")
 
+        form.addRow(self._styled_label(self.tr("Name:")), self.entry_server_name)
+        form.addRow(self._styled_label(self.tr("Adapter:")), self.combo_adapter)
+        form.addRow(self._styled_label(self.tr("Repository URL:")), self.entry_svn_url)
+        form.addRow("", self.chk_sparse)
         form.addRow(self._styled_label(self.tr("Mode:")), self.combo_server_mode)
-        form.addRow(self._styled_label(self.tr("SVN Base URL:")), self.entry_svn_url)
+        form.addRow(self._styled_label(self.tr("Local Container:")), self.entry_local_container)
+        form.addRow(self._styled_label(self.tr("Local Repo Root:")), self.entry_local_root)
         form.addRow(self._styled_label(self.tr("SSH Host:")), self.entry_remote_host)
         form.addRow(self._styled_label(self.tr("SSH Port:")), self.entry_ssh_port)
         form.addRow(self._styled_label(self.tr("SSH User:")), self.entry_ssh_user)
@@ -188,22 +234,24 @@ class InfrastructureWidget(QFrame):
         self.entry_remote_host.textChanged.connect(self._sync_svn_url_from_host)
 
         buttons = QHBoxLayout()
-        btn_save = QPushButton(self.tr("Save Server Settings"))
+        btn_save = QPushButton(self.tr("Save Server"))
         btn_save.setStyleSheet("QPushButton { background-color: #10B981; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }")
-        btn_save.clicked.connect(self._save_remote_server_settings)
+        btn_save.clicked.connect(self._save_server)
         buttons.addWidget(btn_save)
 
         btn_test_ssh = QPushButton(self.tr("Test SSH"))
         btn_test_ssh.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }")
-        btn_test_ssh.clicked.connect(lambda: self.vm.test_remote_connection("ssh"))
+        btn_test_ssh.clicked.connect(lambda: self._test_server("ssh"))
         buttons.addWidget(btn_test_ssh)
 
         btn_test_svn = QPushButton(self.tr("Test SVN"))
         btn_test_svn.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }")
-        btn_test_svn.clicked.connect(lambda: self.vm.test_remote_connection("svn"))
+        btn_test_svn.clicked.connect(lambda: self._test_server("svn"))
         buttons.addWidget(btn_test_svn)
 
         c_layout.addLayout(buttons)
+
+        self._reload_servers()
         return card
 
     def _with_browse(self, line_edit: QLineEdit) -> QWidget:
@@ -219,17 +267,63 @@ class InfrastructureWidget(QFrame):
         return container
 
     def _sync_svn_url_from_host(self, host: str) -> None:
+        if self.combo_server_mode.currentText() != "remote_ssh":
+            return
         current = self.entry_svn_url.text().strip()
         if not current or current.startswith("svn://"):
             self.entry_svn_url.setText(f"svn://{host.strip()}" if host.strip() else "")
 
-    def _load_remote_server_settings(self) -> None:
-        settings = self.vm.load_server_settings()
-        profile = settings.get("profile", {})
-        remote = profile.get("remote", {})
+    # ------------------------------------------------------------------
+    # VCS server manager
+    # ------------------------------------------------------------------
+    def _reload_servers(self, select_id: str = "") -> None:
+        self._loading_server = True
+        servers = self.vm.list_servers()
+        self._servers_by_id = {server["id"]: server for server in servers}
+        self.combo_servers.clear()
+        for server in servers:
+            label = server["name"] + ("  (default)" if server.get("is_default") else "")
+            self.combo_servers.addItem(label, server["id"])
+        self._loading_server = False
 
+        target = select_id or self._current_server_id
+        if target and target in self._servers_by_id:
+            self._select_server(target)
+        elif servers:
+            self._select_server(servers[0]["id"])
+        else:
+            self._clear_server_fields()
+
+    def _select_server(self, server_id: str) -> None:
+        server = self._servers_by_id.get(server_id)
+        if server is None:
+            return
+        index = self.combo_servers.findData(server_id)
+        if index >= 0 and self.combo_servers.currentIndex() != index:
+            self._loading_server = True
+            self.combo_servers.setCurrentIndex(index)
+            self._loading_server = False
+        self._load_server_fields(server)
+
+    def _on_server_selected(self, _index: int) -> None:
+        if self._loading_server:
+            return
+        server_id = self.combo_servers.currentData()
+        if server_id:
+            self._load_server_fields(self._servers_by_id.get(server_id, {}))
+
+    def _load_server_fields(self, server: dict) -> None:
+        profile = server.get("profile", {})
+        remote = profile.get("remote", {})
+        self._loading_server = True
+        self._current_server_id = server.get("id", "")
+        self.entry_server_name.setText(server.get("name", ""))
+        self.combo_adapter.setCurrentText(server.get("adapter", "svn"))
+        self.entry_svn_url.setText(server.get("repository_url", ""))
+        self.chk_sparse.setChecked(server.get("enable_vendor_sparse_checkout", True))
         self.combo_server_mode.setCurrentText(profile.get("mode", "local_docker"))
-        self.entry_svn_url.setText(settings.get("repository_url", ""))
+        self.entry_local_container.setText(profile.get("local_container", "openstudio_local_svn"))
+        self.entry_local_root.setText(profile.get("local_repo_root", "/home/svn"))
         self.entry_remote_host.setText(remote.get("host", ""))
         self.entry_ssh_port.setText(str(remote.get("ssh_port", 22)))
         self.entry_ssh_user.setText(remote.get("ssh_user", ""))
@@ -241,29 +335,106 @@ class InfrastructureWidget(QFrame):
         self.entry_repo_root.setText(remote.get("repo_root", "/var/opt/svn"))
         self.entry_password_db.setText(remote.get("password_db", ""))
         self.entry_realm.setText(remote.get("realm", "OpenStudio"))
+        self._loading_server = False
 
-    def _save_remote_server_settings(self) -> None:
+    def _clear_server_fields(self) -> None:
+        self._load_server_fields({
+            "id": "",
+            "name": "",
+            "adapter": "svn",
+            "repository_url": "",
+            "enable_vendor_sparse_checkout": True,
+            "profile": {"mode": "local_docker", "local_container": "openstudio_local_svn", "local_repo_root": "/home/svn", "remote": {}},
+        })
+        self.combo_servers.setCurrentIndex(-1)
+
+    def _on_new_server(self) -> None:
+        self._current_server_id = ""
+        self.entry_server_name.clear()
+        self.combo_adapter.setCurrentText("svn")
+        self.entry_svn_url.clear()
+        self.chk_sparse.setChecked(True)
+        self.combo_server_mode.setCurrentText("remote_ssh")
+        self.entry_local_container.setText("openstudio_local_svn")
+        self.entry_local_root.setText("/home/svn")
+        for field in (self.entry_remote_host, self.entry_ssh_user, self.entry_ssh_key,
+                      self.entry_ssh_cert, self.entry_known_hosts, self.entry_container,
+                      self.entry_container_user, self.entry_password_db):
+            field.clear()
+        self.entry_ssh_port.setText("22")
+        self.entry_repo_root.setText("/var/opt/svn")
+        self.entry_realm.setText("OpenStudio")
+        self.entry_server_name.setFocus()
+
+    def _on_remove_server(self) -> None:
+        server_id = self._current_server_id or self.combo_servers.currentData()
+        if not server_id:
+            return
+        server = self._servers_by_id.get(server_id, {})
+        confirm = QMessageBox.question(
+            self,
+            self.tr("Remove VCS Server"),
+            self.tr(f"Remove the server configuration '{server.get('name', server_id)}'? "
+                    "Repositories on the server are not deleted."),
+        )
+        if confirm == QMessageBox.Yes:
+            self.vm.remove_server(server_id)
+            self._current_server_id = ""
+            self._reload_servers()
+
+    def _on_set_default(self) -> None:
+        server_id = self._current_server_id or self.combo_servers.currentData()
+        if server_id:
+            self.vm.set_default_server(server_id)
+            self._reload_servers(select_id=server_id)
+
+    def _save_server(self) -> None:
+        name = self.entry_server_name.text().strip() or "Server"
+        server_id = self._current_server_id
+        if not server_id:
+            server_id = self.vm.make_server_id(name)
+
         try:
             port = int(self.entry_ssh_port.text().strip() or "22")
         except ValueError:
             port = 22
+
         payload = {
-            "mode": self.combo_server_mode.currentText(),
-            "remote": {
-                "host": self.entry_remote_host.text().strip(),
-                "ssh_port": port,
-                "ssh_user": self.entry_ssh_user.text().strip(),
-                "ssh_key_path": self.entry_ssh_key.text().strip(),
-                "ssh_cert_path": self.entry_ssh_cert.text().strip(),
-                "known_hosts_path": self.entry_known_hosts.text().strip(),
-                "container": self.entry_container.text().strip(),
-                "container_user": self.entry_container_user.text().strip(),
-                "repo_root": self.entry_repo_root.text().strip(),
-                "password_db": self.entry_password_db.text().strip(),
-                "realm": self.entry_realm.text().strip(),
+            "id": server_id,
+            "name": name,
+            "adapter": self.combo_adapter.currentText(),
+            "repository_url": self.entry_svn_url.text().strip(),
+            "enable_vendor_sparse_checkout": self.chk_sparse.isChecked(),
+            "profile": {
+                "mode": self.combo_server_mode.currentText(),
+                "local_container": self.entry_local_container.text().strip() or "openstudio_local_svn",
+                "local_repo_root": self.entry_local_root.text().strip() or "/home/svn",
+                "remote": {
+                    "host": self.entry_remote_host.text().strip(),
+                    "ssh_port": port,
+                    "ssh_user": self.entry_ssh_user.text().strip(),
+                    "ssh_key_path": self.entry_ssh_key.text().strip(),
+                    "ssh_cert_path": self.entry_ssh_cert.text().strip(),
+                    "known_hosts_path": self.entry_known_hosts.text().strip(),
+                    "container": self.entry_container.text().strip(),
+                    "container_user": self.entry_container_user.text().strip(),
+                    "repo_root": self.entry_repo_root.text().strip(),
+                    "password_db": self.entry_password_db.text().strip(),
+                    "realm": self.entry_realm.text().strip(),
+                },
             },
         }
-        self.vm.save_server_settings(payload, self.entry_svn_url.text().strip())
+        if self.vm.save_server(payload):
+            self._current_server_id = server_id
+            self._reload_servers(select_id=server_id)
+
+    def _test_server(self, target: str) -> None:
+        server_id = self._current_server_id or self.combo_servers.currentData()
+        if not server_id:
+            QMessageBox.information(self, self.tr("Test Server"), self.tr("Save the server before testing it."))
+            return
+        self.vm.test_server(server_id, target)
+
 
     def _build_kitsu_service_card(self) -> QFrame:
         card = QFrame()

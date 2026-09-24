@@ -19,9 +19,12 @@ Strictly encapsulates Fallback logic (Defaults) to keep UI components decoupled.
 
 import json
 import platform
+from dataclasses import replace
 from pathlib import Path
+from typing import Optional
 
 from src.domain.workspace.topography import WorkspaceTopography
+from src.domain.workspace.vcs_server import VCSServer, VCSServerRegistry, slugify
 from src.domain.workspace.vcs_server_profile import (
     LOCAL_DOCKER,
     REMOTE_SSH,
@@ -99,9 +102,11 @@ class ConfigFactory:
             kitsu_url = datos_dict.get("kitsu_production", {}).get("api_url", "").strip()
 
             vcs_data = datos_dict.get("vcs_engine", {})
-            vcs_sys = vcs_data.get("active_adapter", "svn").strip()
+            vcs_sys = vcs_data.get("active_adapter", "").strip()
             vendor_sparse = bool(vcs_data.get("enable_vendor_sparse_checkout", True))
             repo_url = vcs_data.get("repository_url", "").strip()
+            servers_payload = vcs_data.get("servers")
+            default_server_id = (vcs_data.get("default_server_id") or "").strip()
 
             topo_data = datos_dict.get("project_topography", {})
             infra_data = datos_dict.get("infrastructure_topology", {})
@@ -145,19 +150,30 @@ class ConfigFactory:
                     profile = VCSServerProfile.from_dict(infra_data.get("vcs_server"))
                     self._config["infrastructure_topology"]["vcs_server"] = profile.to_dict()
 
-            # Parametric Adapter Selection
+            # Parametric Adapter Selection (legacy mirror keys)
             vcs_clean = vcs_sys.lower()
+            legacy_adapter = "svn"
             if "svn" in vcs_clean and "git" in vcs_clean:
-                self._config["vcs_engine"]["active_adapter"] = "git-svn"
+                legacy_adapter = "git-svn"
             elif "git" in vcs_clean:
-                self._config["vcs_engine"]["active_adapter"] = "git-lfs"
+                legacy_adapter = "git-lfs"
             elif "none" in vcs_clean:
-                self._config["vcs_engine"]["active_adapter"] = "none"
-            else:
-                self._config["vcs_engine"]["active_adapter"] = "svn"
+                legacy_adapter = "none"
 
-            self._config["vcs_engine"]["enable_vendor_sparse_checkout"] = vendor_sparse
-            self._config["vcs_engine"]["repository_url"] = repo_url
+            # VCS server registry (multi-server). New payloads carry `servers`;
+            # legacy payloads are folded into the default server for compatibility.
+            if servers_payload is not None:
+                registry = VCSServerRegistry.from_dict({
+                    "servers": servers_payload,
+                    "default_server_id": default_server_id,
+                })
+                self._config["vcs_engine"]["servers"] = [s.to_dict() for s in registry.servers]
+                self._config["vcs_engine"]["default_server_id"] = registry.default_server_id
+            elif vcs_sys or repo_url:
+                self._merge_legacy_server(legacy_adapter, repo_url, vendor_sparse)
+
+            # Keep the legacy single-server mirror in sync with the default server.
+            self._sync_legacy_vcs_keys()
 
             # 4. Atomic Disk Write
             self._persist()
@@ -230,30 +246,167 @@ class ConfigFactory:
         # Fallback dinámico
         return self.get_workspace_root() / "openstudio_vault"
 
-    def get_vcs_adapter_type(self) -> str:
-        return self._config.get("vcs_engine", {}).get("active_adapter", "svn")
+    # ---------------------------------------------------------
+    # VCS SERVER REGISTRY (MULTI-SERVER)
+    # ---------------------------------------------------------
 
-    def get_vcs_repository_url(self) -> str:
-        return self._config.get("vcs_engine", {}).get("repository_url", "")
+    def _legacy_registry(self) -> VCSServerRegistry:
+        """Build a registry from the pre-multi-server single-server config."""
+        vcs = self._config.get("vcs_engine", {})
+        profile_data = self._config.get("infrastructure_topology", {}).get("vcs_server")
+        has_legacy = bool(
+            vcs.get("active_adapter")
+            or vcs.get("repository_url")
+            or vcs.get("enable_vendor_sparse_checkout") is not None
+            or profile_data
+        )
+        if not has_legacy:
+            return VCSServerRegistry()
 
-    def set_repository_url(self, url: str) -> bool:
-        """Persist the base VCS repository URL without touching other engine settings."""
+        profile = VCSServerProfile.from_dict(profile_data)
+        server = VCSServer(
+            id="default",
+            name="Default",
+            adapter=(vcs.get("active_adapter") or "svn"),
+            repository_url=vcs.get("repository_url", ""),
+            enable_vendor_sparse_checkout=bool(vcs.get("enable_vendor_sparse_checkout", True)),
+            profile=profile,
+        )
+        return VCSServerRegistry(servers=(server,), default_server_id="default")
+
+    def get_vcs_servers(self) -> VCSServerRegistry:
+        """Return the configured servers (synthesizing a legacy default if needed)."""
+        vcs = self._config.get("vcs_engine", {})
+        if "servers" in vcs:
+            return VCSServerRegistry.from_dict(vcs)
+        return self._legacy_registry()
+
+    def _store_registry(self, registry: VCSServerRegistry) -> None:
+        vcs = self._config.setdefault("vcs_engine", {})
+        vcs["servers"] = [server.to_dict() for server in registry.servers]
+        vcs["default_server_id"] = registry.default_server_id
+        self._sync_legacy_vcs_keys()
+
+    def _sync_legacy_vcs_keys(self) -> None:
+        """Mirror the default server into the legacy single-server keys."""
+        default = self.get_vcs_servers().default()
+        vcs = self._config.setdefault("vcs_engine", {})
+        vcs["active_adapter"] = default.adapter if default else "none"
+        vcs["repository_url"] = default.repository_url if default else ""
+        vcs["enable_vendor_sparse_checkout"] = (
+            default.enable_vendor_sparse_checkout if default else True
+        )
+
+    def _merge_legacy_server(self, adapter: str, repo_url: str, vendor_sparse: bool) -> None:
+        """Fold legacy payload keys into the default server entry."""
+        registry = self.get_vcs_servers()
+        current = registry.default()
+        if current is None:
+            server = VCSServer(
+                id="default",
+                name="Default",
+                adapter=adapter or "svn",
+                repository_url=repo_url,
+                enable_vendor_sparse_checkout=vendor_sparse,
+            )
+        else:
+            server = replace(
+                current,
+                adapter=adapter or current.adapter,
+                repository_url=repo_url or current.repository_url,
+                enable_vendor_sparse_checkout=vendor_sparse,
+            )
+        self._store_registry(registry.with_server(server))
+
+    def get_server(self, server_id: str) -> Optional[VCSServer]:
+        return self.get_vcs_servers().get(server_id)
+
+    def get_default_server(self) -> Optional[VCSServer]:
+        return self.get_vcs_servers().default()
+
+    def get_server_for_project(self, project_root) -> Optional[VCSServer]:
+        """Resolve the server a project is bound to (blueprint id -> URL -> default)."""
+        registry = self.get_vcs_servers()
         try:
-            self._config.setdefault("vcs_engine", {})["repository_url"] = (url or "").strip()
+            project_root = Path(project_root)
+            meta_files = list(project_root.glob("*/project_init.json"))
+            if meta_files:
+                data = json.loads(meta_files[0].read_text(encoding="utf-8"))
+                server = registry.resolve(
+                    data.get("vcs_server_id", ""),
+                    data.get("vcs_base_url", ""),
+                )
+                if server:
+                    return server
+        except Exception as error:  # noqa: BLE001
+            print(f"[CONFIG FACTORY] Projects server resolution fallback: {error}")
+        return registry.default()
+
+    def save_vcs_server(self, server_data: dict) -> bool:
+        """Create or update a server entry, then persist."""
+        try:
+            server = VCSServer.from_dict(server_data)
+            self._store_registry(self.get_vcs_servers().with_server(server))
             self._persist()
             return True
         except Exception as e:
-            print(f"[CONFIG FACTORY ERROR] Failed to persist repository URL: {e}")
+            print(f"[CONFIG FACTORY ERROR] Failed to save VCS server: {e}")
             return False
 
+    def remove_vcs_server(self, server_id: str) -> bool:
+        try:
+            self._store_registry(self.get_vcs_servers().without_server(server_id))
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to remove VCS server: {e}")
+            return False
+
+    def set_default_server(self, server_id: str) -> bool:
+        try:
+            registry = self.get_vcs_servers()
+            if registry.get(server_id) is None:
+                return False
+            self._store_registry(replace(registry, default_server_id=server_id))
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to set default VCS server: {e}")
+            return False
+
+    def make_server_id(self, name: str) -> str:
+        """Unique, human-readable slug for a new server name."""
+        base = slugify(name)
+        existing = {server.id for server in self.get_vcs_servers().servers}
+        candidate = base
+        index = 2
+        while candidate in existing:
+            candidate = f"{base}-{index}"
+            index += 1
+        return candidate
+
     # ---------------------------------------------------------
-    # VCS SERVER TOPOLOGY (LOCAL DOCKER vs REMOTE SSH)
+    # LEGACY SINGLE-SERVER SHIMS (delegate to the default server)
     # ---------------------------------------------------------
 
+    def get_vcs_adapter_type(self) -> str:
+        default = self.get_default_server()
+        return default.adapter if default else "svn"
+
+    def get_vcs_repository_url(self) -> str:
+        default = self.get_default_server()
+        return default.repository_url if default else ""
+
+    def set_repository_url(self, url: str) -> bool:
+        """Legacy shim: update the default server's repository URL."""
+        default = self.get_default_server()
+        if default is None:
+            return False
+        return self.save_vcs_server(replace(default, repository_url=(url or "").strip()).to_dict())
+
     def get_vcs_server_profile(self) -> VCSServerProfile:
-        """Return the repository-admin topology (defaults to local Docker)."""
-        data = self._config.get("infrastructure_topology", {}).get("vcs_server")
-        return VCSServerProfile.from_dict(data)
+        default = self.get_default_server()
+        return default.profile if default else VCSServerProfile()
 
     def get_server_mode(self) -> str:
         return self.get_vcs_server_profile().mode
@@ -262,18 +415,18 @@ class ConfigFactory:
         return self.get_vcs_server_profile().mode == REMOTE_SSH
 
     def set_vcs_server_profile(self, data: dict) -> bool:
-        """Persist the repository-admin topology (mode + remote coordinates)."""
-        try:
-            profile = VCSServerProfile.from_dict(data)
-            self._config.setdefault("infrastructure_topology", {})["vcs_server"] = profile.to_dict()
-            self._persist()
-            return True
-        except Exception as e:
-            print(f"[CONFIG FACTORY ERROR] Failed to persist VCS server profile: {e}")
-            return False
+        """Legacy shim: update the default server's admin topology."""
+        default = self.get_default_server()
+        profile = VCSServerProfile.from_dict(data)
+        if default is None:
+            return self.save_vcs_server(
+                VCSServer(id="default", name="Default", profile=profile).to_dict()
+            )
+        return self.save_vcs_server(replace(default, profile=profile).to_dict())
 
     def is_vendor_sparse_enabled(self) -> bool:
-        return self._config.get("vcs_engine", {}).get("enable_vendor_sparse_checkout", True)
+        default = self.get_default_server()
+        return default.enable_vendor_sparse_checkout if default else True
 
     def get_kitsu_api_url(self) -> str:
         return self._config.get("kitsu_production", {}).get("api_url", "")

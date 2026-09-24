@@ -9,6 +9,7 @@ from .vcs_server_profile import (
     RemoteSSHConfig,
     VCSServerProfile,
 )
+from .vcs_server import VCSServer, VCSServerRegistry, slugify
 
 __all__ = [
     "WorkspaceTopography",
@@ -16,6 +17,9 @@ __all__ = [
     "JailingPolicy",
     "VCSServerProfile",
     "RemoteSSHConfig",
+    "VCSServer",
+    "VCSServerRegistry",
+    "slugify",
     "LOCAL_DOCKER",
     "REMOTE_SSH",
 ]

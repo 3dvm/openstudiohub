@@ -51,11 +51,35 @@ class ProjectCreationService:
         self.credential_vault = credential_vault
 
     # ------------------------------------------------------------------
-    # Remote-server helpers
+    # Server resolution
     # ------------------------------------------------------------------
-    def _server_profile(self):
-        getter = getattr(self.config_factory, "get_vcs_server_profile", None)
-        return getter() if callable(getter) else None
+    def _resolve_server(self, server_id: str = ""):
+        get_server = getattr(self.config_factory, "get_server", None)
+        if server_id and callable(get_server):
+            server = get_server(server_id)
+            if server is not None:
+                return server
+        get_default = getattr(self.config_factory, "get_default_server", None)
+        if callable(get_default):
+            return get_default()
+        return None
+
+    def _server_for_context(self, context: CreationContext):
+        server_id = context.blueprint.vcs_server_id if context.blueprint else ""
+        return self._resolve_server(server_id)
+
+    def _vcs_bits(self, context: CreationContext):
+        """Return ``(adapter, repository_url, profile)`` for the bound server."""
+        server = self._server_for_context(context)
+        if server is not None:
+            return server.adapter, server.repository_url, server.profile
+        profile_getter = getattr(self.config_factory, "get_vcs_server_profile", None)
+        profile = profile_getter() if callable(profile_getter) else None
+        return (
+            self.config_factory.get_vcs_adapter_type(),
+            self.config_factory.get_vcs_repository_url(),
+            profile,
+        )
 
     def _ssh_passphrase_provider(self):
         if self.credential_vault is None:
@@ -77,6 +101,7 @@ class ProjectCreationService:
         topography=None,
         vcs_enabled: bool = True,
         addon_configuration: dict | None = None,
+        server_id: str = "",
     ) -> CreationOutcome:
 
         if not project_name.strip():
@@ -109,6 +134,7 @@ class ProjectCreationService:
             topography=topography,
             vcs_enabled=vcs_enabled,
             addon_configuration=addon_configuration,
+            server_id=server_id,
         )
         return self._run(context)
 
@@ -138,12 +164,13 @@ class ProjectCreationService:
 
         if context.vcs_enabled:
             try:
+                adapter, repository_url, profile = self._vcs_bits(context)
                 deleted, message = VCSRouter.destroy_repository(
-                    self.config_factory.get_vcs_adapter_type(),
-                    self.config_factory.get_vcs_repository_url(),
+                    adapter,
+                    repository_url,
                     context.folder_name,
                     context.blueprint.topography.vfs_svn,
-                    server_profile=self._server_profile(),
+                    server_profile=profile,
                     ssh_passphrase_provider=self._ssh_passphrase_provider(),
                 )
                 ok = ok and deleted
@@ -207,18 +234,18 @@ class ProjectCreationService:
         if not context.vcs_enabled or context.is_done(CreationStep.PREFLIGHT_VCS):
             return
 
-        base_repo_url = self.config_factory.get_vcs_repository_url()
+        adapter, base_repo_url, profile = self._vcs_bits(context)
         if not base_repo_url:
             raise StageError(
                 CreationStep.PREFLIGHT_VCS,
                 _("VCS repository URL is not configured."),
             )
         online, message = VCSRouter.probe_health(
-            self.config_factory.get_vcs_adapter_type(),
+            adapter,
             base_repo_url,
             context.vcs_user,
             context.vcs_pwd,
-            server_profile=self._server_profile(),
+            server_profile=profile,
             ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
         if not online:
@@ -292,16 +319,16 @@ class ProjectCreationService:
             context.mark_done(CreationStep.VCS)
             return
 
-        base_repo_url = self.config_factory.get_vcs_repository_url()
+        adapter, base_repo_url, profile = self._vcs_bits(context)
         if "localhost" in base_repo_url and not context.vcs_user:
             context.vcs_user, context.vcs_pwd = DEV_SVN_USER, DEV_SVN_PASSWORD
 
         online, message = VCSRouter.probe_health(
-            self.config_factory.get_vcs_adapter_type(),
+            adapter,
             base_repo_url,
             context.vcs_user,
             context.vcs_pwd,
-            server_profile=self._server_profile(),
+            server_profile=profile,
             ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
         if not online:
@@ -338,11 +365,20 @@ class ProjectCreationService:
         topography,
         vcs_enabled: bool,
         addon_configuration: dict | None,
+        server_id: str = "",
     ) -> CreationContext:
         if addon_configuration is None:
             parsed_addon_config = default_addon_configuration(dependencies)
         else:
             parsed_addon_config = parse_addon_configuration(addon_configuration)
+
+        server = self._resolve_server(server_id)
+        if server is not None:
+            vcs_server_id = server.id
+            vcs_base_url = server.repository_url
+        else:
+            vcs_server_id = ""
+            vcs_base_url = self.config_factory.get_vcs_repository_url()
 
         blueprint = ProjectBlueprint(
             project_name=project_name,
@@ -353,7 +389,8 @@ class ProjectCreationService:
             addon_configuration=parsed_addon_config,
             topography=topography or self.config_factory.get_topography(),
             vcs_enabled=vcs_enabled,
-            vcs_base_url=self.config_factory.get_vcs_repository_url(),
+            vcs_server_id=vcs_server_id,
+            vcs_base_url=vcs_base_url,
         )
 
         ignore_rules = [
@@ -378,12 +415,12 @@ class ProjectCreationService:
         return context
 
     def _build_router(self, context: CreationContext) -> VCSRouter:
-        base_repo_url = self.config_factory.get_vcs_repository_url()
+        adapter, base_repo_url, profile = self._vcs_bits(context)
         return VCSRouter(
-            vcs_type=self.config_factory.get_vcs_adapter_type(),
+            vcs_type=adapter,
             repo_url=f"{base_repo_url}/{context.folder_name}/{context.blueprint.topography.vfs_svn}",
             workspace_dir=context.project_path / context.blueprint.topography.vfs_svn,
-            server_profile=self._server_profile(),
+            server_profile=profile,
             ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
 

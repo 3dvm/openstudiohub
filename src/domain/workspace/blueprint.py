@@ -34,8 +34,10 @@ class ProjectBlueprint:
     addon_configuration: Dict[str, AddonConfiguration] = field(default_factory=dict)
     topography: WorkspaceTopography = field(default_factory=WorkspaceTopography)
     vcs_enabled: bool = True
-    # Per-project VCS base URL override (e.g. after a local -> remote migration).
-    # Empty means "use the global studio setting".
+    # Per-project VCS binding (e.g. after a local -> remote migration). An empty
+    # ``vcs_server_id`` means "use the resolved/global default server", and an
+    # empty ``vcs_base_url`` means "use that server's configured URL".
+    vcs_server_id: str = ""
     vcs_base_url: str = ""
 
     @classmethod
@@ -57,6 +59,7 @@ class ProjectBlueprint:
             dependencies=dependencies,
             addon_configuration=addon_configuration,
             topography=WorkspaceTopography.from_dict(data.get("topography_signature") or {}),
+            vcs_server_id=data.get("vcs_server_id") or "",
             vcs_base_url=data.get("vcs_base_url") or "",
         )
 
@@ -111,4 +114,5 @@ class ProjectBlueprint:
                 "vfs_pipeline": self.topography.vfs_pipeline,
             },
             "vcs_base_url": self.vcs_base_url,
+            "vcs_server_id": self.vcs_server_id,
         }

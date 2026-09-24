@@ -94,7 +94,7 @@ class NewProjectDialog(QDialog):
         self.lbl_vcs = QLabel(self.tr("Version Control System (VCS):"))
         main_layout.addWidget(self.lbl_vcs)
         self.combo_vcs = QComboBox()
-        self.combo_vcs.addItems(["Settings Default", "SVN", "Git-LFS", "None (NAS only)"])
+        self._populate_vcs_servers()
         main_layout.addWidget(self.combo_vcs)
 
         lbl_version = QLabel(self.tr("Target Blender Version:"))
@@ -166,6 +166,21 @@ class NewProjectDialog(QDialog):
             self.combo_version.setEnabled(False)
             self.btn_splash.setEnabled(False)
             self.btn_create.setEnabled(False)
+
+    def _populate_vcs_servers(self) -> None:
+        self._vcs_servers = []
+        try:
+            registry = self.vm.config_factory.get_vcs_servers()
+        except Exception:  # noqa: BLE001
+            registry = None
+        if registry is not None:
+            for server in registry.servers:
+                if not server.is_enabled:
+                    continue
+                label = server.name + ("  (default)" if server.id == registry.default_server_id else "")
+                self.combo_vcs.addItem(label, server.id)
+                self._vcs_servers.append(server)
+        self.combo_vcs.addItem(self.tr("None (NAS only)"), "")
 
     def _on_templates_loaded(self, templates: list) -> None:
         self.combo_kitsu_template.clear()
@@ -278,17 +293,10 @@ class NewProjectDialog(QDialog):
         if not main_template:
             main_template = "Macuare_Estudio"
 
-        vcs_config = self.vm.config_factory.get_raw_config().get("vcs_engine", {})
         vcs_user, vcs_pwd = self.vm.resolve_vcs_credentials()
 
-        vcs_selection = self.combo_vcs.currentIndex()
-        vcs_enabled = True
-
-        if vcs_selection == 3:
-            vcs_enabled = False
-        elif vcs_selection == 0:
-            if vcs_config.get("active_adapter", "svn") == "none":
-                vcs_enabled = False
+        server_id = self.combo_vcs.currentData() or ""
+        vcs_enabled = bool(server_id)
 
         self.btn_create.setEnabled(False)
         self.btn_create.setText(self.tr("Creating..."))
@@ -306,6 +314,7 @@ class NewProjectDialog(QDialog):
             vcs_pwd,
             vcs_enabled=vcs_enabled,
             addon_configuration=final_addon_config,
+            server_id=server_id,
         )
 
     def _build_addon_config(self, addon_name: str, meta: dict) -> dict:

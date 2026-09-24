@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
@@ -157,6 +158,25 @@ class ProjectListWidget(QFrame):
         if self.on_repair_callback:
             self.on_repair_callback(project_name, project_id, error_code)
 
+    def _request_migration(self, project_name: str, project_dir) -> None:
+        """Ask which VCS server the project should migrate to, then run it."""
+        servers = self.vm.list_servers()
+        if not servers:
+            QMessageBox.information(
+                self, self.tr("Migrate VCS"),
+                self.tr("No VCS server is configured. Add one in the Infrastructure panel."),
+            )
+            return
+
+        labels = [server["name"] + ("  (default)" if server.get("is_default") else "") for server in servers]
+        choice, accepted = QInputDialog.getItem(
+            self, self.tr("Migrate VCS"), self.tr("Target server:"), labels, 0, False
+        )
+        if not accepted:
+            return
+        target = servers[labels.index(choice)]
+        self.vm.migrate_project(project_name, project_dir, target_server_id=target["id"])
+
     def _on_migration_finished(self, project_name: str, success: bool, message: str) -> None:
         if not success:
             QMessageBox.critical(self, self.tr("VCS Migration Failed"), message)
@@ -236,7 +256,7 @@ class ProjectListWidget(QFrame):
                 on_watchtower=self.vm.open_watchtower,
                 on_open_wizard=self.on_open_wizard_callback,
                 on_repair=self._request_repair,
-                on_migrate=self.vm.migrate_project,
+                on_migrate=self._request_migration,
             )
 
             self._project_widgets.append(card)

@@ -89,6 +89,7 @@ class ProjectListViewModel(BaseViewModel):
             credential_vault=self.credential_vault,
             status_callback=self.report_status,
         )
+        self._migration_source_servers: dict = {}
         self._projects: List[dict] = []
         self.workers = WorkerManager(self)
         self._refresh_pending = False
@@ -271,10 +272,31 @@ class ProjectListViewModel(BaseViewModel):
         except Exception as error:  # noqa: BLE001
             self.report_status(f"Failed to launch: {str(error)}", "red")
 
-    def migrate_project(self, project_name: str, project_dir: Path | None = None) -> None:
-        """Migrate a single project's VCS repository to the configured remote server."""
-        if not vcs_requires_credentials(self.config_factory):
-            self.report_status("Version Control is disabled for this studio.", "red")
+    def list_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
+
+    def migrate_project(self, project_name: str, project_dir: Path | None = None, target_server_id: str = "") -> None:
+        """Migrate a single project's VCS repository to the chosen server."""
+        if project_dir is None:
+            project_dir = self.nas_manager.resolve_project_dir(project_name)
+        if not project_dir:
+            self.report_status(f"Project folder for '{project_name}' was not found.", "red")
+            return
+
+        source_server = None
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if callable(getter):
+            try:
+                source_server = getter(project_dir)
+            except Exception:  # noqa: BLE001
+                source_server = None
+
+        if not vcs_requires_credentials(self.config_factory, server=source_server):
+            self.report_status("Version Control is disabled for this project.", "red")
             return
 
         if self.workers.is_running("migrate"):
@@ -286,14 +308,12 @@ class ProjectListViewModel(BaseViewModel):
             return
         vcs_user, vcs_pwd = creds
 
-        if project_dir is None:
-            project_dir = self.nas_manager.resolve_project_dir(project_name)
-        if not project_dir:
-            self.report_status(f"Project folder for '{project_name}' was not found.", "red")
-            return
+        if source_server is not None:
+            self._migration_source_servers[project_name] = source_server.id
 
         worker = VCSMigrationWorker(
-            self.migration_service, project_name, project_dir, vcs_user, vcs_pwd
+            self.migration_service, project_name, project_dir, vcs_user, vcs_pwd,
+            target_server_id=target_server_id,
         )
         worker.progress_update.connect(self.report_status)
         worker.finished_migration.connect(self._on_migration_finished)
@@ -305,11 +325,12 @@ class ProjectListViewModel(BaseViewModel):
         self.migration_finished.emit(project_name, success, message)
 
     def cleanup_local_repository(self, project_name: str) -> None:
-        """Optionally delete the old local repository after a successful migration."""
+        """Optionally delete the old repository after a successful migration."""
         if self.workers.is_running("cleanup"):
             self.report_status("A cleanup is already running...", "red")
             return
-        worker = VCSLocalCleanupWorker(self.migration_service, project_name)
+        server_id = self._migration_source_servers.get(project_name, "")
+        worker = VCSLocalCleanupWorker(self.migration_service, project_name, server_id=server_id)
         worker.finished_cleanup.connect(self._on_cleanup_finished)
         self.workers.start("cleanup", worker)
 
@@ -325,16 +346,29 @@ class ProjectListViewModel(BaseViewModel):
         if not success:
             self.delete_warning.emit(msg)
 
-        if vcs_requires_credentials(self.config_factory):
+        server = None
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if callable(getter) and project_dir:
+            try:
+                server = getter(project_dir)
+            except Exception:  # noqa: BLE001
+                server = None
+
+        if vcs_requires_credentials(self.config_factory, server=server):
             provider = None
             if self.credential_vault is not None:
                 provider = self.credential_vault.get_ssh_passphrase
-            getter = getattr(self.config_factory, "get_vcs_server_profile", None)
-            profile = getter() if callable(getter) else None
+            if server is not None:
+                adapter, repository_url, profile = server.adapter, server.repository_url, server.profile
+            else:
+                profile_getter = getattr(self.config_factory, "get_vcs_server_profile", None)
+                adapter = self.config_factory.get_vcs_adapter_type()
+                repository_url = self.config_factory.get_vcs_repository_url()
+                profile = profile_getter() if callable(profile_getter) else None
             try:
                 VCSRouter.destroy_repository(
-                    self.config_factory.get_vcs_adapter_type(),
-                    self.config_factory.get_vcs_repository_url(),
+                    adapter,
+                    repository_url,
                     project_name,
                     self.config_factory.get_vfs_svn_name(),
                     server_profile=profile,

@@ -7,7 +7,7 @@ The core of the Hub's behavior is driven by a master `settings.json` file. This 
 
 * Nextcloud/NAS Root Paths.
 * Kitsu API URLs.
-* VCS Engine topology (SVN vs. Git).
+* The VCS server registry (local Docker and one or more remote VPS).
 * Cloud Services and AI Telemetry activation.
 
 The Hub is OS-agnostic: it dynamically detects the host operating system (Windows, Linux, Darwin) to resolve the correct local workspace root automatically.
@@ -19,13 +19,21 @@ To provision multiple workstations without manually configuring paths on each ma
 * This file is compressed using zlib and base64 for secure and seamless injection into other workstations. 
 * On Day 0, a new artist simply clicks "Load Studio Seed" on the login screen, selects the `.seed` file, and their Hub is instantly connected to the studio's specific database, network drives, and VCS backend.
 
-## Remote VCS Server (VPS over the Tailnet)
-The Infrastructure panel configures how the Hub administers project repositories. Two modes are available:
+## VCS Servers (Infrastructure panel)
+All VCS configuration lives in the **Infrastructure panel**, not in Settings. The studio can register several servers side by side; each project is bound to exactly one of them.
 
-* **`local_docker`** — the bundled developer SVN container (`openstudio_local_svn`).
-* **`remote_ssh`** — a production VPS whose `svnserve` runs inside a Docker container and is only reachable over the tailnet. The Hub creates and deletes **per-project repositories** by running `docker exec` over OpenSSH; it does not manage the daemon itself.
+Each server entry has:
 
-For `remote_ssh` you provide: the SVN base URL (`svn://host`), the SSH host/port/user, the private key (and optional OpenSSH certificate), an optional `known_hosts` file, the **Docker container name** (mandatory), the in-container repository root (svnserve `-r`, e.g. `/var/opt/svn`), and the in-container path to the studio-wide `passwd` file. Leave the passwd path blank to default to `<repo_root>/passwd`. The SSH passphrase is entered in the Session Credentials tab and kept in RAM for provisioning only.
+* A human-readable **id/name** (the id is derived from the name and is stored in the project blueprint).
+* An **adapter** (`svn`, `git-lfs`, `none`) and the **repository URL** (`svn://host`).
+* An optional **Vendor Sparse Checkout** flag.
+* A **mode**:
+  * **`local_docker`** — the bundled developer SVN container (`openstudio_local_svn`).
+  * **`remote_ssh`** — a production VPS whose `svnserve` runs inside a Docker container and is only reachable over the tailnet. The Hub creates and deletes **per-project repositories** by running `docker exec` over OpenSSH; it does not manage the daemon itself.
+
+For `remote_ssh` you provide: the SSH host/port/user, the private key (and optional OpenSSH certificate), an optional `known_hosts` file, the **Docker container name** (mandatory), the in-container repository root (svnserve `-r`, e.g. `/var/opt/svn`), and the in-container path to the studio-wide `passwd` file. Leave the passwd path blank to default to `<repo_root>/passwd`. The SSH passphrase is entered in the Session Credentials tab and kept in RAM for provisioning only.
+
+New projects pick their server in the creation dialog; the binding is recorded as `vcs_server_id` in the project's `project_init.json`, so a studio can run some projects on the local sandbox and others on a VPS at the same time.
 
 Each repository created on the remote server gets a `conf/svnserve.conf` that points at the global passwd by **absolute path**, e.g.:
 
@@ -40,12 +48,10 @@ realm = OpenStudio
 The global passwd file is never modified by the Hub; provision it once on the server (bind-mounted into the container next to the repositories).
 
 ### Migrating an Existing Project
-Migrating is **per project** and preserves history. From a project card (TD role), choose **Migrate VCS to Remote**:
+Migration is **per project**, works **between any two servers**, and preserves history. From a project card (TD role), choose **Migrate VCS to Remote** and pick the target server:
 
-1. The Hub verifies the target remote repository is present and empty.
-2. It streams a local `svnadmin dump` into a remote `svnadmin load` (the repository UUID is preserved).
+1. The Hub verifies the target repository is present and empty.
+2. It streams a `svnadmin dump` from the project's current server into a `svnadmin load` on the target (the repository UUID is preserved).
 3. The existing working copy is repointed with `svn relocate`, so uncommitted local changes are kept.
-4. The per-project `vcs_base_url` is recorded in `project_init.json`.
-5. You are then asked whether to delete the old local repository or leave it orphaned.
-
-The global `repository_url` is updated in the Infrastructure panel so newly created projects are provisioned on the remote server.
+4. The per-project `vcs_server_id` and `vcs_base_url` are recorded in `project_init.json`.
+5. You are then asked whether to delete the old repository or leave it orphaned.

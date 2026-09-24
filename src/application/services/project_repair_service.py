@@ -40,6 +40,17 @@ class ProjectRepairService:
         getter = getattr(self.config_factory, "get_vcs_server_profile", None)
         return getter() if callable(getter) else None
 
+    def _resolve_server(self, server_id: str = ""):
+        get_server = getattr(self.config_factory, "get_server", None)
+        if server_id and callable(get_server):
+            server = get_server(server_id)
+            if server is not None:
+                return server
+        get_default = getattr(self.config_factory, "get_default_server", None)
+        if callable(get_default):
+            return get_default()
+        return None
+
     def _ssh_passphrase_provider(self):
         if self.credential_vault is None:
             return None
@@ -84,6 +95,7 @@ class ProjectRepairService:
         vcs_user: str,
         vcs_pwd: str,
         vcs_enabled: bool = True,
+        server_id: str = "",
     ) -> tuple[bool, str]:
         """Rebuild the missing filesystem topography and initialize the VCS."""
         project_root = self.nas.resolve_project_dir(project_name)
@@ -102,15 +114,24 @@ class ProjectRepairService:
             blueprint.topography,
         )
 
+        server = self._resolve_server(server_id or blueprint.vcs_server_id)
+        if server is not None:
+            vcs_type, base_repo_url, profile = server.adapter, server.repository_url, server.profile
+            blueprint.vcs_server_id = server.id
+            blueprint.vcs_base_url = server.repository_url
+        else:
+            vcs_type = self.config_factory.get_vcs_adapter_type()
+            base_repo_url = self.config_factory.get_vcs_repository_url()
+            profile = self._server_profile()
+
         vfs_svn = blueprint.topography.vfs_svn
-        base_repo_url = self.config_factory.get_vcs_repository_url()
         folder_name = project_name.strip().lower().replace(" ", "-")
 
         vcs_router = VCSRouter(
-            vcs_type=self.config_factory.get_vcs_adapter_type(),
+            vcs_type=vcs_type,
             repo_url=f"{base_repo_url}/{folder_name}/{vfs_svn}",
             workspace_dir=project_root / vfs_svn,
-            server_profile=self._server_profile(),
+            server_profile=profile,
             ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
 

@@ -84,8 +84,14 @@ class NewProjectViewModel(BaseViewModel):
         vcs_pwd: str,
         vcs_enabled: bool = True,
         addon_configuration: dict | None = None,
+        server_id: str = "",
     ) -> None:
-        required = vcs_enabled and vcs_requires_credentials(self.config_factory)
+        server = None
+        if server_id:
+            getter = getattr(self.config_factory, "get_server", None)
+            if callable(getter):
+                server = getter(server_id)
+        required = vcs_enabled and vcs_requires_credentials(self.config_factory, server=server)
         creds = ensure_vcs_credentials(
             required=required,
             credential_vault=self.credential_vault,
@@ -118,6 +124,7 @@ class NewProjectViewModel(BaseViewModel):
             vcs_pwd,
             vcs_enabled=vcs_enabled,
             addon_configuration=addon_configuration,
+            server_id=server_id,
         )
         worker.result.connect(self._on_creation_finished)
         self.workers.start("creation", worker)

@@ -55,14 +55,20 @@ def test_project_blueprint_roundtrip():
 
 
 def test_project_blueprint_vcs_base_url_roundtrip():
-    bp = ProjectBlueprint(project_name="Neon", vcs_base_url="svn://svn-vps")
+    bp = ProjectBlueprint(project_name="Neon", vcs_server_id="vps", vcs_base_url="svn://svn-vps")
     data = bp.to_dict()
     assert data["vcs_base_url"] == "svn://svn-vps"
-    assert ProjectBlueprint.from_dict(data).vcs_base_url == "svn://svn-vps"
+    assert data["vcs_server_id"] == "vps"
 
-    # Legacy blueprints without the field default to the global studio setting.
-    legacy = {k: v for k, v in data.items() if k != "vcs_base_url"}
-    assert ProjectBlueprint.from_dict(legacy).vcs_base_url == ""
+    restored = ProjectBlueprint.from_dict(data)
+    assert restored.vcs_base_url == "svn://svn-vps"
+    assert restored.vcs_server_id == "vps"
+
+    # Legacy blueprints without the fields default to the global studio setting.
+    legacy = {k: v for k, v in data.items() if k not in ("vcs_base_url", "vcs_server_id")}
+    restored_legacy = ProjectBlueprint.from_dict(legacy)
+    assert restored_legacy.vcs_base_url == ""
+    assert restored_legacy.vcs_server_id == ""
 
 
 def _valid_blueprint_dict() -> dict:

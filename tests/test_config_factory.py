@@ -95,3 +95,75 @@ def test_vcs_server_profile_and_repository_url_persist(tmp_path):
 def test_vcs_server_profile_defaults_to_local_docker(tmp_path):
     factory = ConfigFactory(tmp_path / "settings.json")
     assert factory.get_server_mode() == "local_docker"
+
+
+def test_multi_server_registry_crud(tmp_path):
+    factory = ConfigFactory(tmp_path / "settings.json")
+
+    assert factory.save_vcs_server({
+        "id": "local", "name": "Local", "adapter": "svn", "repository_url": "svn://localhost",
+    }) is True
+    assert factory.save_vcs_server({
+        "id": "vps", "name": "VPS", "adapter": "svn", "repository_url": "svn://vps",
+        "profile": {"mode": "remote_ssh", "remote": {"host": "vps", "ssh_user": "ops", "container": "estudio_svn"}},
+    }) is True
+
+    assert {s.id for s in factory.get_vcs_servers().servers} == {"local", "vps"}
+    assert factory.get_default_server().id == "local"
+
+    assert factory.set_default_server("vps") is True
+    assert factory.get_default_server().id == "vps"
+    assert factory.get_vcs_repository_url() == "svn://vps"
+    assert factory.get_vcs_server_profile().mode == "remote_ssh"
+
+    assert factory.remove_vcs_server("vps") is True
+    assert factory.get_default_server().id == "local"
+
+
+def test_legacy_single_server_config_is_migrated(tmp_path):
+    cfg_path = _write(tmp_path, {
+        "vcs_engine": {
+            "active_adapter": "svn",
+            "repository_url": "svn://old-server",
+            "enable_vendor_sparse_checkout": False,
+        },
+        "infrastructure_topology": {
+            "vcs_server": {"mode": "remote_ssh", "remote": {"host": "old", "ssh_user": "u", "container": "c"}},
+        },
+    })
+    factory = ConfigFactory(cfg_path)
+
+    registry = factory.get_vcs_servers()
+    assert len(registry.servers) == 1
+    server = registry.default()
+    assert server.id == "default"
+    assert server.repository_url == "svn://old-server"
+    assert server.enable_vendor_sparse_checkout is False
+    assert server.profile.mode == "remote_ssh"
+
+
+def test_get_server_for_project_uses_blueprint_binding(tmp_path):
+    factory = ConfigFactory(tmp_path / "settings.json")
+    factory.save_vcs_server({"id": "local", "name": "Local", "adapter": "svn", "repository_url": "svn://localhost"})
+    factory.save_vcs_server({"id": "vps", "name": "VPS", "adapter": "svn", "repository_url": "svn://vps"})
+    factory.set_default_server("local")
+
+    project = tmp_path / "neon"
+    (project / "pipeline").mkdir(parents=True)
+    (project / "pipeline" / "project_init.json").write_text(
+        json.dumps({"vcs_server_id": "vps"}), encoding="utf-8"
+    )
+
+    assert factory.get_server_for_project(project).id == "vps"
+    # Unknown project falls back to the default.
+    assert factory.get_server_for_project(tmp_path / "ghost").id == "local"
+
+
+def test_save_configuration_preserves_server_registry(tmp_path):
+    factory = ConfigFactory(tmp_path / "settings.json")
+    factory.save_vcs_server({"id": "vps", "name": "VPS", "adapter": "svn", "repository_url": "svn://vps"})
+
+    assert factory.save_configuration({"vcs_engine": {"local_workspace_root": {"linux": "/projects"}}}) is True
+
+    assert factory.get_server("vps") is not None
+    assert factory.get_vcs_repository_url() == "svn://vps"

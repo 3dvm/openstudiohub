@@ -48,6 +48,7 @@ class ProjectCreationWorker(ManagedWorker):
         vcs_pwd: str,
         vcs_enabled: bool,
         addon_configuration: dict | None = None,
+        server_id: str = "",
     ) -> None:
         super().__init__()
         self.project_creation_service = project_creation_service
@@ -60,6 +61,7 @@ class ProjectCreationWorker(ManagedWorker):
         self.vcs_pwd = vcs_pwd
         self.vcs_enabled = vcs_enabled
         self.addon_configuration = addon_configuration
+        self.server_id = server_id
 
     def run(self) -> None:
         outcome = self.project_creation_service.create_project(
@@ -72,6 +74,7 @@ class ProjectCreationWorker(ManagedWorker):
             vcs_pwd=self.vcs_pwd,
             vcs_enabled=self.vcs_enabled,
             addon_configuration=self.addon_configuration,
+            server_id=self.server_id,
         )
         self.result.emit(outcome)
 

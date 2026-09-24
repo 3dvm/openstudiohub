@@ -153,6 +153,45 @@ class SshRunner:
         result = self.run(remote_command, check=True, capture=True)
         return result.stdout or ""
 
+    def popen(
+        self,
+        remote_command: str,
+        stdin=None,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ):
+        """Start a command and return ``(process, cleanup)``.
+
+        The caller MUST invoke ``cleanup()`` after the process exits so the
+        temporary askpass helper (when a passphrase is used) is removed.
+        """
+        if not self.remote.is_configured:
+            raise RuntimeError(
+                "Remote VCS server is not configured (missing host or SSH user)."
+            )
+
+        passphrase = self._passphrase()
+        args = self.base_args(has_passphrase=bool(passphrase))
+        args.append(remote_command)
+
+        env = dict(os.environ)
+        cleanup = lambda: None
+        if passphrase:
+            context = self._askpass_environment(passphrase)
+            env.update(context.__enter__())
+
+            def cleanup():
+                context.__exit__(None, None, None)
+
+        process = subprocess.Popen(
+            args,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            env=env,
+        )
+        return process, cleanup
+
     def run_stream(self, remote_command: str, stdin) -> bytes:
         """Run a command feeding ``stdin`` (a binary stream), returning stdout."""
         if not self.remote.is_configured:

@@ -47,21 +47,22 @@ class DockerWorker(ManagedWorker):
 
 
 class RemoteServerTestWorker(ManagedWorker):
-    """Probes the remote VCS server over SSH or SVN from the Infrastructure panel."""
+    """Probes a VCS server over SSH or SVN from the Infrastructure panel."""
 
     finished_signal = Signal(bool, str)
 
-    def __init__(self, migration_service, target: str) -> None:
+    def __init__(self, migration_service, target: str, server=None) -> None:
         super().__init__()
         self.migration_service = migration_service
         self.target = target
+        self.server = server
 
     def run(self) -> None:
         try:
             if self.target == "ssh":
-                ok, message = self.migration_service.test_remote_connection()
+                ok, message = self.migration_service.test_remote_connection(self.server)
             else:
-                ok, message = self.migration_service.test_remote_svn()
+                ok, message = self.migration_service.test_remote_svn(self.server)
         except Exception as error:  # noqa: BLE001
             ok, message = False, f"Connection test failed: {error}"
         self.finished_signal.emit(ok, message)

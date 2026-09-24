@@ -58,29 +58,54 @@ class InfrastructureViewModel(BaseViewModel):
         self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
-    # Remote VCS server settings
+    # VCS server registry
     # ------------------------------------------------------------------
-    def load_server_settings(self) -> dict:
-        profile = self.config_factory.get_vcs_server_profile()
-        return {
-            "profile": profile.to_dict(),
-            "repository_url": self.config_factory.get_vcs_repository_url(),
-        }
+    def list_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
 
-    def save_server_settings(self, profile_payload: dict, repository_url: str = "") -> bool:
-        ok = self.config_factory.set_vcs_server_profile(profile_payload)
-        if repository_url:
-            ok = self.config_factory.set_repository_url(repository_url) and ok
-        message = "Remote server settings saved." if ok else "Failed to save remote server settings."
+    def empty_server(self) -> dict:
+        from src.domain.workspace.vcs_server import VCSServer
+
+        return VCSServer(id="", name="", adapter="svn").to_dict()
+
+    def make_server_id(self, name: str) -> str:
+        return self.config_factory.make_server_id(name)
+
+    def save_server(self, payload: dict) -> bool:
+        if not (payload.get("id") or "").strip():
+            payload = dict(payload)
+            payload["id"] = self.config_factory.make_server_id(payload.get("name") or "Server")
+        ok = self.config_factory.save_vcs_server(payload)
+        message = "VCS server saved." if ok else "Failed to save the VCS server."
         self.operation_finished.emit(ok, message)
         return ok
 
-    def test_remote_connection(self, target: str = "ssh") -> None:
+    def remove_server(self, server_id: str) -> bool:
+        ok = self.config_factory.remove_vcs_server(server_id)
+        message = "VCS server removed." if ok else "Failed to remove the VCS server."
+        self.operation_finished.emit(ok, message)
+        return ok
+
+    def set_default_server(self, server_id: str) -> bool:
+        ok = self.config_factory.set_default_server(server_id)
+        message = "Default VCS server updated." if ok else "Failed to set the default VCS server."
+        self.operation_finished.emit(ok, message)
+        return ok
+
+    def test_server(self, server_id: str, target: str = "ssh") -> None:
         if self.workers.is_running("remote_test"):
             self.report_status("A connection test is already running...", "red")
             return
-        self.report_status(f"Testing remote VCS {target.upper()} connection...", "yellow")
-        worker = RemoteServerTestWorker(self.migration_service, target)
+        server = self.config_factory.get_server(server_id)
+        if server is None:
+            self.report_status("Select a saved VCS server before testing.", "red")
+            return
+        self.report_status(f"Testing {server.name} {target.upper()} connection...", "yellow")
+        worker = RemoteServerTestWorker(self.migration_service, target, server=server)
         worker.finished_signal.connect(self._on_worker_finished)
         self.workers.start("remote_test", worker)
 

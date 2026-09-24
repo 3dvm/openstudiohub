@@ -20,8 +20,15 @@ VcsPrompt = Callable[[], Optional[VcsCredentials]]
 ReportStatus = Callable[[str, str], None]
 
 
-def vcs_requires_credentials(config_factory) -> bool:
-    """True when the active VCS engine needs authenticated access."""
+def vcs_requires_credentials(config_factory, server=None) -> bool:
+    """True when the active VCS engine needs authenticated access.
+
+    When a resolved ``server`` is provided its adapter decides; otherwise the
+    studio default server is used.
+    """
+    if server is not None:
+        adapter = (getattr(server, "adapter", "") or "").strip().lower()
+        return adapter not in ("none", "")
     if config_factory is None:
         return False
     adapter = (config_factory.get_vcs_adapter_type() or "").strip().lower()

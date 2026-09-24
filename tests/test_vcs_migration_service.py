@@ -1,12 +1,11 @@
-"""Unit tests for the local -> remote VCS migration orchestration."""
+"""Unit tests for the per-project VCS migration orchestration."""
 
-import io
 import json
 from pathlib import Path
-from types import SimpleNamespace
 
 from src.application.services import vcs_migration_service as mod
 from src.application.services.vcs_migration_service import VCSMigrationService
+from src.domain.workspace.vcs_server import VCSServer, VCSServerRegistry
 from src.domain.workspace.vcs_server_profile import (
     REMOTE_SSH,
     RemoteSSHConfig,
@@ -14,21 +13,34 @@ from src.domain.workspace.vcs_server_profile import (
 )
 
 
-def _profile() -> VCSServerProfile:
-    return VCSServerProfile(
-        mode=REMOTE_SSH,
-        remote=RemoteSSHConfig(
-            host="svn-vps",
-            ssh_user="ops",
-            container="estudio_svn",
-            repo_root="/srv/svn",
+def _local_server() -> VCSServer:
+    return VCSServer(
+        id="local",
+        name="Local",
+        adapter="svn",
+        repository_url="svn://localhost",
+        profile=VCSServerProfile(mode="local_docker"),
+    )
+
+
+def _remote_server() -> VCSServer:
+    return VCSServer(
+        id="vps",
+        name="VPS",
+        adapter="svn",
+        repository_url="svn://svn-vps",
+        profile=VCSServerProfile(
+            mode=REMOTE_SSH,
+            remote=RemoteSSHConfig(host="svn-vps", ssh_user="ops", container="estudio_svn", repo_root="/srv/svn"),
         ),
     )
 
 
 class FakeConfig:
-    def __init__(self, profile: VCSServerProfile) -> None:
-        self._profile = profile
+    def __init__(self, servers, default_id: str, project_server_id: str) -> None:
+        self._servers = list(servers)
+        self._default = default_id
+        self._project_server = project_server_id
 
     def get_vfs_svn_name(self) -> str:
         return "svn"
@@ -36,31 +48,53 @@ class FakeConfig:
     def get_vfs_pipeline_name(self) -> str:
         return "pipeline"
 
-    def get_vcs_server_profile(self) -> VCSServerProfile:
-        return self._profile
+    def get_vcs_servers(self) -> VCSServerRegistry:
+        return VCSServerRegistry(servers=tuple(self._servers), default_server_id=self._default)
 
-    def get_vcs_adapter_type(self) -> str:
-        return "svn"
+    def get_server(self, server_id):
+        return self.get_vcs_servers().get(server_id)
 
-    def get_vcs_repository_url(self) -> str:
-        return "svn://svn-vps"
+    def get_default_server(self):
+        return self.get_vcs_servers().default()
+
+    def get_server_for_project(self, project_root):
+        return self.get_vcs_servers().get(self._project_server) or self.get_vcs_servers().default()
 
 
-class FakeRunner:
-    instances = []
+class StubService(VCSMigrationService):
+    """Migration service with the heavy I/O replaced by recorders."""
 
-    def __init__(self, remote, passphrase_provider=None) -> None:
-        self.remote = remote
-        self.commands = []
-        FakeRunner.instances.append(self)
+    def __init__(self, config, working_copy_url="svn://localhost/neon/svn") -> None:
+        super().__init__(config)
+        self.created = []
+        self.destroyed = []
+        self.transferred = False
+        self._url = working_copy_url
+        self._youngest_value = None
 
-    def run(self, cmd, check=True, input_data=None):
-        self.commands.append(cmd)
-        return SimpleNamespace(returncode=0, stdout=b"0", stderr=b"")
+    def _working_copy_url(self, workspace):  # noqa: D102
+        return self._url
 
-    def run_stream(self, cmd, stdin):
-        self.commands.append(cmd)
-        return b""
+    def _youngest(self, server, path):  # noqa: D102
+        return self._youngest_value
+
+    def _admin(self, server):  # noqa: D102
+        svc = self
+
+        class _Admin:
+            def create(self, repo_name, vfs_svn):
+                svc.created.append(server.id)
+                return True
+
+            def destroy(self, repo_name, vfs_svn):
+                svc.destroyed.append(server.id)
+                return True, "removed"
+
+        return _Admin()
+
+    def _transfer(self, source, target, repo_name):  # noqa: D102
+        self.transferred = True
+        return True, "ok"
 
 
 class FakeSvnAdapter:
@@ -75,27 +109,6 @@ class FakeSvnAdapter:
         return True
 
 
-class FakePopen:
-    created = []
-
-    def __init__(self, *args, **kwargs) -> None:
-        self.stdout = io.BytesIO(b"dump-data")
-        self.returncode = 0
-        FakePopen.created.append(args)
-
-    def kill(self):
-        self.returncode = -9
-
-    def communicate(self, *args, **kwargs):
-        return b"", b""
-
-
-def _service(tmp_path) -> VCSMigrationService:
-    service = VCSMigrationService(FakeConfig(_profile()))
-    service._working_copy_url = lambda workspace: "svn://localhost/neon/svn"
-    return service
-
-
 def _make_project(tmp_path) -> Path:
     project_root = tmp_path / "Neon"
     (project_root / "svn" / ".svn").mkdir(parents=True)
@@ -106,54 +119,56 @@ def _make_project(tmp_path) -> Path:
 
 
 def test_migrate_project_happy_path(monkeypatch, tmp_path):
-    monkeypatch.setattr(mod, "SshRunner", FakeRunner)
     monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
-    monkeypatch.setattr(mod.subprocess, "Popen", FakePopen)
-    FakeRunner.instances = []
     FakeSvnAdapter.relocated = []
-    FakePopen.created = []
 
     project_root = _make_project(tmp_path)
-    service = _service(tmp_path)
+    service = StubService(FakeConfig([_local_server(), _remote_server()], "vps", "local"))
 
-    ok, message = service.migrate_project(project_root, "artist", "secret")
+    ok, message = service.migrate_project(project_root, "artist", "secret", target_server_id="vps")
 
     assert ok is True
     assert "migrated" in message.lower()
-    # Dump/load happened and the working copy was repointed at the remote base.
-    assert FakePopen.created
+    assert service.created == ["vps"]
+    assert service.transferred is True
     assert FakeSvnAdapter.relocated == ["svn://svn-vps/neon/svn"]
 
-    runner_commands = " ".join(FakeRunner.instances[0].commands)
-    assert "docker exec -i" in runner_commands
-    assert "svnadmin load" in runner_commands
-
     blueprint = json.loads((project_root / "pipeline" / "project_init.json").read_text(encoding="utf-8"))
+    assert blueprint["vcs_server_id"] == "vps"
     assert blueprint["vcs_base_url"] == "svn://svn-vps"
 
 
-def test_migrate_project_skips_when_already_remote(monkeypatch, tmp_path):
-    monkeypatch.setattr(mod, "SshRunner", FakeRunner)
+def test_migrate_project_rejects_same_server(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
-    FakeRunner.instances = []
-    FakeSvnAdapter.relocated = []
-
     project_root = _make_project(tmp_path)
-    service = VCSMigrationService(FakeConfig(_profile()))
-    service._working_copy_url = lambda workspace: "svn://svn-vps/neon/svn"
+    service = StubService(FakeConfig([_local_server(), _remote_server()], "vps", "local"))
 
-    ok, message = service.migrate_project(project_root, "artist", "secret")
+    ok, message = service.migrate_project(project_root, target_server_id="local")
 
-    assert ok is True
-    assert "already" in message.lower()
-    assert FakeSvnAdapter.relocated == []
+    assert ok is False
+    assert "already bound" in message.lower()
+    assert service.created == []
 
 
-def test_migrate_project_requires_remote_mode(tmp_path):
-    local_profile = VCSServerProfile(mode="local_docker")
-    service = VCSMigrationService(FakeConfig(local_profile))
+def test_migrate_project_requires_a_server(tmp_path):
+    service = StubService(FakeConfig([], "", ""))
 
     ok, message = service.migrate_project(_make_project(tmp_path))
 
     assert ok is False
-    assert "local" in message.lower()
+    assert "no vcs server" in message.lower()
+
+
+def test_migrate_project_skips_when_working_copy_already_on_target(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "SVNAdapter", FakeSvnAdapter)
+    project_root = _make_project(tmp_path)
+    service = StubService(
+        FakeConfig([_local_server(), _remote_server()], "vps", "local"),
+        working_copy_url="svn://svn-vps/neon/svn",
+    )
+
+    ok, message = service.migrate_project(project_root, target_server_id="vps")
+
+    assert ok is True
+    assert "already" in message.lower()
+    assert service.created == []

@@ -180,8 +180,21 @@ class RepairProjectDialog(QDialog):
         self.lbl_vcs = QLabel(self.tr("Version Control System (VCS):"))
         main_layout.addWidget(self.lbl_vcs)
         self.combo_vcs = QComboBox()
-        self.combo_vcs.addItems(["Settings Default", "SVN", "Git-LFS", "None (NAS only)"])
+        self._populate_vcs_servers()
         main_layout.addWidget(self.combo_vcs)
+
+    def _populate_vcs_servers(self) -> None:
+        try:
+            registry = self.config_factory.get_vcs_servers()
+        except Exception:  # noqa: BLE001
+            registry = None
+        if registry is not None:
+            for server in registry.servers:
+                if not server.is_enabled:
+                    continue
+                label = server.name + ("  (default)" if server.id == registry.default_server_id else "")
+                self.combo_vcs.addItem(label, server.id)
+        self.combo_vcs.addItem(self.tr("None (NAS only)"), "")
 
     # ------------------------------------------------------------------
     # Template / dependencies loaders
@@ -334,6 +347,13 @@ class RepairProjectDialog(QDialog):
         if not main_template:
             main_template = "Macuare_Estudio"
 
+        server_id = self.combo_vcs.currentData() or ""
+        server = None
+        if server_id:
+            getter = getattr(self.config_factory, "get_server", None)
+            if callable(getter):
+                server = getter(server_id)
+
         return ProjectBlueprint(
             project_name=self.project_name,
             kitsu_project_id=self.project_id,
@@ -342,7 +362,9 @@ class RepairProjectDialog(QDialog):
             dependencies=final_dependencies,
             addon_configuration=parse_addon_configuration(final_addon_config),
             topography=self.config_factory.get_topography(),
-            vcs_enabled=True,
+            vcs_enabled=bool(server_id),
+            vcs_server_id=server_id,
+            vcs_base_url=server.repository_url if server else "",
         )
 
     def _build_addon_config(self, addon_name: str, meta: dict) -> dict:
@@ -360,13 +382,7 @@ class RepairProjectDialog(QDialog):
         }
 
     def _resolve_vcs_enabled(self) -> bool:
-        vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
-        vcs_selection = self.combo_vcs.currentIndex()
-        if vcs_selection == 3:
-            return False
-        if vcs_selection == 0:
-            return vcs_config.get("active_adapter", "svn") != "none"
-        return True
+        return bool(self.combo_vcs.currentData())
 
     def _set_busy_status(self, message: str) -> None:
         self.lbl_status.setText(message)

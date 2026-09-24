@@ -117,9 +117,23 @@ class InstallationService:
             dependencies = init_data.get("dependencies", {})
             template_name = init_data.get("template", "")
             addon_configuration = init_data.get("addon_configuration", {})
-            vcs_base_url = init_data.get("vcs_base_url") or self.config_factory.get_vcs_repository_url()
 
-            checkout_ok = self._gestionar_vcs(project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata, base_repo_url=vcs_base_url)
+            server = self._resolve_server(project_root)
+            if server is not None:
+                vcs_type = server.adapter
+                profile = server.profile
+                vcs_base_url = init_data.get("vcs_base_url") or server.repository_url
+                sparse_enabled = server.enable_vendor_sparse_checkout
+            else:
+                vcs_type = self.config_factory.get_vcs_adapter_type()
+                vcs_base_url = init_data.get("vcs_base_url") or self.config_factory.get_vcs_repository_url()
+                profile = getattr(self.config_factory, "get_vcs_server_profile", lambda: None)()
+                sparse_enabled = getattr(self.config_factory, "is_vendor_sparse_enabled", lambda: True)()
+
+            checkout_ok = self._gestionar_vcs(
+                project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata,
+                base_repo_url=vcs_base_url, vcs_type=vcs_type, profile=profile, sparse_enabled=sparse_enabled,
+            )
             if not checkout_ok:
                 return False, "VCS Synchronization aborted."
 
@@ -170,15 +184,26 @@ class InstallationService:
         except Exception as error:  # noqa: BLE001
             return False, f"Critical error during local installation: {str(error)}"
 
-    def _gestionar_vcs(self, project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata, base_repo_url=None) -> bool:
+    def _resolve_server(self, project_root):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(project_root)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _gestionar_vcs(self, project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata, base_repo_url=None, vcs_type=None, profile=None, sparse_enabled=None) -> bool:
         vcs_root = project_root / vfs_svn
-        vcs_type = self.config_factory.get_vcs_adapter_type()
+        if vcs_type is None:
+            vcs_type = self.config_factory.get_vcs_adapter_type()
 
         if not base_repo_url:
             base_repo_url = self.config_factory.get_vcs_repository_url()
         final_repo_url = f"{base_repo_url}/{project_root.name}/{vfs_svn}"
 
-        profile = getattr(self.config_factory, "get_vcs_server_profile", lambda: None)()
+        if profile is None:
+            profile = getattr(self.config_factory, "get_vcs_server_profile", lambda: None)()
         provider = None
         if self.credential_vault is not None:
             provider = self.credential_vault.get_ssh_passphrase
@@ -190,7 +215,9 @@ class InstallationService:
             server_profile=profile,
             ssh_passphrase_provider=provider,
         )
-        is_sparse_enabled = getattr(self.config_factory, "is_vendor_sparse_enabled", lambda: True)()
+        is_sparse_enabled = sparse_enabled
+        if is_sparse_enabled is None:
+            is_sparse_enabled = getattr(self.config_factory, "is_vendor_sparse_enabled", lambda: True)()
 
         if user_role == "vendor" and is_sparse_enabled:
             status_callback("Initializing Sparse Checkout (Jailing Mode)...", "yellow")

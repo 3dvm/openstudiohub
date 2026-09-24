@@ -10,6 +10,7 @@ OpenStudioHub is built to be cross-platform, but certain environments have speci
 
 ## 2. Server & Backend Infrastructure
 * **SVN Server:** A Subversion (SVN) server is mandatory for version control, binary asset locking, and sparse checkout (vendor jailing). The Hub supports Docker-based SVN containers for local deployments or dedicated remote servers.
+  * **Multiple servers** can be registered in the Infrastructure panel; each project is bound to one server. A common setup is a local Docker sandbox for development plus one or more production VPS.
   * **Remote (production) servers** run `svnserve` inside a **Docker container** (e.g. `estudio_svn`) on a VPS that is only reachable over the tailnet (e.g. Headscale/Tailscale). Project repositories are created/deleted with `docker exec` over OpenSSH; the Hub assumes `svnserve` is already running and that the SSH user can run `docker` without a sudo password.
   * Configure the container name, the in-container repository root (svnserve `-r`, e.g. `/var/opt/svn`) and the in-container path of the global `passwd` file. When the passwd path is left blank the Hub derives `<repo_root>/passwd`, and each new repository's `svnserve.conf` references it by absolute path.
   * Server administration needs `svn`, `ssh` and `scp` on the PATH. The SSH passphrase (when the key is encrypted) is kept in RAM for the session only.

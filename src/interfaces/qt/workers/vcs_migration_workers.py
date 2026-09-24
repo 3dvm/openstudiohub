@@ -12,12 +12,12 @@ from src.infrastructure.qt_worker import ManagedWorker
 
 
 class VCSMigrationWorker(ManagedWorker):
-    """Migrates a single project repository to the remote VCS server."""
+    """Migrates a single project repository to the chosen VCS server."""
 
     progress_update = Signal(str, str)
     finished_migration = Signal(str, bool, str)  # (project_name, success, message)
 
-    def __init__(self, migration_service, project_name: str, project_root, vcs_user: str, vcs_pwd: str, delete_old: bool = False) -> None:
+    def __init__(self, migration_service, project_name: str, project_root, vcs_user: str, vcs_pwd: str, delete_old: bool = False, target_server_id: str = "") -> None:
         super().__init__()
         self.migration_service = migration_service
         self.project_name = project_name
@@ -25,6 +25,7 @@ class VCSMigrationWorker(ManagedWorker):
         self.vcs_user = vcs_user
         self.vcs_pwd = vcs_pwd
         self.delete_old = delete_old
+        self.target_server_id = target_server_id
 
     def run(self) -> None:
         try:
@@ -33,6 +34,7 @@ class VCSMigrationWorker(ManagedWorker):
                 vcs_user=self.vcs_user,
                 vcs_pwd=self.vcs_pwd,
                 delete_old_repo=self.delete_old,
+                target_server_id=self.target_server_id,
             )
         except Exception as error:  # noqa: BLE001
             success, message = False, f"Migration crashed: {error}"
@@ -40,18 +42,22 @@ class VCSMigrationWorker(ManagedWorker):
 
 
 class VCSLocalCleanupWorker(ManagedWorker):
-    """Deletes the old local Docker repository after a successful migration."""
+    """Deletes the old repository on a source server after a successful migration."""
 
     finished_cleanup = Signal(str, bool, str)  # (project_name, success, message)
 
-    def __init__(self, migration_service, project_name: str) -> None:
+    def __init__(self, migration_service, project_name: str, server_id: str = "") -> None:
         super().__init__()
         self.migration_service = migration_service
         self.project_name = project_name
+        self.server_id = server_id
 
     def run(self) -> None:
         try:
-            success, message = self.migration_service.delete_local_repository(self.project_name)
+            if self.server_id:
+                success, message = self.migration_service.delete_repository(self.server_id, self.project_name)
+            else:
+                success, message = self.migration_service.delete_local_repository(self.project_name)
         except Exception as error:  # noqa: BLE001
             success, message = False, f"Cleanup crashed: {error}"
         self.finished_cleanup.emit(self.project_name, success, message)

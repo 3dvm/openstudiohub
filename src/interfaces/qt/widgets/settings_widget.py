@@ -30,7 +30,6 @@ from src.interfaces.qt.settings_tabs.tab_identity import TabIdentity
 from src.interfaces.qt.settings_tabs.tab_software import TabSoftware
 from src.interfaces.qt.settings_tabs.tab_topography import TabTopography
 from src.interfaces.qt.settings_tabs.tab_vault import TabVault
-from src.interfaces.qt.settings_tabs.tab_vcs import TabVCS
 from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
 
 
@@ -69,17 +68,15 @@ class SettingsWidget(QFrame):
 
         self.tab_identity = TabIdentity(self.auth_service, self.production_service, self.status_callback, parent=self.stack)
         self.tab_vault = TabVault(parent=self.stack)
-        self.tab_vcs = TabVCS(parent=self.stack)
         self.tab_topography = TabTopography(parent=self.stack)
         self.tab_software = TabSoftware(self.stack, self.vault_service, self.status_callback)
         self.tab_credentials = TabCredentials(parent=self.stack)
 
         self._add_nav_item(self.tr("Identity and API"), self.tab_identity, 0)
         self._add_nav_item(self.tr("Vault Storage"), self.tab_vault, 1)
-        self._add_nav_item(self.tr("Pipeline and VCS"), self.tab_vcs, 2)
-        self._add_nav_item(self.tr("Project Topography"), self.tab_topography, 3)
-        self._add_nav_item(self.tr("Software and Manifest"), self.tab_software, 4)
-        self._add_nav_item(self.tr("Session Credentials"), self.tab_credentials, 5)
+        self._add_nav_item(self.tr("Project Topography"), self.tab_topography, 2)
+        self._add_nav_item(self.tr("Software and Manifest"), self.tab_software, 3)
+        self._add_nav_item(self.tr("Session Credentials"), self.tab_credentials, 4)
 
         self.tab_bar_layout.addStretch()
         self.tab_bar_layout.addWidget(self.lbl_unsaved_warning)
@@ -133,7 +130,6 @@ class SettingsWidget(QFrame):
     def _connect_modified_signals(self) -> None:
         self.tab_identity.modified.connect(self._on_field_modified)
         self.tab_vault.modified.connect(self._on_field_modified)
-        self.tab_vcs.modified.connect(self._on_field_modified)
         self.tab_topography.modified.connect(self._on_field_modified)
         self.tab_software.modified.connect(self._on_field_modified)
         self.tab_credentials.modified.connect(self._on_field_modified)
@@ -159,11 +155,6 @@ class SettingsWidget(QFrame):
         vault_path = str(self._vault_path())
         self.tab_vault.load_data(projects_path, vault_path)
 
-        active_adapter = vcs.get("active_adapter", "svn")
-        repo_url = vcs.get("repository_url", "")
-        enable_sparse = vcs.get("enable_vendor_sparse_checkout", True)
-
-        self.tab_vcs.load_data(active_adapter, repo_url, enable_sparse)
         self.tab_topography.load_data(topo)
         self.tab_software.load_data(manifest)
 
@@ -175,25 +166,31 @@ class SettingsWidget(QFrame):
     def _collect_payload(self) -> dict:
         payload = {}
         payload.update(self.tab_identity.identity_payload())
-        payload.update(self.tab_vcs.vcs_payload())
         payload.update(self.tab_topography.topography_payload())
 
         vault_data = self.tab_vault.vault_payload()
         projects_dir = vault_data.get("vcs_engine", {}).get("local_workspace_root", "")
 
-        # Preserve the remote-server topology (configured in the Infrastructure
-        # panel) so it is carried by the exported Studio Seed.
+        # Preserve the VCS server registry (managed in the Infrastructure panel)
+        # so it is carried by the exported Studio Seed.
+        existing_vcs = self.vm.config_factory.get_raw_config().get("vcs_engine", {})
+        vcs_payload = dict(payload.get("vcs_engine", {}))
+        if "servers" in existing_vcs:
+            vcs_payload["servers"] = existing_vcs["servers"]
+        if "default_server_id" in existing_vcs:
+            vcs_payload["default_server_id"] = existing_vcs["default_server_id"]
+
         infra_payload = dict(vault_data.get("infrastructure_topology", {}))
         existing_infra = self.vm.config_factory.get_raw_config().get("infrastructure_topology", {})
         if "vcs_server" in existing_infra:
             infra_payload.setdefault("vcs_server", existing_infra["vcs_server"])
         payload["infrastructure_topology"] = infra_payload
 
-        existing_roots = self.vm.config_factory.get_raw_config().get("vcs_engine", {}).get("local_workspace_root", {})
+        existing_roots = existing_vcs.get("local_workspace_root", {})
         roots = dict(existing_roots) if isinstance(existing_roots, dict) else {}
         roots[self._current_os()] = projects_dir
-
-        payload["vcs_engine"].update({"local_workspace_root": roots})
+        vcs_payload["local_workspace_root"] = roots
+        payload["vcs_engine"] = vcs_payload
 
         return payload
 

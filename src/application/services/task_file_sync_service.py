@@ -50,8 +50,11 @@ class TaskFileSyncService:
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
-    def is_vcs_enabled(self) -> bool:
+    def is_vcs_enabled(self, project_root: Path | None = None) -> bool:
         """True when the project is under version control (adapter != none)."""
+        server = self._resolve_project_server(project_root) if project_root else None
+        if server is not None:
+            return server.adapter not in ("", "none")
         adapter = (self.config_factory.get_vcs_adapter_type() or "").strip().lower()
         return adapter not in ("", "none")
 
@@ -59,20 +62,36 @@ class TaskFileSyncService:
         return Path(project_root) / self.config_factory.get_vfs_svn_name()
 
     def _build_adapter(self, project_root: Path):
-        vcs_type = self.config_factory.get_vcs_adapter_type()
+        server = self._resolve_project_server(project_root)
+        if server is not None:
+            vcs_type = server.adapter
+            profile = server.profile
+            base_repo_url = self._resolve_project_repo_url(project_root) or server.repository_url
+        else:
+            vcs_type = self.config_factory.get_vcs_adapter_type()
+            profile = self._server_profile()
+            base_repo_url = self._resolve_project_repo_url(project_root)
+
         vfs_svn = self.config_factory.get_vfs_svn_name()
         workspace_root = self.workspace_root(project_root)
-
-        base_repo_url = self._resolve_project_repo_url(project_root)
         final_repo_url = f"{base_repo_url}/{Path(project_root).name}/{vfs_svn}"
 
         router = self.router_factory(
             vcs_type=vcs_type,
             repo_url=final_repo_url,
             workspace_dir=workspace_root,
-            server_profile=self._server_profile(),
+            server_profile=profile,
         )
         return router.get_adapter()
+
+    def _resolve_project_server(self, project_root: Path | None):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if project_root is None or not callable(getter):
+            return None
+        try:
+            return getter(project_root)
+        except Exception:  # noqa: BLE001
+            return None
 
     def _resolve_project_repo_url(self, project_root: Path) -> str:
         """Prefer the per-project override stored in the blueprint, if present."""
