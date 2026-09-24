@@ -25,6 +25,9 @@ class FakeAdapter:
         self._status = status
         self.add_calls = []
         self.commit_calls = []
+        self.lock_calls = []
+        self.unlock_calls = []
+        self.lock_info = None
 
     def get_status(self, path=None):
         return dict(self._status)
@@ -37,15 +40,27 @@ class FakeAdapter:
         self.commit_calls.append((message, list(paths or []), username, password))
         return True
 
+    def get_lock_info(self, path):
+        return self.lock_info
+
+    def lock(self, path, username=None, password=None):
+        self.lock_calls.append((path, username, password))
+        return True
+
+    def unlock(self, path, username=None, password=None):
+        self.unlock_calls.append((path, username, password))
+        return True
+
 
 class FakeRouter:
     adapter = None
     last = None
 
-    def __init__(self, vcs_type, repo_url, workspace_dir) -> None:
+    def __init__(self, vcs_type, repo_url, workspace_dir, server_profile=None) -> None:
         self.vcs_type = vcs_type
         self.repo_url = repo_url
         self.workspace_dir = workspace_dir
+        self.server_profile = server_profile
         FakeRouter.last = self
 
     def get_adapter(self):
@@ -136,3 +151,32 @@ def test_publish_without_selection_is_rejected(tmp_path):
     assert ok is False
     assert "No files selected" in message
     assert adapter.commit_calls == []
+
+
+def test_lock_task_file_acquires_lock(tmp_path):
+    service, adapter = _service(tmp_path, {})
+
+    ok, message = service.lock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
+
+    assert ok is True
+    assert adapter.lock_calls == [("pro/a.blend", "artist", "secret")]
+
+
+def test_lock_task_file_reports_foreign_owner(tmp_path):
+    service, adapter = _service(tmp_path, {})
+    adapter.lock_info = {"owner": "other@studio.com"}
+
+    ok, message = service.lock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
+
+    assert ok is False
+    assert "locked by" in message.lower()
+    assert adapter.lock_calls == []
+
+
+def test_unlock_task_file_releases_lock(tmp_path):
+    service, adapter = _service(tmp_path, {})
+
+    ok, _ = service.unlock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
+
+    assert ok is True
+    assert adapter.unlock_calls == [("pro/a.blend", "artist", "secret")]

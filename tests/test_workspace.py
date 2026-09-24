@@ -54,6 +54,17 @@ def test_project_blueprint_roundtrip():
     assert restored.dependencies["addons"]["blender_kitsu"] == "1.5.0"
 
 
+def test_project_blueprint_vcs_base_url_roundtrip():
+    bp = ProjectBlueprint(project_name="Neon", vcs_base_url="svn://svn-vps")
+    data = bp.to_dict()
+    assert data["vcs_base_url"] == "svn://svn-vps"
+    assert ProjectBlueprint.from_dict(data).vcs_base_url == "svn://svn-vps"
+
+    # Legacy blueprints without the field default to the global studio setting.
+    legacy = {k: v for k, v in data.items() if k != "vcs_base_url"}
+    assert ProjectBlueprint.from_dict(legacy).vcs_base_url == ""
+
+
 def _valid_blueprint_dict() -> dict:
     return {
         "project_name": "Neon",

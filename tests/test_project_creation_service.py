@@ -55,17 +55,19 @@ class FakeRouter:
     health = (True, "VCS server reachable.")
     destroyed = []
 
-    def __init__(self, vcs_type, repo_url, workspace_dir) -> None:
+    def __init__(self, vcs_type, repo_url, workspace_dir, server_profile=None, ssh_passphrase_provider=None) -> None:
         self.vcs_type = vcs_type
         self.repo_url = repo_url
         self.workspace_dir = workspace_dir
+        self.server_profile = server_profile
+        self.ssh_passphrase_provider = ssh_passphrase_provider
 
     @classmethod
-    def probe_health(cls, vcs_type, repo_url, username=None, password=None, timeout=5.0):
+    def probe_health(cls, vcs_type, repo_url, username=None, password=None, timeout=5.0, server_profile=None, ssh_passphrase_provider=None):
         return cls.health
 
     @classmethod
-    def destroy_repository(cls, vcs_type, repo_url, project_name, vfs_svn):
+    def destroy_repository(cls, vcs_type, repo_url, project_name, vfs_svn, server_profile=None, ssh_passphrase_provider=None):
         FakeRouter.destroyed.append(project_name)
         return True, "VCS repository removed."
 

@@ -40,16 +40,30 @@ class AppContext:
         self.production_service = ProductionService(self.kitsu)
 
         self.vault_service = VaultService(FileVaultManifestRepository(None, self.config_factory))
-        self.installation_service = InstallationService(self.config_factory, self.config_factory.get_vault_path())
-        self.project_creation_service = ProjectCreationService(self.config_factory)
 
+        # RAM-only credentials must exist before the VCS-backed services are built.
         self.credential_vault = CredentialVault()
+
+        self.installation_service = InstallationService(
+            self.config_factory,
+            self.config_factory.get_vault_path(),
+            credential_vault=self.credential_vault,
+        )
+        self.project_creation_service = ProjectCreationService(
+            self.config_factory,
+            credential_vault=self.credential_vault,
+        )
 
         self.nas_manager = NasManager(config_factory=self.config_factory)
 
         # Application services for the future audit/repair use cases.
         self.audit_service = ProjectAuditService(self.nas_manager, self.kitsu, self.installation_service)
-        self.repair_service = ProjectRepairService(self.kitsu, self.nas_manager, self.config_factory)
+        self.repair_service = ProjectRepairService(
+            self.kitsu,
+            self.nas_manager,
+            self.config_factory,
+            credential_vault=self.credential_vault,
+        )
 
         # Shared status channel for the dashboard ViewModels.
         self.status_sink = StatusSink()

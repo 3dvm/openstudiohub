@@ -125,6 +125,8 @@ class ProjectListWidget(QFrame):
         self.vm.install_finished.connect(self._on_install_finished)
         self.vm.delete_warning.connect(lambda msg: QMessageBox.warning(self, self.tr("Warning"), msg))
         self.vm.delete_completed.connect(lambda msg: QMessageBox.information(self, self.tr("Deleted"), msg))
+        self.vm.migration_finished.connect(self._on_migration_finished)
+        self.vm.cleanup_finished.connect(lambda name, ok, msg: QMessageBox.information(self, self.tr("VCS Cleanup"), msg))
         self.audit_vm.audit_completed.connect(self._on_project_audited)
 
     # ------------------------------------------------------------------
@@ -154,6 +156,23 @@ class ProjectListWidget(QFrame):
     def _request_repair(self, project_name: str, project_id: str, error_code: str) -> None:
         if self.on_repair_callback:
             self.on_repair_callback(project_name, project_id, error_code)
+
+    def _on_migration_finished(self, project_name: str, success: bool, message: str) -> None:
+        if not success:
+            QMessageBox.critical(self, self.tr("VCS Migration Failed"), message)
+            return
+
+        QMessageBox.information(self, self.tr("VCS Migration"), message)
+        answer = QMessageBox.question(
+            self,
+            self.tr("Delete Old Repository"),
+            self.tr(
+                "The old local repository can be deleted now.\n\n"
+                "Delete it, or keep it orphaned?"
+            ),
+        )
+        if answer == QMessageBox.Yes:
+            self.vm.cleanup_local_repository(project_name)
 
     # ------------------------------------------------------------------
     # Responsive grid
@@ -217,6 +236,7 @@ class ProjectListWidget(QFrame):
                 on_watchtower=self.vm.open_watchtower,
                 on_open_wizard=self.on_open_wizard_callback,
                 on_repair=self._request_repair,
+                on_migrate=self.vm.migrate_project,
             )
 
             self._project_widgets.append(card)

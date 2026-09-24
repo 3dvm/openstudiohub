@@ -16,13 +16,18 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 
 from src.application.services.production_service import ProductionService
+from src.application.services.vcs_migration_service import VCSMigrationService
 from src.infrastructure.dev_defaults import (
     DEV_KITSU_DB_PASSWORD,
     DEV_KITSU_INDEXER_KEY,
     DEV_KITSU_SECRET_KEY,
 )
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
-from src.interfaces.qt.workers.infrastructure_workers import DockerWorker, KitsuSeederWorker
+from src.interfaces.qt.workers.infrastructure_workers import (
+    DockerWorker,
+    KitsuSeederWorker,
+    RemoteServerTestWorker,
+)
 from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
@@ -34,16 +39,50 @@ class InfrastructureViewModel(BaseViewModel):
         config_factory,
         production_service: ProductionService,
         status_sink: StatusSink | None = None,
+        credential_vault=None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.config_factory = config_factory
         self.production_service = production_service
+        self.credential_vault = credential_vault
+        self.migration_service = VCSMigrationService(
+            config_factory,
+            credential_vault=credential_vault,
+            status_callback=self.report_status,
+        )
 
         self.infra_dir = self.config_factory.get_workspace_root() / ".openstudio_infra"
         self.infra_dir.mkdir(parents=True, exist_ok=True)
 
         self.workers = WorkerManager(self)
+
+    # ------------------------------------------------------------------
+    # Remote VCS server settings
+    # ------------------------------------------------------------------
+    def load_server_settings(self) -> dict:
+        profile = self.config_factory.get_vcs_server_profile()
+        return {
+            "profile": profile.to_dict(),
+            "repository_url": self.config_factory.get_vcs_repository_url(),
+        }
+
+    def save_server_settings(self, profile_payload: dict, repository_url: str = "") -> bool:
+        ok = self.config_factory.set_vcs_server_profile(profile_payload)
+        if repository_url:
+            ok = self.config_factory.set_repository_url(repository_url) and ok
+        message = "Remote server settings saved." if ok else "Failed to save remote server settings."
+        self.operation_finished.emit(ok, message)
+        return ok
+
+    def test_remote_connection(self, target: str = "ssh") -> None:
+        if self.workers.is_running("remote_test"):
+            self.report_status("A connection test is already running...", "red")
+            return
+        self.report_status(f"Testing remote VCS {target.upper()} connection...", "yellow")
+        worker = RemoteServerTestWorker(self.migration_service, target)
+        worker.finished_signal.connect(self._on_worker_finished)
+        self.workers.start("remote_test", worker)
 
     # ------------------------------------------------------------------
     # SVN lifecycle

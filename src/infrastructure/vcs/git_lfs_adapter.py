@@ -45,6 +45,15 @@ class GitLFSAdapter(AbstractVCS):
     def revert(self, path: str) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
+    def relocate(self, new_url: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def get_lock_info(self, path: str) -> Optional[Dict[str, str]]:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def check_cli(self) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."
+
     def get_status(self, path: Optional[str] = None) -> Dict[str, str]:
         raise NotImplementedError("Git LFS support is currently under development.")
 

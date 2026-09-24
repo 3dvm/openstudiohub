@@ -7,22 +7,30 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.0
+# Versión del archivo: 0.6.0
 # =========================================================================================
 
 """
 Concrete adapter for Subversion (SVN) operations via CLI.
 Implements the Sparse Checkout mechanism to orchestrate Vendor Jailing.
 Anchored to English standard.
+
+Server-side repository lifecycle (create/destroy) is delegated to a
+``RepositoryAdmin`` strategy selected by the configured ``VCSServerProfile``,
+so the same adapter drives both the local Docker sandbox and a remote VPS
+administered over OpenSSH.
 """
 
+import shutil
 import socket
 import subprocess
-from typing import List, Dict, Optional, Tuple
+from typing import Callable, List, Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
 from pathlib import Path
 from .abstract_vcs import AbstractVCS
+from .repository_admin import build_repository_admin, normalize_repo_name
+from src.domain.workspace.vcs_server_profile import LOCAL_DOCKER, VCSServerProfile
 from src.infrastructure.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
 SVN_DEFAULT_PORTS = {
@@ -35,18 +43,47 @@ SVN_DEFAULT_PORTS = {
 class SVNAdapter(AbstractVCS):
     """Concrete adapter for Subversion (SVN) operations via CLI."""
 
+    def __init__(
+        self,
+        repo_url: str,
+        workspace_dir: Path,
+        server_profile: Optional[VCSServerProfile] = None,
+        ssh_passphrase_provider: Optional[Callable[[], Optional[str]]] = None,
+    ):
+        super().__init__(repo_url, workspace_dir, server_profile)
+        self._ssh_passphrase_provider = ssh_passphrase_provider
+        self._admin = None
+
+    # ------------------------------------------------------------------
+    # Server-admin strategy
+    # ------------------------------------------------------------------
+    @property
+    def admin(self):
+        if self._admin is None:
+            self._admin = build_repository_admin(
+                self.server_profile,
+                ssh_passphrase_provider=self._ssh_passphrase_provider,
+            )
+        return self._admin
+
+    def check_cli(self) -> Tuple[bool, str]:
+        required = ["svn"]
+        if self.server_profile.is_remote:
+            required.extend(["ssh", "scp"])
+        missing = [tool for tool in required if shutil.which(tool) is None]
+        if missing:
+            return False, "Missing required command-line tools on PATH: " + ", ".join(missing) + "."
+        return True, "VCS command-line tools available."
+
     def _build_auth_args(self, username: Optional[str], password: Optional[str]) -> List[str]:
         """Builds authentication arguments without caching them on disk."""
         args = ["--non-interactive", "--trust-server-cert"]
 
-        # =========================================================
-        # BYPASS TEMPORAL: Forzar credenciales Dummy en Localhost
-        # =========================================================
-        if "localhost" in self.repo_url:
+        # Local developer sandbox: inject the bootstrap credentials automatically.
+        if self.server_profile.mode == LOCAL_DOCKER and "localhost" in self.repo_url:
             username = DEV_SVN_USER
             password = DEV_SVN_PASSWORD
             print(f"[SVNAdapter] BYPASS: Inyectando credenciales locales de SVN ({DEV_SVN_USER})...")
-        # =========================================================
 
         if username and password:
             args.extend(["--username", username, "--password", password, "--no-auth-cache"])
@@ -111,7 +148,6 @@ class SVNAdapter(AbstractVCS):
 
         # 2. Download only the approved directories in the paths list
         for path in paths:
-            # FIX: Added the --parents flag to build the mandatory empty hierarchy
             cmd_up = ["svn", "update", "--set-depth", "infinity", "--parents", path]
             cmd_up.extend(self._build_auth_args(username, password))
             self._run_subprocess(cmd_up, cwd=self.workspace_dir)
@@ -138,8 +174,35 @@ class SVNAdapter(AbstractVCS):
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 
+    def get_lock_info(self, path: str) -> Optional[Dict[str, str]]:
+        """Return lock metadata for ``path`` (``svn info`` on the working copy)."""
+        output = self._run_subprocess(["svn", "info", path], cwd=self.workspace_dir)
+        info: Dict[str, str] = {}
+        for line in output.splitlines():
+            key, separator, value = line.partition(":")
+            if not separator:
+                continue
+            key = key.strip()
+            value = value.strip()
+            if key == "Lock Owner":
+                info["owner"] = value
+            elif key == "Lock Token":
+                info["token"] = value
+            elif key == "Lock Comment":
+                info["comment"] = value
+            elif key == "Lock Created":
+                info["created"] = value
+        return info or None
+
     def revert(self, path: str) -> bool:
         cmd = ["svn", "revert", "-R", path]
+        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        return True
+
+    def relocate(self, new_url: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+        """Repoint this working copy at ``new_url`` (repository UUID must match)."""
+        cmd = ["svn", "relocate", new_url]
+        cmd.extend(self._build_auth_args(username, password))
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 
@@ -159,10 +222,10 @@ class SVNAdapter(AbstractVCS):
 
     def set_needs_lock(self, path: str) -> bool:
         """
-        Applies the svn:needs-lock property to the specified file.
+        Applies the svn:needs-lock property recursively to the specified path.
         Forces the VCS to keep the file in 'Read-Only' mode until an authorized user locks it.
         """
-        cmd = ["svn", "propset", "svn:needs-lock", "*", path]
+        cmd = ["svn", "propset", "svn:needs-lock", "yes", "-R", path]
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 
@@ -225,13 +288,17 @@ class SVNAdapter(AbstractVCS):
         timeout: float = 5.0,
     ) -> Tuple[bool, str]:
         """Pre-flight probe: confirms the SVN server is reachable before writing."""
+        cli_ok, cli_message = self.check_cli()
+        if not cli_ok:
+            return False, cli_message
+
         host, port = self._server_endpoint()
 
-        if host in ("localhost", "127.0.0.1"):
+        if self.server_profile.mode == LOCAL_DOCKER and host in ("localhost", "127.0.0.1"):
             if not self._docker_container_running():
                 return (
                     False,
-                    f"Local VCS server (Docker 'openstudio_local_svn') is not running. "
+                    f"Local VCS server (Docker '{self.server_profile.local_container}') is not running. "
                     f"Start it from the Infrastructure panel and retry.",
                 )
 
@@ -242,17 +309,16 @@ class SVNAdapter(AbstractVCS):
         except OSError as error:
             return False, f"VCS server unreachable at {host}:{port}: {error}"
 
-    @staticmethod
-    def _docker_container_running() -> bool:
+    def _docker_container_running(self) -> bool:
         try:
             result = subprocess.run(
-                ["docker", "inspect", "-f", "{{.State.Running}}", "openstudio_local_svn"],
+                ["docker", "inspect", "-f", "{{.State.Running}}", self.server_profile.local_container],
                 check=True,
                 capture_output=True,
                 text=True,
             )
             return result.stdout.strip().lower() == "true"
-        except Exception:
+        except Exception:  # noqa: BLE001
             return False
 
     @staticmethod
@@ -265,67 +331,26 @@ class SVNAdapter(AbstractVCS):
         name (e.g. ``MIDEQ_promo``) from creating a server repository that the
         checkout URL (``mideq_promo``) cannot find.
         """
-        return (repository_name or "").strip().lower().replace(" ", "-")
+        return normalize_repo_name(repository_name)
 
     def destroy_server_repository(self, project_name: str, vfs_svn: str) -> Tuple[bool, str]:
-        """Best-effort rollback of the server-side repository."""
-        if "localhost" not in self.repo_url:
-            return False, "Remote repository cannot be deleted automatically."
-
+        """Rollback of the server-side repository (local Docker or remote SSH)."""
         repo_name = self._normalized_repo_name(project_name)
         try:
-            subprocess.run(
-                ["docker", "exec", "openstudio_local_svn", "rm", "-rf", f"/home/svn/{repo_name}"],
-                check=True,
-                capture_output=True,
-            )
-            print(f"[SVNAdapter] Local repository '{repo_name}' removed from Docker.")
-            return True, f"VCS repository '{repo_name}' removed."
-        except Exception as error:
-            print(f"[SVNAdapter] WARNING: Failed to remove SVN repository '{repo_name}': {error}")
+            return self.admin.destroy(repo_name, vfs_svn)
+        except ValueError as error:
+            return False, str(error)
+        except RuntimeError as error:
             return False, f"Failed to remove VCS repository: {error}"
 
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
-        """Crea el repositorio SVN en el servidor (Soporta Docker local para desarrollo)."""
-        if "localhost" not in self.repo_url:
-            # Hay que implementar la creación del repositorio en servers remotos con SSH.
-            print("[SVNAdapter] Remote repository detected, assuming that the repository already exists.")
-            return True # Si es un server real, asumimos que el admin ya creó el repo o se hace vía API
-
+        """Create the project repository on the configured server (Docker or VPS)."""
         repo_name = self._normalized_repo_name(project_name)
         try:
-            # Idempotencia: si el repositorio ya existe (p. ej. un retry), no lo recreamos.
-            existing = subprocess.run(
-                ["docker", "exec", "openstudio_local_svn", "test", "-d", f"/home/svn/{repo_name}"],
-                check=False,
-                capture_output=True,
-            )
-            if existing.returncode == 0:
-                print(f"[SVNAdapter] Local repository '{repo_name}' already exists. Skipping creation.")
-                return True
-
-            # Creación del repositorio en el contenedor Docker
-            subprocess.run(["docker", "exec", "openstudio_local_svn", "svnadmin", "create", f"/home/svn/{repo_name}"], check=True, capture_output=True)
-
-            # Configuración de permisos
-            conf_cmd = (
-                f"echo '[general]' > /home/svn/{repo_name}/conf/svnserve.conf && "
-                f"echo 'anon-access = none' >> /home/svn/{repo_name}/conf/svnserve.conf && "
-                f"echo 'auth-access = write' >> /home/svn/{repo_name}/conf/svnserve.conf && "
-                f"echo 'password-db = passwd' >> /home/svn/{repo_name}/conf/svnserve.conf"
-            )
-            subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", conf_cmd], check=True, capture_output=True)
-
-            # Creación del usuario admin default para localhost
-            pwd_cmd = f"echo '[users]' > /home/svn/{repo_name}/conf/passwd && echo '{DEV_SVN_USER} = {DEV_SVN_PASSWORD}' >> /home/svn/{repo_name}/conf/passwd"
-            subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", pwd_cmd], check=True, capture_output=True)
-
-            # Inyección de la topología VFS base
-            mkdir_cmd = f"svn mkdir file:///home/svn/{repo_name}/{vfs_svn} -m 'Init Hub Topology'"
-            subprocess.run(["docker", "exec", "openstudio_local_svn", "sh", "-c", mkdir_cmd], check=True, capture_output=True)
-
-            print(f"[SVNAdapter] ✓ Local repository '{repo_name}' created succesfully on Docker.")
-            return True
-        except Exception as e:
-            print(f"[SVNAdapter] WARNING: Failed to configure SVN Docker: {e}")
+            return self.admin.create(repo_name, vfs_svn)
+        except ValueError as error:
+            print(f"[SVNAdapter] Invalid repository name: {error}")
+            return False
+        except RuntimeError as error:
+            print(f"[SVNAdapter] Remote repository creation failed: {error}")
             return False

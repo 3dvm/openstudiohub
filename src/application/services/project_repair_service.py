@@ -30,10 +30,20 @@ from src.application.services.workspace_operations import (
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
 class ProjectRepairService:
-    def __init__(self, kitsu_manager, nas_manager, config_factory):
+    def __init__(self, kitsu_manager, nas_manager, config_factory, credential_vault=None):
         self.kitsu = kitsu_manager
         self.nas = nas_manager
         self.config_factory = config_factory
+        self.credential_vault = credential_vault
+
+    def _server_profile(self):
+        getter = getattr(self.config_factory, "get_vcs_server_profile", None)
+        return getter() if callable(getter) else None
+
+    def _ssh_passphrase_provider(self):
+        if self.credential_vault is None:
+            return None
+        return self.credential_vault.get_ssh_passphrase
 
     # ------------------------------------------------------------------
     # NAS Ghost: filesystem exists, Kitsu project missing
@@ -100,6 +110,8 @@ class ProjectRepairService:
             vcs_type=self.config_factory.get_vcs_adapter_type(),
             repo_url=f"{base_repo_url}/{folder_name}/{vfs_svn}",
             workspace_dir=project_root / vfs_svn,
+            server_profile=self._server_profile(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
 
         provisioner = VCSProvisioner(vcs_router, is_enabled=vcs_enabled)

@@ -122,6 +122,7 @@ class ProjectCard(QFrame):
         on_watchtower: Callable,
         on_open_wizard: Optional[Callable] = None,
         on_repair: Optional[Callable] = None,
+        on_migrate: Optional[Callable] = None,
 
     ) -> None:
         super().__init__(parent)
@@ -139,6 +140,7 @@ class ProjectCard(QFrame):
         self.on_watchtower = on_watchtower
         self.on_open_wizard = on_open_wizard
         self.on_repair = on_repair
+        self.on_migrate = on_migrate
 
         self.status = dict(status) if status else {}
         self.project_dir = self.status.get("project_dir")
@@ -194,6 +196,9 @@ class ProjectCard(QFrame):
         action_config.triggered.connect(lambda: self.on_open_kitsu("/production-settings"))
 
         if self.user_role == "td":
+            self.options_menu.addSeparator()
+            action_migrate = self.options_menu.addAction(self.tr("🚚 Migrate VCS to Remote"))
+            action_migrate.triggered.connect(self._on_migrate_requested)
             self.options_menu.addSeparator()
             self.options_menu.addAction(self.tr("📦 Archive Project"))
             self.options_menu.addSeparator()
@@ -440,6 +445,20 @@ class ProjectCard(QFrame):
         dialog = DeleteProjectDialog(self, self.project_name)
         if dialog.exec() == QDialog.Accepted:
             self.on_delete(self.project_name)
+
+    def _on_migrate_requested(self) -> None:
+        if not self.on_migrate:
+            return
+        confirm = QMessageBox.question(
+            self,
+            self.tr("Migrate VCS Repository"),
+            self.tr(
+                "This will copy the project repository to the configured remote server "
+                "and repoint the local working copy. Continue?"
+            ),
+        )
+        if confirm == QMessageBox.Yes:
+            self.on_migrate(self.project_name, self.project_dir)
 
     def _load_thumbnail(self) -> None:
         project_id = self.project_data.get("id")

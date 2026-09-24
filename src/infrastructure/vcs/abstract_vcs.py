@@ -19,14 +19,22 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 
+from src.domain.workspace.vcs_server_profile import VCSServerProfile
+
 class AbstractVCS(ABC):
     """
     Interfaz base para todos los adaptadores de Control de Versiones.
     Garantiza que cualquier motor (SVN, Git) exponga los mismos métodos al Hub.
     """
-    def __init__(self, repo_url: str, workspace_dir: Path):
+    def __init__(self, repo_url: str, workspace_dir: Path, server_profile: Optional[VCSServerProfile] = None):
         self.repo_url = repo_url
         self.workspace_dir = workspace_dir
+        self.server_profile = server_profile or VCSServerProfile()
+
+    @abstractmethod
+    def check_cli(self) -> Tuple[bool, str]:
+        """Verifica que las herramientas de línea de comandos requeridas estén instaladas."""
+        pass
 
     @abstractmethod
     def full_pull(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
@@ -56,6 +64,16 @@ class AbstractVCS(ABC):
     @abstractmethod
     def revert(self, path: str) -> bool:
         """Revierte los cambios locales a la última versión del servidor."""
+        pass
+
+    @abstractmethod
+    def relocate(self, new_url: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+        """Repunta el working copy local a una nueva URL de repositorio."""
+        pass
+
+    @abstractmethod
+    def get_lock_info(self, path: str) -> Optional[Dict[str, str]]:
+        """Devuelve ``{'owner': ..., 'token': ..., 'comment': ...}`` si el archivo está bloqueado."""
         pass
 
     @abstractmethod

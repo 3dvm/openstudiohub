@@ -44,10 +44,23 @@ from src.application.services.workspace_operations import (
 
 
 class ProjectCreationService:
-    def __init__(self, config_factory, kitsu_manager=None, nas_manager=None) -> None:
+    def __init__(self, config_factory, kitsu_manager=None, nas_manager=None, credential_vault=None) -> None:
         self.config_factory = config_factory
         self._kitsu = kitsu_manager or KitsuManager()
         self._nas = nas_manager or NasManager(config_factory=config_factory)
+        self.credential_vault = credential_vault
+
+    # ------------------------------------------------------------------
+    # Remote-server helpers
+    # ------------------------------------------------------------------
+    def _server_profile(self):
+        getter = getattr(self.config_factory, "get_vcs_server_profile", None)
+        return getter() if callable(getter) else None
+
+    def _ssh_passphrase_provider(self):
+        if self.credential_vault is None:
+            return None
+        return self.credential_vault.get_ssh_passphrase
 
     # ------------------------------------------------------------------
     # Public API
@@ -130,6 +143,8 @@ class ProjectCreationService:
                     self.config_factory.get_vcs_repository_url(),
                     context.folder_name,
                     context.blueprint.topography.vfs_svn,
+                    server_profile=self._server_profile(),
+                    ssh_passphrase_provider=self._ssh_passphrase_provider(),
                 )
                 ok = ok and deleted
                 reports.append(message)
@@ -203,6 +218,8 @@ class ProjectCreationService:
             base_repo_url,
             context.vcs_user,
             context.vcs_pwd,
+            server_profile=self._server_profile(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
         if not online:
             raise StageError(CreationStep.PREFLIGHT_VCS, message)
@@ -284,6 +301,8 @@ class ProjectCreationService:
             base_repo_url,
             context.vcs_user,
             context.vcs_pwd,
+            server_profile=self._server_profile(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
         if not online:
             raise StageError(CreationStep.VCS, message)
@@ -334,6 +353,7 @@ class ProjectCreationService:
             addon_configuration=parsed_addon_config,
             topography=topography or self.config_factory.get_topography(),
             vcs_enabled=vcs_enabled,
+            vcs_base_url=self.config_factory.get_vcs_repository_url(),
         )
 
         ignore_rules = [
@@ -363,6 +383,8 @@ class ProjectCreationService:
             vcs_type=self.config_factory.get_vcs_adapter_type(),
             repo_url=f"{base_repo_url}/{context.folder_name}/{context.blueprint.topography.vfs_svn}",
             workspace_dir=context.project_path / context.blueprint.topography.vfs_svn,
+            server_profile=self._server_profile(),
+            ssh_passphrase_provider=self._ssh_passphrase_provider(),
         )
 
     def _failure_outcome(self, step: CreationStep, message: str, context: CreationContext) -> CreationOutcome:

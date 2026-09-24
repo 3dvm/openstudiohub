@@ -21,6 +21,7 @@ from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 from src.application.services.project_audit_service import ProjectAuditService
+from src.application.services.vcs_migration_service import VCSMigrationService
 from src.domain.workspace.entities import (
     ERROR_INVALID_BLUEPRINT,
     ERROR_KITSU_ORPHAN,
@@ -35,6 +36,10 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     vcs_requires_credentials,
 )
 from src.interfaces.qt.workers.project_list_workers import ProjectGridWorker
+from src.interfaces.qt.workers.vcs_migration_workers import (
+    VCSLocalCleanupWorker,
+    VCSMigrationWorker,
+)
 from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
@@ -44,6 +49,8 @@ class ProjectListViewModel(BaseViewModel):
     install_finished = Signal(object, bool, str)  # (project_dir, success, message)
     delete_warning = Signal(str)
     delete_completed = Signal(str)
+    migration_finished = Signal(str, bool, str)
+    cleanup_finished = Signal(str, bool, str)
 
     def __init__(
         self,
@@ -77,6 +84,11 @@ class ProjectListViewModel(BaseViewModel):
         self.vcs_prompt = vcs_prompt
 
         self.nas_manager = NasManager(self.nas_dir)
+        self.migration_service = VCSMigrationService(
+            self.config_factory,
+            credential_vault=self.credential_vault,
+            status_callback=self.report_status,
+        )
         self._projects: List[dict] = []
         self.workers = WorkerManager(self)
         self._refresh_pending = False
@@ -259,21 +271,78 @@ class ProjectListViewModel(BaseViewModel):
         except Exception as error:  # noqa: BLE001
             self.report_status(f"Failed to launch: {str(error)}", "red")
 
-    def delete_project(self, project_name: str, project_id: str) -> None:
-        import subprocess
+    def migrate_project(self, project_name: str, project_dir: Path | None = None) -> None:
+        """Migrate a single project's VCS repository to the configured remote server."""
+        if not vcs_requires_credentials(self.config_factory):
+            self.report_status("Version Control is disabled for this studio.", "red")
+            return
 
-        folder_name = project_name.lower().replace(" ", "-")
+        if self.workers.is_running("migrate"):
+            self.report_status("A migration is already running...", "red")
+            return
+
+        creds = self._ensure_vcs_credentials()
+        if creds is None:
+            return
+        vcs_user, vcs_pwd = creds
+
+        if project_dir is None:
+            project_dir = self.nas_manager.resolve_project_dir(project_name)
+        if not project_dir:
+            self.report_status(f"Project folder for '{project_name}' was not found.", "red")
+            return
+
+        worker = VCSMigrationWorker(
+            self.migration_service, project_name, project_dir, vcs_user, vcs_pwd
+        )
+        worker.progress_update.connect(self.report_status)
+        worker.finished_migration.connect(self._on_migration_finished)
+        self.workers.start("migrate", worker)
+
+    def _on_migration_finished(self, project_name: str, success: bool, message: str) -> None:
+        color = "green" if success else "red"
+        self.report_status(message, color)
+        self.migration_finished.emit(project_name, success, message)
+
+    def cleanup_local_repository(self, project_name: str) -> None:
+        """Optionally delete the old local repository after a successful migration."""
+        if self.workers.is_running("cleanup"):
+            self.report_status("A cleanup is already running...", "red")
+            return
+        worker = VCSLocalCleanupWorker(self.migration_service, project_name)
+        worker.finished_cleanup.connect(self._on_cleanup_finished)
+        self.workers.start("cleanup", worker)
+
+    def _on_cleanup_finished(self, project_name: str, success: bool, message: str) -> None:
+        self.report_status(message, "green" if success else "yellow")
+        self.cleanup_finished.emit(project_name, success, message)
+
+    def delete_project(self, project_name: str, project_id: str) -> None:
+        from src.infrastructure.vcs.vcs_router import VCSRouter
+
         project_dir = self.nas_manager.resolve_project_dir(project_name)
         success, msg = self.production_service.delete_project(project_id)
         if not success:
             self.delete_warning.emit(msg)
-        try:
-            subprocess.run(
-                ["docker", "exec", "openstudio_local_svn", "rm", "-rf", f"/home/svn/{folder_name}"],
-                check=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+
+        if vcs_requires_credentials(self.config_factory):
+            provider = None
+            if self.credential_vault is not None:
+                provider = self.credential_vault.get_ssh_passphrase
+            getter = getattr(self.config_factory, "get_vcs_server_profile", None)
+            profile = getter() if callable(getter) else None
+            try:
+                VCSRouter.destroy_repository(
+                    self.config_factory.get_vcs_adapter_type(),
+                    self.config_factory.get_vcs_repository_url(),
+                    project_name,
+                    self.config_factory.get_vfs_svn_name(),
+                    server_profile=profile,
+                    ssh_passphrase_provider=provider,
+                )
+            except Exception as error:  # noqa: BLE001
+                print(f"[ProjectList] VCS repository cleanup skipped: {error}")
+
         if project_dir:
             self.nas_manager.delete_project_folder(project_dir)
 

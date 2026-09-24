@@ -72,3 +72,26 @@ def test_set_local_workspace_root_creates_missing_keys(monkeypatch, tmp_path):
 
     reloaded = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert reloaded["vcs_engine"]["local_workspace_root"]["windows"] == "C:\\projects"
+
+
+def test_vcs_server_profile_and_repository_url_persist(tmp_path):
+    cfg_path = tmp_path / "settings.json"
+    factory = ConfigFactory(cfg_path)
+
+    assert factory.set_vcs_server_profile({
+        "mode": "remote_ssh",
+        "remote": {"host": "svn-vps", "ssh_user": "ops", "repo_root": "/srv/svn"},
+    }) is True
+    assert factory.set_repository_url("svn://svn-vps") is True
+
+    reloaded = ConfigFactory(cfg_path)
+    profile = reloaded.get_vcs_server_profile()
+    assert profile.is_remote is True
+    assert profile.remote.host == "svn-vps"
+    assert reloaded.get_vcs_repository_url() == "svn://svn-vps"
+    assert reloaded.is_remote_server() is True
+
+
+def test_vcs_server_profile_defaults_to_local_docker(tmp_path):
+    factory = ConfigFactory(tmp_path / "settings.json")
+    assert factory.get_server_mode() == "local_docker"

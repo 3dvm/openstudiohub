@@ -39,9 +39,12 @@ class TabCredentials(QWidget):
         self.entry_vcs_user = self._create_input(self.tr("e.g. artist@studio.com"))
         self.entry_vcs_pwd = self._create_input(self.tr("VCS password"))
         self.entry_vcs_pwd.setEchoMode(QLineEdit.Password)
+        self.entry_ssh_pass = self._create_input(self.tr("optional SSH key passphrase"))
+        self.entry_ssh_pass.setEchoMode(QLineEdit.Password)
 
         layout.addRow(self._styled_label(self.tr("VCS Username:")), self.entry_vcs_user)
         layout.addRow(self._styled_label(self.tr("VCS Password:")), self.entry_vcs_pwd)
+        layout.addRow(self._styled_label(self.tr("SSH Passphrase:")), self.entry_ssh_pass)
 
         self.chk_vcs_enabled = QCheckBox(self.tr("Enable VCS for this session"))
         self.chk_vcs_enabled.setStyleSheet("color: #94A3B8; font-weight: bold;")
@@ -70,6 +73,7 @@ class TabCredentials(QWidget):
     def _connect_signals(self) -> None:
         self.entry_vcs_user.textChanged.connect(self._on_field_modified)
         self.entry_vcs_pwd.textChanged.connect(self._on_field_modified)
+        self.entry_ssh_pass.textChanged.connect(self._on_field_modified)
         self.chk_vcs_enabled.stateChanged.connect(self._on_field_modified)
 
     def _on_field_modified(self) -> None:
@@ -79,10 +83,16 @@ class TabCredentials(QWidget):
     # ------------------------------------------------------------------
     # PUBLIC API (Data-Down, Actions-Up)
     # ------------------------------------------------------------------
-    def load_data(self, username: str = "", enabled: bool = False) -> None:
+    def load_data(self, username: str = "", enabled: bool = False, ssh_passphrase_present: bool = False) -> None:
         self._is_loading = True
         self.entry_vcs_user.setText(username)
         self.entry_vcs_pwd.clear()
+        self.entry_ssh_pass.clear()
+        self.entry_ssh_pass.setPlaceholderText(
+            self.tr("SSH passphrase already set for this session")
+            if ssh_passphrase_present
+            else self.tr("optional SSH key passphrase")
+        )
         self.chk_vcs_enabled.setChecked(enabled)
         self._is_loading = False
 
@@ -91,4 +101,5 @@ class TabCredentials(QWidget):
             "username": self.entry_vcs_user.text().strip(),
             "password": self.entry_vcs_pwd.text(),
             "enabled": self.chk_vcs_enabled.isChecked(),
+            "ssh_passphrase": self.entry_ssh_pass.text(),
         }

@@ -2,14 +2,33 @@
 
 import socket
 from pathlib import Path
+from types import SimpleNamespace
 
-from src.infrastructure.vcs import svn_adapter
+from src.domain.workspace.vcs_server_profile import (
+    REMOTE_SSH,
+    RemoteSSHConfig,
+    VCSServerProfile,
+)
+from src.infrastructure.vcs import ssh_runner, svn_adapter
 from src.infrastructure.vcs.svn_adapter import SVNAdapter
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
 
 def _adapter(url: str) -> SVNAdapter:
     return SVNAdapter(url, Path("/tmp/workspace"))
+
+
+def _remote_adapter(url: str) -> SVNAdapter:
+    profile = VCSServerProfile(
+        mode=REMOTE_SSH,
+        remote=RemoteSSHConfig(
+            host="svn.example.com",
+            ssh_user="ops",
+            container="estudio_svn",
+            repo_root="/srv/svn",
+        ),
+    )
+    return SVNAdapter(url, Path("/tmp/workspace"), server_profile=profile)
 
 
 def test_endpoint_defaults_to_svn_port():
@@ -65,11 +84,41 @@ def test_health_failure_reports_unreachable(monkeypatch):
     assert "Connection refused" in message
 
 
-def test_remote_repository_rollback_is_unsupported():
-    ok, message = _adapter("svn://svn.example.com/repo").destroy_server_repository("Neon", "svn")
+def test_remote_repository_deletion_is_supported(monkeypatch):
+    adapter = _remote_adapter("svn://svn.example.com/repo")
+    calls = []
 
-    assert ok is False
-    assert "remote" in message.lower()
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(ssh_runner.subprocess, "run", fake_run)
+
+    ok, message = adapter.destroy_server_repository("Neon", "svn")
+
+    assert ok is True
+    assert "removed" in message.lower()
+    # The remote command must target the configured server path.
+    assert any("rm -rf" in str(part) for part in calls)
+
+
+def test_remote_repository_creation_uses_ssh(monkeypatch):
+    adapter = _remote_adapter("svn://svn.example.com/repo")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        # `test -d` reports "not found" so creation proceeds.
+        return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(ssh_runner.subprocess, "run", fake_run)
+
+    ok = adapter.create_server_repository("MIDEQ_promo", "svn")
+
+    assert ok is True
+    flat = " ".join(" ".join(str(a) for a in call) for call in calls)
+    assert "svnadmin create" in flat
+    assert "mideq_promo" in flat
 
 
 def test_probe_health_when_vcs_disabled():

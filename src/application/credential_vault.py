@@ -24,6 +24,7 @@ class CredentialVault:
         self._svn_user: Optional[str] = None
         self._svn_password: Optional[str] = None
         self._svn_enabled: bool = False
+        self._ssh_passphrase: Optional[str] = None
 
     # ------------------------------------------------------------------
     # Kitsu
@@ -60,6 +61,18 @@ class CredentialVault:
         return self._svn_enabled
 
     # ------------------------------------------------------------------
+    # SSH passphrase (RAM-only, used by infrastructure provisioning)
+    # ------------------------------------------------------------------
+    def save_ssh_passphrase(self, passphrase: str) -> None:
+        self._ssh_passphrase = passphrase or None
+
+    def get_ssh_passphrase(self) -> Optional[str]:
+        return self._ssh_passphrase
+
+    def has_ssh_passphrase(self) -> bool:
+        return bool(self._ssh_passphrase)
+
+    # ------------------------------------------------------------------
     # Teardown
     # ------------------------------------------------------------------
     def clear(self) -> None:
@@ -68,6 +81,7 @@ class CredentialVault:
         self._svn_user = None
         self._svn_password = None
         self._svn_enabled = False
+        self._ssh_passphrase = None
         for key in (
             EnvKey.KITSU_USER,
             EnvKey.KITSU_PWD,

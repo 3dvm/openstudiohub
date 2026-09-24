@@ -59,7 +59,14 @@ class SettingsViewModel(BaseViewModel):
         username, _ = self.credential_vault.get_svn_credentials()
         return username or "", self.credential_vault.is_svn_enabled()
 
-    def save_session_credentials(self, username: str, password: str, enabled: bool) -> None:
+    def save_session_credentials(self, username: str, password: str, enabled: bool, ssh_passphrase: str = "") -> None:
         if self.credential_vault is None:
             return
         self.credential_vault.save_svn_credentials(username, password, enabled)
+        if ssh_passphrase:
+            self.credential_vault.save_ssh_passphrase(ssh_passphrase)
+
+    def has_ssh_passphrase(self) -> bool:
+        if self.credential_vault is None:
+            return False
+        return self.credential_vault.has_ssh_passphrase()

@@ -46,6 +46,27 @@ class DockerWorker(ManagedWorker):
             self.finished_signal.emit(False, f"System error: {str(error)}")
 
 
+class RemoteServerTestWorker(ManagedWorker):
+    """Probes the remote VCS server over SSH or SVN from the Infrastructure panel."""
+
+    finished_signal = Signal(bool, str)
+
+    def __init__(self, migration_service, target: str) -> None:
+        super().__init__()
+        self.migration_service = migration_service
+        self.target = target
+
+    def run(self) -> None:
+        try:
+            if self.target == "ssh":
+                ok, message = self.migration_service.test_remote_connection()
+            else:
+                ok, message = self.migration_service.test_remote_svn()
+        except Exception as error:  # noqa: BLE001
+            ok, message = False, f"Connection test failed: {error}"
+        self.finished_signal.emit(ok, message)
+
+
 class KitsuSeederWorker(ManagedWorker):
     """Interacts with the Kitsu database through Gazu and the CLI."""
 

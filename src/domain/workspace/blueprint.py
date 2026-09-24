@@ -34,6 +34,9 @@ class ProjectBlueprint:
     addon_configuration: Dict[str, AddonConfiguration] = field(default_factory=dict)
     topography: WorkspaceTopography = field(default_factory=WorkspaceTopography)
     vcs_enabled: bool = True
+    # Per-project VCS base URL override (e.g. after a local -> remote migration).
+    # Empty means "use the global studio setting".
+    vcs_base_url: str = ""
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ProjectBlueprint":
@@ -54,6 +57,7 @@ class ProjectBlueprint:
             dependencies=dependencies,
             addon_configuration=addon_configuration,
             topography=WorkspaceTopography.from_dict(data.get("topography_signature") or {}),
+            vcs_base_url=data.get("vcs_base_url") or "",
         )
 
     @staticmethod
@@ -106,4 +110,5 @@ class ProjectBlueprint:
                 "vfs_local": self.topography.vfs_local,
                 "vfs_pipeline": self.topography.vfs_pipeline,
             },
+            "vcs_base_url": self.vcs_base_url,
         }

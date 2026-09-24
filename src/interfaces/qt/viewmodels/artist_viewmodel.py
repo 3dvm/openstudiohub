@@ -181,6 +181,16 @@ class ArtistViewModel(BaseViewModel):
             return
         svn_user, svn_pwd = creds
 
+        if self.is_vcs_enabled() and card.task_file_path and card.project_root:
+            locked, lock_message = self.task_file_sync_service.lock_task_file(
+                card.project_root, card.task_file_path, svn_user, svn_pwd
+            )
+            if not locked:
+                if "locked by" in lock_message:
+                    self.report_status(f"🔒 {lock_message}", "red")
+                    return
+                self.report_status(f"VCS lock skipped: {lock_message}", "yellow")
+
         self.report_status("🚀 Delegating to the DCC orchestrator...", "yellow")
 
         kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
@@ -300,11 +310,23 @@ class ArtistViewModel(BaseViewModel):
             for card in self._cards:
                 if self._task_id(card) == task_id:
                     card.pending_changes = []
+                    self._unlock_task_file(card)
                     break
             self.report_status(f"🟢 {message}", "green")
         else:
             self.report_status(f"🔴 Publish Error: {message}", "red")
         self.vcs_publish_finished.emit(task_id, success, message)
+
+    def _unlock_task_file(self, card: ArtistTaskCardModel) -> None:
+        """Release the write lock after the task files have been synced."""
+        if not self.is_vcs_enabled() or not card.task_file_path or not card.project_root:
+            return
+        user, pwd = self.credential_vault.get_svn_credentials()
+        ok, message = self.task_file_sync_service.unlock_task_file(
+            card.project_root, card.task_file_path, user, pwd
+        )
+        if not ok:
+            self.report_status(f"VCS unlock warning: {message}", "yellow")
 
     @staticmethod
     def _task_id(card: ArtistTaskCardModel) -> str:

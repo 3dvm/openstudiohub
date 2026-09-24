@@ -60,17 +60,39 @@ class TaskFileSyncService:
 
     def _build_adapter(self, project_root: Path):
         vcs_type = self.config_factory.get_vcs_adapter_type()
-        base_repo_url = self.config_factory.get_vcs_repository_url()
         vfs_svn = self.config_factory.get_vfs_svn_name()
         workspace_root = self.workspace_root(project_root)
+
+        base_repo_url = self._resolve_project_repo_url(project_root)
         final_repo_url = f"{base_repo_url}/{Path(project_root).name}/{vfs_svn}"
 
         router = self.router_factory(
             vcs_type=vcs_type,
             repo_url=final_repo_url,
             workspace_dir=workspace_root,
+            server_profile=self._server_profile(),
         )
         return router.get_adapter()
+
+    def _resolve_project_repo_url(self, project_root: Path) -> str:
+        """Prefer the per-project override stored in the blueprint, if present."""
+        try:
+            blueprint_path = Path(project_root) / self.config_factory.get_vfs_pipeline_name() / "project_init.json"
+            if blueprint_path.exists():
+                import json
+
+                with open(blueprint_path, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                override = (data or {}).get("vcs_base_url")
+                if override:
+                    return override
+        except Exception:  # noqa: BLE001
+            pass
+        return self.config_factory.get_vcs_repository_url()
+
+    def _server_profile(self):
+        getter = getattr(self.config_factory, "get_vcs_server_profile", None)
+        return getter() if callable(getter) else None
 
     @classmethod
     def _is_junk(cls, relative_path: str) -> bool:
@@ -145,3 +167,64 @@ class TaskFileSyncService:
 
         adapter.commit(message, list(selected_paths), username, password)
         return True, f"Published {len(selected_paths)} file(s) to the VCS."
+
+    # ------------------------------------------------------------------
+    # Locking (svn:needs-lock workflow)
+    # ------------------------------------------------------------------
+    def lock_task_file(
+        self,
+        project_root: Path,
+        relative_path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Acquire the VCS write lock for a task file before opening it."""
+        if not self.is_vcs_enabled() or not relative_path:
+            return True, "Locking skipped (VCS disabled or no file)."
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception as error:  # noqa: BLE001
+            return True, f"Locking skipped ({error})."
+        if adapter is None:
+            return True, "Locking skipped (no adapter)."
+
+        try:
+            info = adapter.get_lock_info(relative_path)
+        except Exception:  # noqa: BLE001
+            info = None
+
+        if info and info.get("owner"):
+            if username and info["owner"] != username:
+                return False, f"File is locked by '{info['owner']}'."
+            return True, f"Already locked by '{info['owner']}'."
+
+        try:
+            adapter.lock(relative_path, username, password)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Failed to lock file: {error}"
+        return True, "File locked for editing."
+
+    def unlock_task_file(
+        self,
+        project_root: Path,
+        relative_path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> Tuple[bool, str]:
+        """Release the task file lock after the work has been synced."""
+        if not self.is_vcs_enabled() or not relative_path:
+            return True, "Unlock skipped (VCS disabled or no file)."
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception as error:  # noqa: BLE001
+            return True, f"Unlock skipped ({error})."
+        if adapter is None:
+            return True, "Unlock skipped (no adapter)."
+
+        try:
+            adapter.unlock(relative_path, username, password)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Failed to unlock file: {error}"
+        return True, "File unlocked."

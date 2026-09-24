@@ -168,7 +168,7 @@ class SettingsWidget(QFrame):
         self.tab_software.load_data(manifest)
 
         vcs_username, vcs_enabled = self.vm.load_session_credentials()
-        self.tab_credentials.load_data(vcs_username, vcs_enabled)
+        self.tab_credentials.load_data(vcs_username, vcs_enabled, self.vm.has_ssh_passphrase())
 
         self.lbl_unsaved_warning.setText("")
 
@@ -181,7 +181,13 @@ class SettingsWidget(QFrame):
         vault_data = self.tab_vault.vault_payload()
         projects_dir = vault_data.get("vcs_engine", {}).get("local_workspace_root", "")
 
-        payload["infrastructure_topology"] = vault_data.get("infrastructure_topology", {})
+        # Preserve the remote-server topology (configured in the Infrastructure
+        # panel) so it is carried by the exported Studio Seed.
+        infra_payload = dict(vault_data.get("infrastructure_topology", {}))
+        existing_infra = self.vm.config_factory.get_raw_config().get("infrastructure_topology", {})
+        if "vcs_server" in existing_infra:
+            infra_payload.setdefault("vcs_server", existing_infra["vcs_server"])
+        payload["infrastructure_topology"] = infra_payload
 
         existing_roots = self.vm.config_factory.get_raw_config().get("vcs_engine", {}).get("local_workspace_root", {})
         roots = dict(existing_roots) if isinstance(existing_roots, dict) else {}
@@ -208,7 +214,9 @@ class SettingsWidget(QFrame):
         config_ok, vault_ok = self.vm.save(payload, software_payload)
 
         creds = self.tab_credentials.credentials_payload()
-        self.vm.save_session_credentials(creds["username"], creds["password"], creds["enabled"])
+        self.vm.save_session_credentials(
+            creds["username"], creds["password"], creds["enabled"], creds.get("ssh_passphrase", "")
+        )
 
         if config_ok and vault_ok:
             self.lbl_unsaved_warning.setText("")

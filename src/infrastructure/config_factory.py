@@ -22,6 +22,11 @@ import platform
 from pathlib import Path
 
 from src.domain.workspace.topography import WorkspaceTopography
+from src.domain.workspace.vcs_server_profile import (
+    LOCAL_DOCKER,
+    REMOTE_SSH,
+    VCSServerProfile,
+)
 from src.infrastructure.seed_engine import StudioSeedService
 
 class ConfigFactory:
@@ -134,7 +139,11 @@ class ConfigFactory:
 
             # Infrastructure & Vault Mapping
             if infra_data:
-                self._config["infrastructure_topology"]["vault_path"] = infra_data.get("vault_path", "")
+                if "vault_path" in infra_data:
+                    self._config["infrastructure_topology"]["vault_path"] = infra_data.get("vault_path", "")
+                if "vcs_server" in infra_data:
+                    profile = VCSServerProfile.from_dict(infra_data.get("vcs_server"))
+                    self._config["infrastructure_topology"]["vcs_server"] = profile.to_dict()
 
             # Parametric Adapter Selection
             vcs_clean = vcs_sys.lower()
@@ -226,6 +235,42 @@ class ConfigFactory:
 
     def get_vcs_repository_url(self) -> str:
         return self._config.get("vcs_engine", {}).get("repository_url", "")
+
+    def set_repository_url(self, url: str) -> bool:
+        """Persist the base VCS repository URL without touching other engine settings."""
+        try:
+            self._config.setdefault("vcs_engine", {})["repository_url"] = (url or "").strip()
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to persist repository URL: {e}")
+            return False
+
+    # ---------------------------------------------------------
+    # VCS SERVER TOPOLOGY (LOCAL DOCKER vs REMOTE SSH)
+    # ---------------------------------------------------------
+
+    def get_vcs_server_profile(self) -> VCSServerProfile:
+        """Return the repository-admin topology (defaults to local Docker)."""
+        data = self._config.get("infrastructure_topology", {}).get("vcs_server")
+        return VCSServerProfile.from_dict(data)
+
+    def get_server_mode(self) -> str:
+        return self.get_vcs_server_profile().mode
+
+    def is_remote_server(self) -> bool:
+        return self.get_vcs_server_profile().mode == REMOTE_SSH
+
+    def set_vcs_server_profile(self, data: dict) -> bool:
+        """Persist the repository-admin topology (mode + remote coordinates)."""
+        try:
+            profile = VCSServerProfile.from_dict(data)
+            self._config.setdefault("infrastructure_topology", {})["vcs_server"] = profile.to_dict()
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to persist VCS server profile: {e}")
+            return False
 
     def is_vendor_sparse_enabled(self) -> bool:
         return self._config.get("vcs_engine", {}).get("enable_vendor_sparse_checkout", True)

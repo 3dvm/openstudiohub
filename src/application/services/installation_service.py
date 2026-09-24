@@ -26,9 +26,10 @@ from src.infrastructure.vcs.vcs_router import VCSRouter
 
 
 class InstallationService:
-    def __init__(self, config_factory, vault_root: Path) -> None:
+    def __init__(self, config_factory, vault_root: Path, credential_vault=None) -> None:
         self.config_factory = config_factory
         self._vault_root = vault_root
+        self.credential_vault = credential_vault
 
     @property
     def vault_root(self) -> Path:
@@ -116,8 +117,9 @@ class InstallationService:
             dependencies = init_data.get("dependencies", {})
             template_name = init_data.get("template", "")
             addon_configuration = init_data.get("addon_configuration", {})
+            vcs_base_url = init_data.get("vcs_base_url") or self.config_factory.get_vcs_repository_url()
 
-            checkout_ok = self._gestionar_vcs(project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata)
+            checkout_ok = self._gestionar_vcs(project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata, base_repo_url=vcs_base_url)
             if not checkout_ok:
                 return False, "VCS Synchronization aborted."
 
@@ -168,14 +170,26 @@ class InstallationService:
         except Exception as error:  # noqa: BLE001
             return False, f"Critical error during local installation: {str(error)}"
 
-    def _gestionar_vcs(self, project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata) -> bool:
+    def _gestionar_vcs(self, project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata, base_repo_url=None) -> bool:
         vcs_root = project_root / vfs_svn
         vcs_type = self.config_factory.get_vcs_adapter_type()
 
-        base_repo_url = self.config_factory.get_vcs_repository_url()
+        if not base_repo_url:
+            base_repo_url = self.config_factory.get_vcs_repository_url()
         final_repo_url = f"{base_repo_url}/{project_root.name}/{vfs_svn}"
 
-        router = VCSRouter(vcs_type=vcs_type, repo_url=final_repo_url, workspace_dir=vcs_root)
+        profile = getattr(self.config_factory, "get_vcs_server_profile", lambda: None)()
+        provider = None
+        if self.credential_vault is not None:
+            provider = self.credential_vault.get_ssh_passphrase
+
+        router = VCSRouter(
+            vcs_type=vcs_type,
+            repo_url=final_repo_url,
+            workspace_dir=vcs_root,
+            server_profile=profile,
+            ssh_passphrase_provider=provider,
+        )
         is_sparse_enabled = getattr(self.config_factory, "is_vendor_sparse_enabled", lambda: True)()
 
         if user_role == "vendor" and is_sparse_enabled:

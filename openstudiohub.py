@@ -198,7 +198,10 @@ class OpenStudioHub(QMainWindow):
     def _build_td_view(self, nas_dir):
         project_list_vm = self._build_project_list_vm(nas_dir, True)
         infrastructure_vm = InfrastructureViewModel(
-            self.ctx.config_factory, self.ctx.production_service, self.ctx.status_sink
+            self.ctx.config_factory,
+            self.ctx.production_service,
+            self.ctx.status_sink,
+            credential_vault=self.ctx.credential_vault,
         )
         settings_vm = SettingsViewModel(
             self.ctx.config_factory,
