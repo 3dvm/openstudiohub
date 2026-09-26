@@ -146,9 +146,17 @@ class OpenStudioHub(QMainWindow):
             return
 
         wait_for_all(2000)
-        if self.ctx.auth_service.access_token():
-            self.ctx.auth_service.logout()
-        self.ctx.credential_vault.clear()
+        # Local teardown must never block the window from closing, even if the
+        # Kitsu server is unreachable (e.g. a stale session on the login screen).
+        try:
+            if self.ctx.auth_service.access_token():
+                self.ctx.auth_service.logout()
+        except Exception as error:  # noqa: BLE001
+            print(f"[OpenStudioHub] Warning: logout during shutdown failed: {error}")
+        try:
+            self.ctx.credential_vault.clear()
+        except Exception as error:  # noqa: BLE001
+            print(f"[OpenStudioHub] Warning: credential vault cleanup failed: {error}")
         event.accept()
 
     # ------------------------------------------------------------------

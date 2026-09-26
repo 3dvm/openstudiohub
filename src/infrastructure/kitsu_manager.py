@@ -421,6 +421,10 @@ class KitsuManager:
         """Devuelve las tareas abiertas asignadas a una persona."""
         return gazu.task.all_tasks_for_person(person)
 
+    def all_done_tasks_for_person(self, person) -> list:
+        """Devuelve las tareas finalizadas asignadas a una persona."""
+        return gazu.task.all_done_tasks_for_person(person)
+
     def all_tasks_for_project(self, project_id) -> list:
         """Devuelve todas las tareas de un proyecto."""
         return gazu.task.all_tasks_for_project(project_id)

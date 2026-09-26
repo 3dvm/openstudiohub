@@ -14,7 +14,12 @@ class FakeKitsu:
         return [
             {"id": "t1", "entity_type_name": "Shot", "task_status_name": "Todo"},
             {"id": "t2", "entity_type_name": "Asset", "entity_id": "a1", "task_status_name": "Todo"},
+        ]
+
+    def all_done_tasks_for_person(self, user):
+        return [
             {"id": "t3", "entity_type_name": "Shot", "task_status_name": "Done"},
+            {"id": "t4", "entity_type_name": "Shot", "task_status_id": "s2"},
         ]
 
     def get_asset(self, asset_id):
@@ -24,7 +29,10 @@ class FakeKitsu:
         return {"id": "at1", "name": "Character"}
 
     def all_task_statuses(self):
-        return [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "Done"}]
+        return [
+            {"id": "s1", "name": "Todo", "color": "#f5f5f5", "short_name": "todo"},
+            {"id": "s2", "name": "Done", "color": "#22c55e", "short_name": "done"},
+        ]
 
     def get_project(self, project_id):
         return {"id": project_id, "name": "Neon"}
@@ -38,17 +46,37 @@ def test_list_open_projects():
     assert svc.list_open_projects()[0]["name"] == "Neon"
 
 
-def test_get_artist_task_board_enriches_without_status_filter():
+def test_get_artist_task_board_includes_done_and_enriches():
     svc = ProductionService(FakeKitsu())
     tasks = svc.get_artist_task_board()
 
-    # No status is filtered out, including "Done".
-    assert len(tasks) == 3
-    assert {t["id"] for t in tasks} == {"t1", "t2", "t3"}
+    # Open + finished tasks are returned.
+    assert {t["id"] for t in tasks} == {"t1", "t2", "t3", "t4"}
 
     asset_task = next(t for t in tasks if t["id"] == "t2")
     assert asset_task["asset_type_id"] == "at1"
     assert asset_task["asset_type_name"] == "Character"
+
+
+def test_get_artist_task_board_backfills_status_from_id():
+    svc = ProductionService(FakeKitsu())
+    tasks = svc.get_artist_task_board()
+
+    done_task = next(t for t in tasks if t["id"] == "t4")
+    assert done_task["task_status_name"] == "Done"
+    assert done_task["task_status_color"] == "#22c55e"
+    assert done_task["task_status_short_name"] == "done"
+
+
+def test_get_artist_task_board_survives_done_fetch_failure():
+    class BrokenDoneKitsu(FakeKitsu):
+        def all_done_tasks_for_person(self, user):
+            raise RuntimeError("boom")
+
+    svc = ProductionService(BrokenDoneKitsu())
+    tasks = svc.get_artist_task_board()
+
+    assert {t["id"] for t in tasks} == {"t1", "t2"}
 
 
 def test_get_project_task_statuses_uses_project_when_selected():

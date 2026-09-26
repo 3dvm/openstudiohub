@@ -96,7 +96,10 @@ class AuthService:
 
     def logout(self) -> None:
         user_id = self._user.id if self._user else ""
-        self.kitsu.log_out()
+        try:
+            self.kitsu.log_out()
+        except Exception as error:  # noqa: BLE001 - local teardown must never fail
+            print(f"[AuthService] Warning: server logout failed: {error}")
         self._user = None
         self._raw_user_data = None
         self.session_repository.delete()

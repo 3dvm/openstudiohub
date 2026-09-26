@@ -115,3 +115,21 @@ def test_restore_without_session():
     svc, kitsu, repo, events = make_service()
     assert svc.restore_session() is False
     assert svc.current_user is None
+
+
+def test_logout_is_resilient_when_server_unreachable():
+    svc, kitsu, repo, events = make_service()
+    repo.save(Session(host="http://h/api", tokens={"access_token": "saved"}))
+    assert svc.restore_session() is True
+
+    def boom():
+        raise ConnectionError("host unreachable")
+
+    kitsu.log_out = boom
+
+    svc.logout()
+
+    assert svc.current_user is None
+    assert svc.current_role() is Role.GUEST
+    assert repo.session is None
+    assert isinstance(events[0], UserLoggedOut)

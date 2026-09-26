@@ -65,19 +65,37 @@ class ProductionService:
             return []
 
     def get_artist_task_board(self) -> List[dict]:
-        """Assigned tasks (filtered + asset-enriched) for the artist dashboard.
+        """Assigned tasks (open + done, asset-enriched) for the artist dashboard.
 
-        This moves the enrichment logic out of the UI worker into the
-        application layer.
+        Kitsu splits open and finished work across two endpoints, so both are
+        fetched. Status labels are backfilled from the studio status list for
+        payloads that only carry a ``task_status_id``.
         """
         try:
             raw_user = self.kitsu.get_current_user()
-            all_tasks = self.kitsu.all_tasks_for_person(raw_user)
+            open_tasks = self.kitsu.all_tasks_for_person(raw_user)
         except Exception as error:  # noqa: BLE001
             print(f"[ProductionService] Error fetching artist tasks: {error}")
             return []
 
-        tasks = list(all_tasks)
+        try:
+            done_tasks = self.kitsu.all_done_tasks_for_person(raw_user)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Warning: failed to fetch done tasks: {error}")
+            done_tasks = []
+
+        # Merge open + done, keeping the first occurrence of each task id.
+        tasks: List[dict] = []
+        seen_ids: set = set()
+        for task in list(open_tasks) + list(done_tasks):
+            task_id = str(task.get("id", "") or "")
+            if task_id and task_id in seen_ids:
+                continue
+            if task_id:
+                seen_ids.add(task_id)
+            tasks.append(task)
+
+        self._backfill_task_statuses(tasks)
 
         for task in tasks:
             entity_type = (task.get("entity_type_name") or task.get("entity_type") or "").lower()
@@ -93,6 +111,35 @@ class ProductionService:
                     print(f"[ProductionService] Warning: failed to enrich asset: {inner_error}")
 
         return tasks
+
+    def _backfill_task_statuses(self, tasks: List[dict]) -> None:
+        """Fill missing status labels using the global status list.
+
+        Some Kitsu payloads (notably finished tasks) only carry a
+        ``task_status_id``; without a name the UI would fall back to a
+        placeholder. Failures here are non-fatal.
+        """
+        if not any(
+            not (task.get("task_status_name") or (task.get("task_status") or {}).get("name"))
+            for task in tasks
+        ):
+            return
+        try:
+            statuses = self.kitsu.all_task_statuses()
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Warning: failed to fetch task statuses: {error}")
+            return
+
+        by_id = {str(status.get("id", "") or ""): status for status in statuses}
+        for task in tasks:
+            if task.get("task_status_name") or (task.get("task_status") or {}).get("name"):
+                continue
+            status = by_id.get(str(task.get("task_status_id", "") or ""))
+            if not status:
+                continue
+            task["task_status_name"] = status.get("name", "")
+            task["task_status_color"] = status.get("color", "")
+            task["task_status_short_name"] = status.get("short_name", "")
 
     def get_project_task_statuses(self, project_id: str) -> List[dict]:
         """Task statuses available to a project (global list for ``ALL``).
