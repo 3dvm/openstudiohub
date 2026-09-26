@@ -31,6 +31,7 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
 from src.interfaces.qt.workers.artist_workers import (
     CheckVcsChangesWorker,
     FetchArtistTasksWorker,
+    FetchTaskLockStatesWorker,
     InstallProjectWorker,
     LaunchTaskWorker,
     PublishVcsChangesWorker,
@@ -54,6 +55,8 @@ class ArtistTaskCardModel:
     task_file_path: Optional[str] = None
     pending_changes: list = field(default_factory=list)
     vcs_enabled: bool = False
+    lock_owner: str = ""
+    lock_is_mine: bool = False
 
 
 class ArtistViewModel(BaseViewModel):
@@ -63,6 +66,7 @@ class ArtistViewModel(BaseViewModel):
     vcs_changes_ready = Signal(str, list)  # (task_id, list[FileChange])
     vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
     vcs_update_finished = Signal(str, bool, str)  # (project_id, success, message)
+    task_locks_ready = Signal(dict)  # {task_id: {"owner": str, "is_mine": bool}}
 
     def __init__(
         self,
@@ -124,10 +128,13 @@ class ArtistViewModel(BaseViewModel):
             prior = previous.get(str(card.task_data.get("id", "")))
             if prior is not None:
                 card.pending_changes = list(prior.pending_changes)
+                card.lock_owner = prior.lock_owner
+                card.lock_is_mine = prior.lock_is_mine
         self._cards = cards
         self.report_status(f"🟢 Synchronized: {len(tasks)} active tasks found.", "green")
         self.tasks_loaded.emit(cards)
         self.tasks_load_finished.emit(True)
+        self._refresh_task_locks(cards)
 
     def _on_tasks_fetch_failed(self, error: str) -> None:
         self._tasks_loading = False
@@ -183,6 +190,48 @@ class ArtistViewModel(BaseViewModel):
         )
 
     # ------------------------------------------------------------------
+    # File lock badges
+    # ------------------------------------------------------------------
+    def _current_username(self) -> str:
+        user = getattr(self.auth_service, "current_user", None)
+        return getattr(user, "email", "") or ""
+
+    def _refresh_task_locks(self, cards: List[ArtistTaskCardModel]) -> None:
+        """Query the VCS lock owner for each card's linked file, off-thread."""
+        targets = [
+            (self._task_id(card), card.project_root, card.task_file_path)
+            for card in cards
+            if card.project_root and card.task_file_path and self.is_vcs_enabled(card.project_root)
+        ]
+        if not targets or self.workers.is_running("task_locks"):
+            return
+
+        worker = FetchTaskLockStatesWorker(self.task_file_sync_service, targets)
+        worker.locks_ready.connect(self._on_task_locks_ready)
+        self.workers.start("task_locks", worker)
+
+    def _on_task_locks_ready(self, owners: dict) -> None:
+        username = self._current_username()
+        payload = {}
+        for card in self._cards:
+            task_id = self._task_id(card)
+            owner = owners.get(task_id, "")
+            card.lock_owner = owner
+            card.lock_is_mine = bool(owner) and owner == username
+            payload[task_id] = {"owner": owner, "is_mine": card.lock_is_mine}
+        self.task_locks_ready.emit(payload)
+
+    def _emit_task_lock(self, card: ArtistTaskCardModel) -> None:
+        self.task_locks_ready.emit(
+            {
+                self._task_id(card): {
+                    "owner": card.lock_owner,
+                    "is_mine": card.lock_is_mine,
+                }
+            }
+        )
+
+    # ------------------------------------------------------------------
     # Launch use case
     # ------------------------------------------------------------------
     def _resolve_server(self, project_root=None):
@@ -230,6 +279,10 @@ class ArtistViewModel(BaseViewModel):
                     self.report_status(f"🔒 {lock_message}", "red")
                     return
                 self.report_status(f"VCS lock skipped: {lock_message}", "yellow")
+            else:
+                card.lock_owner = self._current_username()
+                card.lock_is_mine = True
+                self._emit_task_lock(card)
 
         self.report_status("🚀 Delegating to the DCC orchestrator...", "yellow")
 
@@ -406,6 +459,9 @@ class ArtistViewModel(BaseViewModel):
                 if self._task_id(card) == task_id:
                     card.pending_changes = []
                     self._unlock_task_file(card)
+                    card.lock_owner = ""
+                    card.lock_is_mine = False
+                    self._emit_task_lock(card)
                     break
             self.report_status(f"🟢 {message}", "green")
         else:

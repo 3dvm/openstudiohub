@@ -43,6 +43,7 @@ class FakeViewModel(QObject):
     vcs_changes_ready = Signal(str, list)
     vcs_publish_finished = Signal(str, bool, str)
     vcs_update_finished = Signal(str, bool, str)
+    task_locks_ready = Signal(dict)
 
     def __init__(self):
         super().__init__()

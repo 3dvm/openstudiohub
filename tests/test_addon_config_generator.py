@@ -45,6 +45,21 @@ def test_generate_writes_one_script_per_enabled_addon(tmp_path):
     assert "'activate'" in kitsu_script
 
 
+def test_blender_kitsu_preserves_project_root_path_property(tmp_path):
+    generator = AddonConfigGenerator()
+    topography = _topography()
+    generator.generate(
+        tmp_path,
+        {"blender_kitsu": AddonConfiguration(name="blender_kitsu")},
+        topography,
+    )
+    script = (generator.config_dir(tmp_path, topography) / "cfg_blender_kitsu.py").read_text(
+        encoding="utf-8"
+    )
+    assert "project_root_path = property(" in script
+    assert "project_root_path = custom_project_root_path" not in script
+
+
 def test_generated_scripts_are_valid_python(tmp_path):
     generator = AddonConfigGenerator()
     generated = generator.generate(

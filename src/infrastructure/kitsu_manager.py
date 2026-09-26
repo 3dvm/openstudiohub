@@ -706,9 +706,30 @@ class KitsuManager:
         """Task status by name, or ``None``."""
         return gazu.task.get_task_status_by_name(name)
 
+    def get_task_status(self, task_status_id: str) -> dict:
+        """Task status by id."""
+        return gazu.task.get_task_status(task_status_id)
+
     def new_task_status(self, name: str, short_name: str = "", color: str = "#000000") -> dict:
         """Create a global task status (short name/colour help the UI)."""
         return gazu.task.new_task_status(name, short_name=short_name or name[:4], color=color)
+
+    def link_task_status_to_project(self, project_id: str, task_status_id: str) -> dict:
+        """Link an existing global task status to a production.
+
+        Imported/migrated productions can end up with tasks pointing at global
+        statuses while the production itself has no ``project_task_status_link``
+        entries. Kitsu (and therefore to the per-project status APIs) then
+        reports an empty status list. This wraps the manager-only endpoint.
+        """
+        project_id = project_id.get("id", "") if isinstance(project_id, dict) else project_id
+        task_status_id = (
+            task_status_id.get("id", "") if isinstance(task_status_id, dict) else task_status_id
+        )
+        return gazu.client.post(
+            f"data/projects/{project_id}/settings/task-status",
+            {"task_status_id": task_status_id},
+        )
 
     def new_asset_type(self, name: str) -> dict:
         """Create a global asset type."""

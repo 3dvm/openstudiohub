@@ -190,6 +190,35 @@ def test_unlock_task_file_releases_lock(tmp_path):
     assert adapter.unlock_calls == [("pro/a.blend", "artist", "secret")]
 
 
+def test_get_task_file_lock_returns_owner(tmp_path):
+    service, adapter = _service(tmp_path, {})
+    adapter.lock_info = {"owner": "ana@studio.com", "token": "opaquelocktoken:abc"}
+
+    info = service.get_task_file_lock(tmp_path / "p", "pro/a.blend")
+
+    assert info["owner"] == "ana@studio.com"
+
+
+def test_get_task_file_lock_returns_none_when_unlocked(tmp_path):
+    service, _ = _service(tmp_path, {})
+
+    assert service.get_task_file_lock(tmp_path / "p", "pro/a.blend") is None
+
+
+def test_get_task_file_lock_returns_none_when_vcs_disabled(tmp_path):
+    service, adapter = _service(tmp_path, {}, vcs_type="none")
+    adapter.lock_info = {"owner": "ana@studio.com"}
+
+    assert service.get_task_file_lock(tmp_path / "p", "pro/a.blend") is None
+
+
+def test_get_task_file_lock_returns_none_without_path(tmp_path):
+    service, adapter = _service(tmp_path, {})
+    adapter.lock_info = {"owner": "ana@studio.com"}
+
+    assert service.get_task_file_lock(tmp_path / "p", "") is None
+
+
 def test_update_working_copy_pulls_with_credentials(tmp_path):
     service, adapter = _service(tmp_path, {})
 

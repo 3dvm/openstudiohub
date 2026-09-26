@@ -35,6 +35,29 @@ class FetchArtistTasksWorker(ManagedWorker):
             self.error_occurred.emit(str(error))
 
 
+class FetchTaskLockStatesWorker(ManagedWorker):
+    """Reads the VCS lock owner for each task's linked file off the UI thread."""
+
+    locks_ready = Signal(dict)  # {task_id: owner}
+
+    def __init__(self, sync_service: TaskFileSyncService, targets: list) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.targets = targets
+
+    def run(self) -> None:
+        owners: dict = {}
+        for task_id, project_root, relative_path in self.targets:
+            try:
+                info = self.sync_service.get_task_file_lock(project_root, relative_path)
+            except Exception:  # noqa: BLE001
+                info = None
+            owner = (info or {}).get("owner")
+            if owner:
+                owners[task_id] = owner
+        self.locks_ready.emit(owners)
+
+
 class InstallProjectWorker(ManagedWorker):
     """Runs the local installation engine without freezing the UI."""
 

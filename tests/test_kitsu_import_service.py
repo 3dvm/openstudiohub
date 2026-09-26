@@ -84,6 +84,7 @@ class FakeKitsu:
         self.existing_project = None
         self.existing_task_types = [{"id": "tt1", "name": "Animation", "color": "#fff", "for_entity": "Shot"}]
         self.existing_task_statuses = [{"id": "ts1", "name": "WIP", "short_name": "wip", "color": "#f00"}]
+        self.project_task_statuses = []
         self.existing_asset_types = [{"id": "at1", "name": "Character"}]
         self.existing_departments = []
         self.new_persons_created = []
@@ -154,7 +155,22 @@ class FakeKitsu:
         return list(self.existing_departments)
 
     def all_task_statuses_for_project(self, project):
-        return list(self.existing_task_statuses)
+        return list(self.project_task_statuses)
+
+    def get_task_status(self, task_status_id):
+        for status in self.existing_task_statuses:
+            if status.get("id") == task_status_id:
+                return dict(status)
+        return None
+
+    def link_task_status_to_project(self, project_id, task_status_id):
+        self._record("link_task_status_to_project", project_id, task_status_id)
+        status = next(
+            (s for s in self.existing_task_statuses if s.get("id") == task_status_id),
+            {"id": task_status_id},
+        )
+        self.project_task_statuses.append(dict(status))
+        return dict(status)
 
     def all_project_status(self):
         return [{"id": "ps1", "name": "Active"}]
@@ -286,7 +302,9 @@ class FakeKitsu:
 # ---------------------------------------------------------------------------
 # Archive builder
 # ---------------------------------------------------------------------------
-def _build_archive(tmp_path: Path, embed: bool = False, source_vfs_svn: str = "svn") -> Path:
+def _build_archive(tmp_path: Path, embed: bool = False, source_vfs_svn: str = "svn", task_statuses=None) -> Path:
+    if task_statuses is None:
+        task_statuses = [{"id": "ts1", "name": "WIP", "short_name": "wip", "color": "#f00"}]
     archive = tmp_path / "bundle.oshproject"
     manifest = build_manifest(
         project={"name": "Neon"},
@@ -312,9 +330,7 @@ def _build_archive(tmp_path: Path, embed: bool = False, source_vfs_svn: str = "s
             {"id": "tt1", "name": "Animation", "color": "#fff", "for_entity": "Shot"},
             {"id": "tt2", "name": "Modeling", "color": "#0ff", "for_entity": "Asset"},
         ])
-        writer.add_json("kitsu/studio/task_statuses.json", [
-            {"id": "ts1", "name": "WIP", "short_name": "wip", "color": "#f00"},
-        ])
+        writer.add_json("kitsu/studio/task_statuses.json", task_statuses)
         writer.add_json("kitsu/studio/asset_types.json", [{"id": "at1", "name": "Character"}])
         writer.add_json("kitsu/studio/departments.json", [{"id": "dep1", "name": "3D"}])
         writer.add_json("kitsu/studio/project_statuses.json", [{"id": "ps1", "name": "Active"}])
@@ -423,6 +439,25 @@ def test_studio_resources_create_or_get_before_tasks(tmp_path, monkeypatch):
     created_types = [a[0] for n, a, _k in kitsu.calls if n == "new_task_type"]
     assert created_types == ["Modeling"]
     assert names.index("new_task_type") < names.index("new_task")
+
+    # The imported status set must be linked to the production.
+    linked = [a for n, a, _k in kitsu.calls if n == "link_task_status_to_project"]
+    assert linked == [("new-project", "ts1")]
+
+
+def test_task_status_referenced_but_missing_from_export_is_linked(tmp_path, monkeypatch):
+    # Source production exported no task statuses, yet its tasks reference the
+    # global "ts1" status. It must still be resolved and linked to the target.
+    archive = _build_archive(tmp_path, task_statuses=[])
+    kitsu = FakeKitsu()
+    service = _make_service(tmp_path, kitsu, monkeypatch)
+
+    plan = service.inspect(archive)
+    report = service.import_project(plan, _person_map(), ImportOptions())
+    assert report.success, report.message
+
+    linked = [a for n, a, _k in kitsu.calls if n == "link_task_status_to_project"]
+    assert linked == [("new-project", "ts1")]
 
 
 def test_task_filepath_preserved(tmp_path, monkeypatch):

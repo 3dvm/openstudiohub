@@ -222,6 +222,34 @@ class TaskFileSyncService:
     # ------------------------------------------------------------------
     # Locking (svn:needs-lock workflow)
     # ------------------------------------------------------------------
+    def get_task_file_lock(
+        self,
+        project_root: Path,
+        relative_path: str,
+    ) -> Optional[dict]:
+        """Return the VCS lock metadata for a task file, or ``None`` when unlocked.
+
+        Read-only counterpart of :meth:`lock_task_file`, used to render the lock
+        badge on the artist task cards without acquiring anything. Lock metadata
+        comes straight from the working copy (``svn info``), so no credentials
+        are required.
+        """
+        if not self.is_vcs_enabled(project_root) or not relative_path:
+            return None
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception:  # noqa: BLE001
+            return None
+        if adapter is None:
+            return None
+
+        try:
+            info = adapter.get_lock_info(relative_path)
+        except Exception:  # noqa: BLE001
+            return None
+        return info or None
+
     def lock_task_file(
         self,
         project_root: Path,

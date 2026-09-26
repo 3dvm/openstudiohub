@@ -20,6 +20,7 @@ from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -223,7 +224,21 @@ class TaskCard(QFrame):
         self.thumb_stack.addWidget(self.page_placeholder)
         self.thumb_stack.addWidget(self.thumb_label)
 
-        main_layout.addWidget(self.thumb_stack)
+        # The lock badge floats over the thumbnail's top-right corner, so both
+        # widgets share the same grid cell (the badge stays on top when raised).
+        self.thumb_container = QWidget()
+        thumb_overlay = QGridLayout(self.thumb_container)
+        thumb_overlay.setContentsMargins(0, 0, 0, 0)
+        thumb_overlay.setSpacing(0)
+        thumb_overlay.addWidget(self.thumb_stack, 0, 0)
+
+        self.lock_badge = QLabel(self.thumb_container)
+        self.lock_badge.setAlignment(Qt.AlignCenter)
+        self.lock_badge.setFixedHeight(20)
+        self.lock_badge.hide()
+        thumb_overlay.addWidget(self.lock_badge, 0, 0, Qt.AlignTop | Qt.AlignRight)
+
+        main_layout.addWidget(self.thumb_container)
 
         btn_layout = QHBoxLayout()
         btn_layout.setContentsMargins(0, 0, 0, 0)
@@ -303,6 +318,36 @@ class TaskCard(QFrame):
         """Update the live badge for uncommitted VCS changes on this task."""
         self.pending_change_count = max(0, int(count or 0))
         self._sync_update_button()
+
+    def set_lock_state(self, owner: str, is_mine: bool = False) -> None:
+        """Render the VCS lock badge for the task's linked file.
+
+        An empty ``owner`` means the file is unlocked, so the badge is hidden.
+        """
+        if not owner:
+            self.lock_badge.hide()
+            return
+
+        if is_mine:
+            background, foreground, label = "#10B981", "#0F172A", self.tr("🔒 You")
+        else:
+            background, foreground, label = "#EF4444", "#F8FAFC", f"🔒 {owner}"
+
+        max_width = max(160, (self.thumb_stack.width() or 0) - 16)
+        self.lock_badge.setText(self.lock_badge.fontMetrics().elidedText(label, Qt.ElideRight, max_width))
+        self.lock_badge.setToolTip(
+            self.tr("Locked by you") if is_mine else self.tr(f"Locked by {owner}")
+        )
+        self.lock_badge.setStyleSheet(f"""
+            background-color: {background};
+            color: {foreground};
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: bold;
+            padding: 0 8px;
+        """)
+        self.lock_badge.show()
+        self.lock_badge.raise_()
 
     def _load_thumbnail(self) -> None:
         entity_id = self.task_data.get("entity_id")

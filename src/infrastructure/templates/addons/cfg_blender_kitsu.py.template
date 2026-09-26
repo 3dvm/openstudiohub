@@ -188,9 +188,13 @@ def override_vfs_root():
 
         if hasattr(kitsu_prefs_mod, "KITSU_addon_preferences"):
             def custom_project_root_path(self):
+                if not self.project_root_dir:
+                    return None
                 return Path(self.project_root_dir) / production_folder
 
-            kitsu_prefs_mod.KITSU_addon_preferences.project_root_path = custom_project_root_path
+            kitsu_prefs_mod.KITSU_addon_preferences.project_root_path = property(
+                custom_project_root_path
+            )
     except Exception as error:  # noqa: BLE001
         print(f"[OPENSTUDIO HUB] Monkey Patch VFS falló: {error}")
 

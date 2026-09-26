@@ -69,6 +69,7 @@ class ViewArtist(BaseDashboardView):
         self.vm.vcs_changes_ready.connect(self._on_vcs_changes_ready)
         self.vm.vcs_publish_finished.connect(self._on_vcs_publish_finished)
         self.vm.vcs_update_finished.connect(self._on_vcs_update_finished)
+        self.vm.task_locks_ready.connect(self._on_task_locks_ready)
         self.vm.load_tasks()
 
     def _build_content(self) -> None:
@@ -271,6 +272,7 @@ class ViewArtist(BaseDashboardView):
                 pending_change_count=len(card.pending_changes),
                 on_update_callback=lambda c=card: self.vm.check_vcs_changes(c),
             )
+            task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
             self._task_widgets.append(task_card)
             self._task_cards_by_id[str(card.task_data.get("id", ""))] = task_card
 
@@ -319,6 +321,15 @@ class ViewArtist(BaseDashboardView):
 
     def _on_vcs_update_finished(self, _project_id: str, _success: bool, _message: str) -> None:
         self._sync_update_vcs_button()
+
+    # ------------------------------------------------------------------
+    # File lock badges
+    # ------------------------------------------------------------------
+    def _on_task_locks_ready(self, locks: dict) -> None:
+        for task_id, state in locks.items():
+            widget = self._task_cards_by_id.get(str(task_id))
+            if widget is not None:
+                widget.set_lock_state(state.get("owner", ""), state.get("is_mine", False))
 
     # ------------------------------------------------------------------
     # VCS publish flow

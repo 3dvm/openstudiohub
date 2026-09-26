@@ -741,6 +741,8 @@ class KitsuImportService:
                 target_statuses[key] = target
                 context.status_map[str(source.get("id", ""))] = target
 
+        self._link_task_statuses_to_project(context, extract_dir)
+
         target_types = {_name_key(t): t for t in self._safe(lambda: self.kitsu.all_task_types(), [])}
         for source in task_types:
             key = _name_key(source)
@@ -800,6 +802,71 @@ class KitsuImportService:
             f"{context.counter('asset_types_reused')} reused, "
             f"departments {context.counter('departments_created')} new/"
             f"{context.counter('departments_reused')} reused."
+        )
+
+    def _link_task_statuses_to_project(
+        self,
+        context: _ImportContext,
+        extract_dir: Path,
+    ) -> None:
+        """Link every task status referenced by the import to the project.
+
+        The exported ``kitsu/studio/task_statuses.json`` is per-production and
+        can be empty even when tasks reference global statuses. Any referenced
+        id missing from :attr:`_ImportContext.status_map` is therefore resolved
+        against the global status list before linking, so migrated productions
+        do not end up with zero ``project_task_status_link`` entries.
+        """
+        if not context.project_id:
+            return
+
+        global_statuses = self._safe(lambda: self.kitsu.all_task_statuses(), []) or []
+        global_by_id = {str(s.get("id", "")): s for s in global_statuses if s.get("id")}
+
+        referenced: List[str] = []
+        for task in _read_json(extract_dir, "kitsu/tasks.json"):
+            status_id = str(task.get("task_status_id", "") or "")
+            if status_id and status_id not in context.status_map and status_id not in referenced:
+                referenced.append(status_id)
+
+        for status_id in referenced:
+            status = global_by_id.get(status_id)
+            if status is None:
+                status = self._safe(lambda sid=status_id: self.kitsu.get_task_status(sid), None)
+            if status:
+                context.status_map[status_id] = status
+
+        targets: List[dict] = []
+        seen: set = set()
+        for status in context.status_map.values():
+            status_id = str(status.get("id", "") or "")
+            if status_id and status_id not in seen:
+                seen.add(status_id)
+                targets.append(status)
+
+        if not targets:
+            return
+
+        existing = {
+            str(s.get("id", ""))
+            for s in self._safe(
+                lambda: self.kitsu.all_task_statuses_for_project(context.project_id), []
+            )
+        }
+        for status in targets:
+            status_id = str(status.get("id", "") or "")
+            if status_id in existing:
+                continue
+            linked = self._safe(
+                lambda sid=status_id: self.kitsu.link_task_status_to_project(context.project_id, sid),
+                None,
+            )
+            if linked is not None:
+                context.bump("statuses_linked")
+
+        self._log(
+            f"Task statuses linked to project: {context.counter('statuses_linked')} new "
+            f"({len(targets)} referenced)."
         )
 
     def _create_entities(self, context: _ImportContext, extract_dir: Path) -> None:
