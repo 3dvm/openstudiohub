@@ -44,15 +44,20 @@ class FakeViewModel(QObject):
     vcs_publish_finished = Signal(str, bool, str)
     vcs_update_finished = Signal(str, bool, str)
     task_locks_ready = Signal(dict)
+    task_statuses_loaded = Signal(str, list)
 
     def __init__(self):
         super().__init__()
         self.load_calls = 0
         self.update_calls = []
+        self.status_calls = []
         self._update_running = False
 
     def load_tasks(self):
         self.load_calls += 1
+
+    def load_task_statuses(self, project_id):
+        self.status_calls.append(project_id)
 
     def list_servers(self):
         return []
@@ -86,9 +91,19 @@ class FakeViewModel(QObject):
         return True
 
 
-def _card(project_id: str, project_name: str, vcs_enabled: bool = False) -> ArtistTaskCardModel:
+def _card(
+    project_id: str,
+    project_name: str,
+    vcs_enabled: bool = False,
+    status: str = "Todo",
+) -> ArtistTaskCardModel:
     return ArtistTaskCardModel(
-        task_data={"id": f"t-{project_id}", "entity_name": "Monkey", "task_type_name": "Modeling"},
+        task_data={
+            "id": f"t-{project_id}",
+            "entity_name": "Monkey",
+            "task_type_name": "Modeling",
+            "task_status": {"name": status, "color": "#444444"},
+        },
         project_root=Path("/tmp/does-not-exist"),
         config_path=None,
         is_installed=False,
@@ -182,3 +197,75 @@ def test_update_vcs_disabled_while_running(qapp):
     view._sync_update_vcs_button()
 
     assert view.btn_update_vcs.isEnabled() is False
+
+
+def test_tasks_loaded_requests_statuses_for_current_project(qapp):
+    view, vm = _view()
+
+    view._on_tasks_loaded([_card("p1", "Alpha")])
+
+    assert vm.status_calls[-1] == "ALL"
+
+
+def test_status_combo_populated_from_viewmodel(qapp):
+    view, vm = _view()
+    view._on_tasks_loaded([_card("p1", "Alpha")])
+
+    vm.task_statuses_loaded.emit(
+        "ALL",
+        [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "Retake"}],
+    )
+
+    labels = [view.combo_status.itemText(i) for i in range(view.combo_status.count())]
+    assert labels == ["All Statuses", "Todo", "Retake"]
+
+
+def test_status_filter_narrows_grid(qapp):
+    view, vm = _view()
+    view._on_tasks_loaded(
+        [_card("p1", "Alpha", status="Todo"), _card("p1", "Alpha", status="Retake")]
+    )
+    vm.task_statuses_loaded.emit(
+        "ALL", [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "Retake"}]
+    )
+
+    view.combo_status.setCurrentIndex(view.combo_status.findData("Retake"))
+
+    assert len(view._task_widgets) == 1
+
+
+def test_status_filter_combines_with_project_filter(qapp):
+    view, vm = _view()
+    view._on_tasks_loaded(
+        [
+            _card("p1", "Alpha", status="Retake"),
+            _card("p2", "Beta", status="Retake"),
+            _card("p2", "Beta", status="Todo"),
+        ]
+    )
+    vm.task_statuses_loaded.emit(
+        "ALL", [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "Retake"}]
+    )
+
+    view.combo_projects.setCurrentIndex(view.combo_projects.findData("p2"))
+    view.combo_status.setCurrentIndex(view.combo_status.findData("Retake"))
+
+    assert len(view._task_widgets) == 1
+
+
+def test_status_filter_preserved_across_refresh(qapp):
+    view, vm = _view()
+    cards = [_card("p1", "Alpha", status="Todo"), _card("p1", "Alpha", status="Retake")]
+    view._on_tasks_loaded(cards)
+    vm.task_statuses_loaded.emit(
+        "ALL", [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "Retake"}]
+    )
+    view.combo_status.setCurrentIndex(view.combo_status.findData("Retake"))
+
+    view._on_tasks_loaded(cards)
+    vm.task_statuses_loaded.emit(
+        "ALL", [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "Retake"}]
+    )
+
+    assert view.combo_status.currentData() == "Retake"
+

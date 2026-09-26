@@ -32,6 +32,7 @@ from src.interfaces.qt.workers.artist_workers import (
     CheckVcsChangesWorker,
     FetchArtistTasksWorker,
     FetchTaskLockStatesWorker,
+    FetchTaskStatusesWorker,
     InstallProjectWorker,
     LaunchTaskWorker,
     PublishVcsChangesWorker,
@@ -67,6 +68,7 @@ class ArtistViewModel(BaseViewModel):
     vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
     vcs_update_finished = Signal(str, bool, str)  # (project_id, success, message)
     task_locks_ready = Signal(dict)  # {task_id: {"owner": str, "is_mine": bool}}
+    task_statuses_loaded = Signal(str, list)  # (project_id, list[dict])
 
     def __init__(
         self,
@@ -93,6 +95,7 @@ class ArtistViewModel(BaseViewModel):
         self._launching_card: Optional[ArtistTaskCardModel] = None
         self._cards: List[ArtistTaskCardModel] = []
         self._tasks_loading = False
+        self._status_cache: dict = {}
         self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
@@ -140,6 +143,34 @@ class ArtistViewModel(BaseViewModel):
         self._tasks_loading = False
         self.report_status(f"Network error: {error}", "red")
         self.tasks_load_finished.emit(False)
+
+    # ------------------------------------------------------------------
+    # Project task statuses (for the status filter)
+    # ------------------------------------------------------------------
+    def load_task_statuses(self, project_id: str) -> None:
+        """Fetch (or replay from cache) the statuses available for a project.
+
+        ``project_id`` may be ``"ALL"`` to request the global status list.
+        """
+        key = project_id or "ALL"
+        cached = self._status_cache.get(key)
+        if cached is not None:
+            self.task_statuses_loaded.emit(key, list(cached))
+            return
+        if self.workers.is_running("task_statuses"):
+            return
+
+        worker = FetchTaskStatusesWorker(self.production_service, key)
+        worker.statuses_ready.connect(self._on_task_statuses_loaded)
+        worker.error_occurred.connect(self._on_task_statuses_failed)
+        self.workers.start("task_statuses", worker)
+
+    def _on_task_statuses_loaded(self, project_id: str, statuses: list) -> None:
+        self._status_cache[project_id or "ALL"] = list(statuses)
+        self.task_statuses_loaded.emit(project_id or "ALL", list(statuses))
+
+    def _on_task_statuses_failed(self, error: str) -> None:
+        self.report_status(f"Could not load task statuses: {error}", "red")
 
     def enrich_task(self, task_data: dict) -> ArtistTaskCardModel:
         """Compute filesystem-backed state for a single raw Kitsu task."""

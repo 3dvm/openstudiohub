@@ -77,13 +77,7 @@ class ProductionService:
             print(f"[ProductionService] Error fetching artist tasks: {error}")
             return []
 
-        status_targets = ["Todo", "Work In Progress", "Waiting For Approval", "Retake", "Ready To Start"]
-        tasks = [
-            task
-            for task in all_tasks
-            if task.get("task_status_name") in status_targets
-            or (task.get("task_status") or {}).get("name") in status_targets
-        ]
+        tasks = list(all_tasks)
 
         for task in tasks:
             entity_type = (task.get("entity_type_name") or task.get("entity_type") or "").lower()
@@ -99,6 +93,24 @@ class ProductionService:
                     print(f"[ProductionService] Warning: failed to enrich asset: {inner_error}")
 
         return tasks
+
+    def get_project_task_statuses(self, project_id: str) -> List[dict]:
+        """Task statuses available to a project (global list for ``ALL``).
+
+        Kitsu links a subset of the studio's global task statuses to each
+        production. When no specific project is selected we fall back to the
+        full global list so the artist can still filter globally.
+        """
+        try:
+            if not project_id or str(project_id).upper() == "ALL":
+                return self.kitsu.all_task_statuses()
+            project = self.kitsu.get_project(project_id)
+            if not project:
+                return []
+            return self.kitsu.all_task_statuses_for_project(project)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching task statuses: {error}")
+            return []
 
     def list_all_projects(self) -> List[dict]:
         """Return all projects (open + closed) for the project grid."""

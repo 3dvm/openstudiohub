@@ -35,6 +35,25 @@ class FetchArtistTasksWorker(ManagedWorker):
             self.error_occurred.emit(str(error))
 
 
+class FetchTaskStatusesWorker(ManagedWorker):
+    """Fetches the task statuses available to a Kitsu project off the UI thread."""
+
+    statuses_ready = Signal(str, list)  # (project_id, list[dict])
+    error_occurred = Signal(str)
+
+    def __init__(self, production_service: ProductionService, project_id: str) -> None:
+        super().__init__()
+        self.production_service = production_service
+        self.project_id = project_id
+
+    def run(self) -> None:
+        try:
+            statuses = self.production_service.get_project_task_statuses(self.project_id)
+            self.statuses_ready.emit(self.project_id, statuses)
+        except Exception as error:  # noqa: BLE001
+            self.error_occurred.emit(str(error))
+
+
 class FetchTaskLockStatesWorker(ManagedWorker):
     """Reads the VCS lock owner for each task's linked file off the UI thread."""
 

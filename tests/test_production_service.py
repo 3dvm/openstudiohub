@@ -23,23 +23,58 @@ class FakeKitsu:
     def get_asset_type(self, asset_type_id):
         return {"id": "at1", "name": "Character"}
 
+    def all_task_statuses(self):
+        return [{"id": "s1", "name": "Todo"}, {"id": "s2", "name": "Done"}]
+
+    def get_project(self, project_id):
+        return {"id": project_id, "name": "Neon"}
+
+    def all_task_statuses_for_project(self, project):
+        return [{"id": "s1", "name": "Todo"}]
+
 
 def test_list_open_projects():
     svc = ProductionService(FakeKitsu())
     assert svc.list_open_projects()[0]["name"] == "Neon"
 
 
-def test_get_artist_task_board_filters_and_enriches():
+def test_get_artist_task_board_enriches_without_status_filter():
     svc = ProductionService(FakeKitsu())
     tasks = svc.get_artist_task_board()
 
-    # "Done" task is filtered out.
-    assert len(tasks) == 2
-    assert {t["id"] for t in tasks} == {"t1", "t2"}
+    # No status is filtered out, including "Done".
+    assert len(tasks) == 3
+    assert {t["id"] for t in tasks} == {"t1", "t2", "t3"}
 
     asset_task = next(t for t in tasks if t["id"] == "t2")
     assert asset_task["asset_type_id"] == "at1"
     assert asset_task["asset_type_name"] == "Character"
+
+
+def test_get_project_task_statuses_uses_project_when_selected():
+    svc = ProductionService(FakeKitsu())
+
+    statuses = svc.get_project_task_statuses("p1")
+
+    assert statuses == [{"id": "s1", "name": "Todo"}]
+
+
+def test_get_project_task_statuses_uses_global_for_all():
+    svc = ProductionService(FakeKitsu())
+
+    statuses = svc.get_project_task_statuses("ALL")
+
+    assert [s["name"] for s in statuses] == ["Todo", "Done"]
+
+
+def test_get_project_task_statuses_returns_empty_on_error():
+    class BrokenKitsu(FakeKitsu):
+        def all_task_statuses(self):
+            raise RuntimeError("boom")
+
+    svc = ProductionService(BrokenKitsu())
+
+    assert svc.get_project_task_statuses("ALL") == []
 
 
 def test_audit_assets_renames_dirty_names(tmp_path):

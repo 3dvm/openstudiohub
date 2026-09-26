@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.application.services.auth_service import AuthService
-from src.interfaces.qt.components.task_card import TaskCard
+from src.interfaces.qt.components.task_card import TaskCard, resolve_task_status
 from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
@@ -70,6 +70,7 @@ class ViewArtist(BaseDashboardView):
         self.vm.vcs_publish_finished.connect(self._on_vcs_publish_finished)
         self.vm.vcs_update_finished.connect(self._on_vcs_update_finished)
         self.vm.task_locks_ready.connect(self._on_task_locks_ready)
+        self.vm.task_statuses_loaded.connect(self._on_task_statuses_loaded)
         self.vm.load_tasks()
 
     def _build_content(self) -> None:
@@ -88,7 +89,13 @@ class ViewArtist(BaseDashboardView):
         self.combo_projects = QComboBox()
         self.combo_projects.setObjectName("StandardComboBox")
         self.combo_projects.setFixedSize(250, 35)
-        self.combo_projects.currentIndexChanged.connect(self._apply_project_filter)
+        self.combo_projects.currentIndexChanged.connect(self._on_project_changed)
+
+        self.combo_status = QComboBox()
+        self.combo_status.setObjectName("StandardComboBox")
+        self.combo_status.setFixedSize(180, 35)
+        self.combo_status.addItem(self.tr("All Statuses"), "ALL")
+        self.combo_status.currentIndexChanged.connect(self._apply_filters)
 
         self.btn_refresh = QPushButton(self.tr("⟳ Refresh"))
         self.btn_refresh.setObjectName("SecondaryButton")
@@ -113,6 +120,8 @@ class ViewArtist(BaseDashboardView):
         header_layout.addWidget(self.btn_update_vcs)
         header_layout.addWidget(QLabel(self.tr("Project:")))
         header_layout.addWidget(self.combo_projects)
+        header_layout.addWidget(QLabel(self.tr("Status:")))
+        header_layout.addWidget(self.combo_status)
 
         layout_tasks.addLayout(header_layout)
 
@@ -245,17 +254,45 @@ class ViewArtist(BaseDashboardView):
         index = self.combo_projects.findData(previous_selection) if previous_selection else -1
         self.combo_projects.setCurrentIndex(index if index >= 0 else 0)
         self.combo_projects.blockSignals(False)
-        self._apply_project_filter()
+        self._apply_filters()
+        self.vm.load_task_statuses(self.combo_projects.currentData() or "ALL")
 
-    def _apply_project_filter(self, index: int = 0) -> None:
+    def _on_project_changed(self, _index: int = 0) -> None:
+        self._apply_filters()
+        self.vm.load_task_statuses(self.combo_projects.currentData() or "ALL")
+
+    def _on_task_statuses_loaded(self, project_id: str, statuses: list) -> None:
+        # Ignore responses for a project the artist has already navigated away from.
+        if (self.combo_projects.currentData() or "ALL") != project_id:
+            return
+
+        previous_selection = self.combo_status.currentData()
+        self.combo_status.blockSignals(True)
+        self.combo_status.clear()
+        self.combo_status.addItem(self.tr("All Statuses"), "ALL")
+        for status in statuses:
+            name = status.get("name")
+            if name:
+                self.combo_status.addItem(name, name)
+
+        index = self.combo_status.findData(previous_selection) if previous_selection else -1
+        self.combo_status.setCurrentIndex(index if index >= 0 else 0)
+        self.combo_status.blockSignals(False)
+        self._apply_filters()
+
+    def _apply_filters(self, index: int = 0) -> None:
         self._clear_grid()
 
         selected_project_id = self.combo_projects.currentData()
+        selected_status = self.combo_status.currentData()
 
-        if selected_project_id == "ALL":
-            filtered_cards = self._cards
-        else:
-            filtered_cards = [c for c in self._cards if c.project_id == selected_project_id]
+        filtered_cards = self._cards
+        if selected_project_id != "ALL":
+            filtered_cards = [c for c in filtered_cards if c.project_id == selected_project_id]
+        if selected_status and selected_status != "ALL":
+            filtered_cards = [
+                c for c in filtered_cards if resolve_task_status(c.task_data)[0] == selected_status
+            ]
 
         for card in filtered_cards:
             task_card = TaskCard(

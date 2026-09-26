@@ -79,6 +79,30 @@ class ThumbnailWorker(ManagedWorker):
             self.error_occurred.emit("Network connection error")
 
 
+def resolve_task_status(task_data: dict) -> tuple[str, str]:
+    """Resolve a task's display status name and colour.
+
+    Kitsu returns the status nested as ``task_status: {name, color}`` for tasks
+    fetched via gazu, while some payloads carry flat ``task_status_name`` /
+    ``task_status_color`` keys. Prefer the nested shape, then the flat one.
+    """
+    status_data = task_data.get("task_status") or {}
+    name = (
+        status_data.get("name")
+        or task_data.get("task_status_name")
+        or task_data.get("status_name")
+        or task_data.get("status")
+        or "TODO"
+    )
+    color = (
+        status_data.get("color")
+        or task_data.get("task_status_color")
+        or task_data.get("status_color")
+        or "#444444"
+    )
+    return str(name), str(color)
+
+
 class TaskCard(QFrame):
     def __init__(
         self,
@@ -149,8 +173,7 @@ class TaskCard(QFrame):
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
 
-        status_color = self.task_data.get("task_status_color", self.task_data.get("status_color", "#444444"))
-        status_name = self.task_data.get("task_status_name", self.task_data.get("status_name", "TODO"))
+        status_name, status_color = resolve_task_status(self.task_data)
         text_color_contrast = self._get_contrast_text_color(status_color)
 
         self.status_badge = QLabel(status_name.upper())
