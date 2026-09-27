@@ -76,13 +76,15 @@ class WatchtowerLauncher(QObject):
             f"KITSU_DATA_SOURCE_USER_PASSWORD={self.kitsu_pwd}\n"
         )
 
-        # 3. Ejecutar el compilador (watchtower_pipeline.kitsu -b)
+        # 3. Ejecutar el compilador a través del shim que corrige el parser de
+        #    dotenv de watchtower_pipeline (valores con '=' rompen el upstream).
+        runner = Path(__file__).resolve().parent / "watchtower_runner.py"
         try:
             fd = os.open(env_file_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 handle.write(env_content)
 
-            cmd = [sys.executable, "-m", "watchtower_pipeline.kitsu", "-b"]
+            cmd = [sys.executable, str(runner), "-b"]
             # Redirigimos el CWD al directorio temporal
             result = subprocess.run(cmd, cwd=str(wt_dir), capture_output=True, text=True)
 

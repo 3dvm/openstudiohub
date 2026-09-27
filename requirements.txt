@@ -13,3 +13,6 @@ requests>=2.31
 
 # Optional: HTTP Range streaming required for Watchtower video playback
 RangeHTTPServer>=1.4
+
+# Watchtower production dashboard data extraction / static bundler
+watchtower-pipeline>=0.1.7
