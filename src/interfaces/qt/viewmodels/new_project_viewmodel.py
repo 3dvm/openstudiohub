@@ -45,14 +45,20 @@ class NewProjectViewModel(BaseViewModel):
         status_sink: StatusSink | None = None,
         credential_vault: CredentialVault | None = None,
         vcs_prompt: VcsPrompt | None = None,
+        project_creation_service: ProjectCreationService | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.config_factory = config_factory
         self.production_service = production_service
-        self.project_creation_service = ProjectCreationService(config_factory)
-        self.vault_data = vault_service.load_inventory()
         self.credential_vault = credential_vault
+        # Reuse the composition root's wired service so the creation saga shares
+        # the RAM credential vault (otherwise the SSH passphrase never reaches
+        # the runner and encrypted keys fail with "Permission denied (publickey)").
+        self.project_creation_service = project_creation_service or ProjectCreationService(
+            config_factory, credential_vault=credential_vault
+        )
+        self.vault_data = vault_service.load_inventory()
         self.vcs_prompt = vcs_prompt
 
         self.workers = WorkerManager(self)

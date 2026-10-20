@@ -580,7 +580,9 @@ class VCSMigrationService:
     # ------------------------------------------------------------------
     # Connectivity tests (Infrastructure panel)
     # ------------------------------------------------------------------
-    def test_remote_connection(self, server: Optional[VCSServer] = None) -> Tuple[bool, str]:
+    def test_remote_connection(
+        self, server: Optional[VCSServer] = None, verbose: bool = False
+    ) -> Tuple[bool, str]:
         """Open an SSH session and confirm the SVN admin tools are available."""
         server = server or self._server()
         if server is None or server.profile.mode == LOCAL_DOCKER:
@@ -589,19 +591,25 @@ class VCSMigrationService:
         if not remote.is_configured:
             return False, "Remote server host, SSH user or container is not configured."
 
-        runner = SshRunner(remote, passphrase_provider=self._passphrase_provider(server))
+        runner = SshRunner(
+            remote,
+            passphrase_provider=self._passphrase_provider(server),
+            verbose=verbose,
+        )
         inner = "svnadmin --version > /dev/null && echo OPENSTUDIO_OK"
         try:
             result = runner.run(self._remote_docker_inner(server, inner), check=False)
         except Exception as error:  # noqa: BLE001
-            return False, f"SSH connection failed: {error}"
+            log_hint = f" Full diagnostics: {runner.diagnostics.log_path}" if runner.diagnostics.log_path else ""
+            return False, f"SSH connection failed: {error}.{log_hint}"
 
         if result.returncode == 0:
             return True, f"SSH connection to {remote.host} succeeded."
         stderr = result.stderr or b""
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", "replace")
-        return False, f"SSH connection failed: {stderr.strip() or result.returncode}"
+        log_hint = f" Full diagnostics: {runner.diagnostics.log_path}" if runner.diagnostics.log_path else ""
+        return False, f"SSH connection failed: {stderr.strip() or result.returncode}.{log_hint}"
 
     def test_remote_svn(self, server: Optional[VCSServer] = None) -> Tuple[bool, str]:
         """Probe the SVN endpoint of a server before provisioning."""

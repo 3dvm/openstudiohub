@@ -8,6 +8,8 @@ owner still holds a Python reference, making ``active_workers()`` raise
 from pathlib import Path
 from types import SimpleNamespace
 
+from src.application.credential_vault import CredentialVault
+from src.application.services.project_creation_service import ProjectCreationService
 from src.domain.workspace.topography import WorkspaceTopography
 from src.interfaces.qt.viewmodels.new_project_viewmodel import NewProjectViewModel
 from src.interfaces.qt.workers.worker_manager import WorkerManager
@@ -75,6 +77,44 @@ def test_manager_finished_clears_reference_and_deletes():
 
     assert manager.get("k") is None
     assert worker.deleted is True
+
+
+def _make_vm_with_vault(vault: CredentialVault):
+    stub = SimpleNamespace(load_inventory=lambda: {})
+    return NewProjectViewModel(
+        _FakeConfig(), production_service=None, vault_service=stub, credential_vault=vault
+    )
+
+
+def test_default_creation_service_shares_credential_vault():
+    vault = CredentialVault()
+    vm = _make_vm_with_vault(vault)
+
+    assert vm.project_creation_service.credential_vault is vault
+
+
+def test_passphrase_provider_reads_shared_vault():
+    vault = CredentialVault()
+    vault.save_ssh_passphrase("default", "topsecret")
+    vm = _make_vm_with_vault(vault)
+
+    provider = vm.project_creation_service._ssh_passphrase_provider(
+        server=SimpleNamespace(id="default")
+    )
+
+    assert provider() == "topsecret"
+
+
+def test_injected_creation_service_is_reused():
+    service = ProjectCreationService(_FakeConfig(), credential_vault=CredentialVault())
+    vm = NewProjectViewModel(
+        _FakeConfig(),
+        production_service=None,
+        vault_service=SimpleNamespace(load_inventory=lambda: {}),
+        project_creation_service=service,
+    )
+
+    assert vm.project_creation_service is service
 
 
 def test_manager_skips_when_worker_already_running():

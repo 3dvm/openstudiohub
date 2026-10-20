@@ -334,6 +334,7 @@ class OpenStudioHub(QMainWindow):
             self.ctx.vault_service,
             credential_vault=self.ctx.credential_vault,
             vcs_prompt=self._prompt_vcs_credentials,
+            project_creation_service=self.ctx.project_creation_service,
         )
         dialog = NewProjectDialog(self, vm, on_success_callback=self._on_project_created)
         # Keep a strong Python reference so the dialog (and its ViewModel's

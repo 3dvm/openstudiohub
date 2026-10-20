@@ -264,6 +264,14 @@ class InfrastructureWidget(QFrame):
         btn_test_svn.clicked.connect(lambda: self._test_server("svn"))
         buttons.addWidget(btn_test_svn)
 
+        self.chk_verbose_ssh = QCheckBox(self.tr("Verbose (ssh -v)"))
+        self.chk_verbose_ssh.setStyleSheet("color: #94A3B8; border: none;")
+        self.chk_verbose_ssh.setToolTip(self.tr(
+            "Run the SSH test with '-v' and write full diagnostics to "
+            "~/.openstudio/logs."
+        ))
+        buttons.addWidget(self.chk_verbose_ssh)
+
         c_layout.addLayout(buttons)
 
         self._reload_servers()
@@ -448,7 +456,8 @@ class InfrastructureWidget(QFrame):
         if not server_id:
             QMessageBox.information(self, self.tr("Test Server"), self.tr("Save the server before testing it."))
             return
-        self.vm.test_server(server_id, target)
+        verbose = target == "ssh" and self.chk_verbose_ssh.isChecked()
+        self.vm.test_server(server_id, target, verbose=verbose)
 
 
     def _build_kitsu_service_card(self) -> QFrame:

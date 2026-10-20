@@ -39,6 +39,19 @@ For `remote_ssh` you provide: the SSH host/port/user, the private key (and optio
 
 **Credentials are per server.** The Session Credentials tab (and the just-in-time prompt before a VCS action) pick the target server from a dropdown and store the VCS username/password and, for remote servers, the SSH key passphrase in RAM for the session only. Nothing is written to disk.
 
+### Troubleshooting remote SSH
+
+All remote server administration (`ssh`, `scp` and the server-side `docker exec` provisioning) writes an always-on diagnostic log to `~/.openstudio/logs/ssh_<host>.log`. Each attempt records:
+
+* the masked command line (host, port, user, key, certificate, known_hosts and container);
+* pre-flight facts about the private key (present/missing, encrypted or not, permission warnings);
+* whether a passphrase was available;
+* the full `ssh` stderr and exit code.
+
+The passphrase is never written to the log; only whether one was present. To capture OpenSSH's own negotiation trace (which key was offered, whether the server accepted it, agent/certificate details), tick **Verbose (ssh -v)** next to **Test SSH** in the Infrastructure panel before running the test.
+
+A `Permission denied (publickey)` message means the server rejected the offered key: the public key is not in the target account's `authorized_keys`, the SSH user/host is wrong, the key file is not readable, or the key is encrypted and no passphrase was supplied. The log and the `-v` trace show exactly which key was offered so you can fix the server-side account instead of guessing. If the key is encrypted and no passphrase is available, the Hub falls back to `BatchMode=yes`, so OpenSSH cannot decrypt the key and public-key authentication fails.
+
 New projects pick their server in the creation dialog; the binding is recorded as `vcs_server_id` in the project's `project_init.json`, so a studio can run some projects on the local sandbox and others on a VPS at the same time.
 
 Each repository created on the remote server gets a `conf/svnserve.conf` that points at the global passwd by **absolute path**, e.g.:

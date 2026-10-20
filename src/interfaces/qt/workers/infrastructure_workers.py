@@ -51,16 +51,19 @@ class RemoteServerTestWorker(ManagedWorker):
 
     finished_signal = Signal(bool, str)
 
-    def __init__(self, migration_service, target: str, server=None) -> None:
+    def __init__(self, migration_service, target: str, server=None, verbose: bool = False) -> None:
         super().__init__()
         self.migration_service = migration_service
         self.target = target
         self.server = server
+        self.verbose = verbose
 
     def run(self) -> None:
         try:
             if self.target == "ssh":
-                ok, message = self.migration_service.test_remote_connection(self.server)
+                ok, message = self.migration_service.test_remote_connection(
+                    self.server, verbose=self.verbose
+                )
             else:
                 ok, message = self.migration_service.test_remote_svn(self.server)
         except Exception as error:  # noqa: BLE001

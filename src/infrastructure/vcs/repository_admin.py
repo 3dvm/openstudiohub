@@ -185,7 +185,9 @@ class RemoteSSHRepositoryAdmin(RepositoryAdmin):
         stderr = result.stderr or b""
         if isinstance(stderr, bytes):
             stderr = stderr.decode("utf-8", "replace")
-        raise RuntimeError(f"Remote probe failed: {stderr.strip() or result.returncode}")
+        log_path = self.runner.diagnostics.log_path
+        log_hint = f" (full diagnostics: {log_path})" if log_path else ""
+        raise RuntimeError(f"Remote probe failed: {stderr.strip() or result.returncode}{log_hint}")
 
     def _write_serve_conf(self, repo_path: str) -> None:
         """Point the repository at the studio-wide svnserve account database."""

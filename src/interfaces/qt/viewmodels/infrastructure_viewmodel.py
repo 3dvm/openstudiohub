@@ -98,7 +98,7 @@ class InfrastructureViewModel(BaseViewModel):
         self.operation_finished.emit(ok, message)
         return ok
 
-    def test_server(self, server_id: str, target: str = "ssh") -> None:
+    def test_server(self, server_id: str, target: str = "ssh", verbose: bool = False) -> None:
         if self.workers.is_running("remote_test"):
             self.report_status("A connection test is already running...", "red")
             return
@@ -117,7 +117,9 @@ class InfrastructureViewModel(BaseViewModel):
             if passphrase:
                 self.credential_vault.save_ssh_passphrase(server_id, passphrase)
         self.report_status(f"Testing {server.name} {target.upper()} connection...", "yellow")
-        worker = RemoteServerTestWorker(self.migration_service, target, server=server)
+        worker = RemoteServerTestWorker(
+            self.migration_service, target, server=server, verbose=verbose
+        )
         worker.finished_signal.connect(self._on_worker_finished)
         self.workers.start("remote_test", worker)
 
