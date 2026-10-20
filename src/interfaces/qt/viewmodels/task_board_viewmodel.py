@@ -11,6 +11,7 @@ from typing import List, Optional
 from PySide6.QtCore import Signal
 
 from src.domain.production.comments import (
+    checklist_progress,
     newest_comment_timestamp,
     to_iso,
     unread_comment_count,
@@ -209,9 +210,17 @@ class TaskBoardViewModel(BaseViewModel):
                 unread = 0
             else:
                 unread = unread_comment_count(task_comments, user_id, last_seen)
+            done, checklist_total = checklist_progress(task_comments)
             task["_comment_count"] = len(task_comments)
             task["_unread_count"] = unread
-            counts[task_id] = {"total": len(task_comments), "unread": unread}
+            task["_checklist_done"] = done
+            task["_checklist_total"] = checklist_total
+            counts[task_id] = {
+                "total": len(task_comments),
+                "unread": unread,
+                "checklist_done": done,
+                "checklist_total": checklist_total,
+            }
 
         self.comment_counts_ready.emit(counts)
 

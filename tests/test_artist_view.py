@@ -40,6 +40,7 @@ class FakeComments(QObject):
     comments_loaded = Signal(str, list)
     comments_failed = Signal(str)
     comment_posted = Signal(str, bool, str)
+    checklist_updating = Signal(bool)
     seen_updated = Signal(str)
 
     def load(self, *_args, **_kwargs):
@@ -49,6 +50,9 @@ class FakeComments(QObject):
         pass
 
     def mark_seen(self, *_args, **_kwargs):
+        pass
+
+    def toggle_checklist(self, *_args, **_kwargs):
         pass
 
 

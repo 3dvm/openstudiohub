@@ -13,7 +13,7 @@ Once logged in, you will see your main dashboard (`ViewArtist`).
 
 * **Your Projects:** The dashboard opens on **My Projects**, showing only the productions where you have assigned tasks. Each card displays the project thumbnail and how many tasks you own there.
 * **Your Tasks:** Click a project card (or its **Open Tasks** button) to jump to **My Tasks** scoped to that project. The task cards show status, thumbnail, a VCS lock badge when relevant, and a comment badge.
-* **Comments:** The comment badge (`💬 N`) is always visible and turns orange when there are new comments. Click it to open the right-side comments drawer, read the thread and reply. See [Managing Feedback & Notes](feedback-and-notes.md).
+* **Comments:** The comment badge (`💬 N`) shows the total number of comments and turns orange when there are new ones. Click it to open the right-side comments drawer, read the thread, reply and tick checklist items. A second `☑ x/y` badge shows the checklist progress. See [Managing Feedback & Notes](feedback-and-notes.md).
 * **Dynamic Syncing:** If your supervisor assigns you a new task or writes a comment while the Hub is open, click the "↻ Refresh" button to fetch the latest assignments and comment badges.
 
 ## 3. Your Workspace

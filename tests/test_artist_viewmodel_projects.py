@@ -107,6 +107,16 @@ def test_comment_summary_baselines_unseen_tasks_and_counts_new(qapp, tmp_path):
         }
     )
 
-    assert captured["t1"] == {"total": 1, "unread": 1}
-    assert captured["t2"] == {"total": 1, "unread": 0}
+    assert captured["t1"] == {
+        "total": 1,
+        "unread": 1,
+        "checklist_done": 0,
+        "checklist_total": 0,
+    }
+    assert captured["t2"] == {
+        "total": 1,
+        "unread": 0,
+        "checklist_done": 0,
+        "checklist_total": 0,
+    }
     assert store.get_last_seen("me", "t2") == "2026-10-20T09:00:00+00:00"

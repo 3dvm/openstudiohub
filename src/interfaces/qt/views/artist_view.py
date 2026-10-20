@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.application.services.auth_service import AuthService
+from src.domain.production.comments import checklist_progress
 from src.interfaces.qt.components.comment_panel import CommentPanel
 from src.interfaces.qt.components.project_card import ProjectCard
 from src.interfaces.qt.components.task_card import TaskCard, resolve_task_status
@@ -472,6 +473,8 @@ class ViewArtist(BaseDashboardView):
                 on_update_callback=lambda c=card: self.vm.check_vcs_changes(c),
                 comment_count=card.comment_count,
                 unread_count=card.unread_count,
+                checklist_done=card.checklist_done,
+                checklist_total=card.checklist_total,
                 on_comments_callback=lambda c=card: self._open_comments(c),
             )
             task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
@@ -575,9 +578,11 @@ class ViewArtist(BaseDashboardView):
     def _connect_comments(self) -> None:
         self.comment_panel.close_requested.connect(self._close_comments)
         self.comment_panel.send_requested.connect(self._send_comment)
+        self.comment_panel.checklist_toggled.connect(self.vm.comments.toggle_checklist)
         self.vm.comments.comments_loaded.connect(self._on_comments_loaded)
         self.vm.comments.comments_failed.connect(lambda error: self.comment_panel.set_error(error))
         self.vm.comments.comment_posted.connect(self._on_comment_posted)
+        self.vm.comments.checklist_updating.connect(self.comment_panel.set_checklist_enabled)
         self.vm.comments.seen_updated.connect(self._on_seen_updated)
 
     def _open_comments(self, card) -> None:
@@ -623,6 +628,18 @@ class ViewArtist(BaseDashboardView):
             return
         self.comment_panel.set_comments(comments)
         self.comment_panel.set_posting(False)
+        done, total = checklist_progress(comments)
+        self._update_checklist_progress(task_id, done, total)
+
+    def _update_checklist_progress(self, task_id: str, done: int, total: int) -> None:
+        widget = self._task_cards_by_id.get(str(task_id))
+        if widget is not None:
+            widget.set_checklist_progress(done, total)
+        for card in self._cards:
+            if str(card.task_data.get("id", "")) == str(task_id):
+                card.checklist_done = done
+                card.checklist_total = total
+                break
 
     def _on_comment_posted(self, task_id: str, success: bool, message: str) -> None:
         self.comment_panel.set_posting(False)
@@ -636,13 +653,21 @@ class ViewArtist(BaseDashboardView):
             widget = self._task_cards_by_id.get(str(task_id))
             if widget is not None:
                 widget.set_comment_counts(
-                    payload.get("total", 0), payload.get("unread", 0)
+                    payload.get("total", 0),
+                    payload.get("unread", 0),
+                    payload.get("checklist_done", 0),
+                    payload.get("checklist_total", 0),
                 )
 
     def _on_seen_updated(self, task_id: str) -> None:
         widget = self._task_cards_by_id.get(str(task_id))
         if widget is not None:
-            widget.set_comment_counts(widget.comment_count, 0)
+            widget.set_comment_counts(
+                widget.comment_count,
+                0,
+                widget.checklist_done,
+                widget.checklist_total,
+            )
         for card in self._cards:
             if str(card.task_data.get("id", "")) == str(task_id):
                 card.unread_count = 0

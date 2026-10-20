@@ -11,6 +11,7 @@ through ``parent_id`` (older exports used other names). The helpers here are
 pure functions so both the artist and the PM/TD task boards share one policy.
 """
 
+import json
 from datetime import datetime, timezone
 from typing import Iterable, List, Optional
 
@@ -89,6 +90,60 @@ def newest_comment_timestamp(comments: Iterable[dict]) -> Optional[datetime]:
     dates = [comment_created_at(comment) for comment in comments or []]
     dates = [date for date in dates if date is not None]
     return max(dates) if dates else None
+
+
+def normalize_checklist(value) -> List[dict]:
+    """Normalize a Kitsu checklist to ``[{"text", "checked", ...}]``.
+
+    Kitsu stores the checklist as JSONB but some payloads (and older exports)
+    serialize it as a JSON string; hand-made payloads may also use a mapping.
+    Extra keys are preserved so a later update does not drop server metadata.
+    """
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value) if value.strip() else []
+        except ValueError:
+            return []
+    if isinstance(value, dict):
+        if isinstance(value.get("items"), list):
+            value = value["items"]
+        elif all(isinstance(item, str) for item in value.values()):
+            value = [{"text": text, "checked": False} for text in value.values()]
+        elif "text" in value:
+            value = [value]
+        else:
+            return []
+    if not isinstance(value, list):
+        return []
+
+    normalized: List[dict] = []
+    for entry in value:
+        if isinstance(entry, str):
+            normalized.append({"text": entry, "checked": False})
+            continue
+        if not isinstance(entry, dict):
+            continue
+        item = dict(entry)
+        item["text"] = str(item.get("text") or item.get("label") or item.get("name") or "")
+        item["checked"] = bool(item.get("checked"))
+        normalized.append(item)
+    return normalized
+
+
+def checklist_progress(comments: Iterable[dict]) -> tuple[int, int]:
+    """Return ``(checked, total)`` across every checklist in ``comments``."""
+    checked = total = 0
+    for comment in comments or []:
+        value = comment.get("checklist")
+        if not value:
+            value = comment.get("_checklist")
+        for item in normalize_checklist(value):
+            total += 1
+            if item["checked"]:
+                checked += 1
+    return checked, total
 
 
 def unread_comment_count(

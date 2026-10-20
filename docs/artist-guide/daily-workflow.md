@@ -11,7 +11,9 @@ Before you start a task, select the project in the **My Tasks** toolbar and clic
 * **Availability:** The button is enabled only when a specific project that uses version control is selected. Projects stored on the NAS only are not affected.
 
 ## 1. Review Feedback, then Start your Task
-Before launching, check the task's comment badge (`💬 N`). If it is highlighted in orange there are new comments from your supervisor or teammates. Click it to open the right-side comments drawer, read the thread and reply without leaving the Hub.
+Before launching, check the task's comment badge (`💬 N`, where `N` is the total number of comments). If it is highlighted in orange there are new comments from your supervisor or teammates. Click it to open the right-side comments drawer, read the thread and reply without leaving the Hub.
+
+If the comment includes a checklist, tick the items you have finished. The task card's `☑ x/y` badge keeps track of the aggregated progress. Checking a checklist item does not change the task status.
 
 When the task is ready, click the **Launch Project** button.
 

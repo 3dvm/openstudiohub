@@ -10,12 +10,17 @@ from typing import List, Optional
 
 from PySide6.QtCore import Signal
 
-from src.domain.production.comments import comment_created_at, sort_comments
+from src.domain.production.comments import (
+    comment_created_at,
+    normalize_checklist,
+    sort_comments,
+)
 from src.infrastructure.comment_read_store import CommentReadStore
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.comment_workers import (
     FetchTaskCommentsWorker,
     PostTaskCommentWorker,
+    UpdateCommentChecklistWorker,
 )
 from src.interfaces.qt.workers.worker_manager import WorkerManager
 
@@ -24,6 +29,7 @@ class TaskCommentsViewModel(BaseViewModel):
     comments_loaded = Signal(str, list)  # (task_id, decorated comments)
     comments_failed = Signal(str)
     comment_posted = Signal(str, bool, str)  # (task_id, ok, message)
+    checklist_updating = Signal(bool)
     seen_updated = Signal(str)  # task_id (clear its badge)
 
     def __init__(
@@ -45,6 +51,7 @@ class TaskCommentsViewModel(BaseViewModel):
         self._mark_seen_on_load = False
         self._person_map = None
         self._pending_load = None
+        self._checklist_revert = None
 
     # ------------------------------------------------------------------
     # Queries
@@ -96,6 +103,10 @@ class TaskCommentsViewModel(BaseViewModel):
             item["_created"] = self._created_label(item)
             status = item.get("task_status")
             item["_status"] = status.get("name", "") if isinstance(status, dict) else ""
+            checklist = normalize_checklist(item.get("checklist"))
+            item["_checklist"] = checklist
+            item["_checklist_done"] = sum(1 for entry in checklist if entry["checked"])
+            item["_checklist_total"] = len(checklist)
             decorated.append(item)
         return decorated
 
@@ -108,6 +119,7 @@ class TaskCommentsViewModel(BaseViewModel):
         self._task = task
         self._task_id = str(task.get("id", "") or "")
         self._mark_seen_on_load = mark_seen
+        self.checklist_updating.emit(False)
 
         if self.workers.is_running("comments_fetch"):
             self._pending_load = (task, mark_seen)
@@ -132,6 +144,8 @@ class TaskCommentsViewModel(BaseViewModel):
         if task_id != self._task_id:
             return
         self._comments = sort_comments(comments)
+        for comment in self._comments:
+            comment["checklist"] = normalize_checklist(comment.get("checklist"))
         self.comments_loaded.emit(task_id, self._decorate(self._comments))
         if self._mark_seen_on_load:
             self._mark_seen_on_load = False
@@ -154,6 +168,65 @@ class TaskCommentsViewModel(BaseViewModel):
         except Exception:  # noqa: BLE001 - seen state must never break the UI
             return
         self.seen_updated.emit(task_id)
+
+    def _find_comment(self, comment_id: str):
+        for comment in self._comments:
+            if str(comment.get("id", "")) == str(comment_id):
+                return comment
+        return None
+
+    def _emit_comments(self) -> None:
+        self.comments_loaded.emit(self._task_id, self._decorate(self._comments))
+
+    def toggle_checklist(self, comment_id: str, index: int, checked: bool) -> None:
+        if self.production_service is None:
+            return
+        if self.workers.is_running("comment_update"):
+            return
+        comment = self._find_comment(comment_id)
+        if comment is None:
+            return
+
+        checklist = normalize_checklist(comment.get("checklist"))
+        if index < 0 or index >= len(checklist):
+            return
+        original = [dict(item) for item in checklist]
+        checklist[index]["checked"] = bool(checked)
+        comment["checklist"] = checklist
+        self._checklist_revert = (str(comment_id), original)
+        self._emit_comments()
+        self.checklist_updating.emit(True)
+
+        worker = UpdateCommentChecklistWorker(
+            self.production_service, str(comment_id), checklist
+        )
+        worker.finished_update.connect(self._on_checklist_updated)
+        self.workers.start("comment_update", worker)
+        self.report_status("Updating checklist...", "yellow")
+
+    def _on_checklist_updated(
+        self, comment_id: str, success: bool, message: str, updated
+    ) -> None:
+        self.checklist_updating.emit(False)
+        comment = self._find_comment(comment_id)
+        revert = self._checklist_revert
+        self._checklist_revert = None
+
+        if success:
+            if comment is not None and isinstance(updated, dict) and "checklist" in updated:
+                comment["checklist"] = normalize_checklist(updated.get("checklist"))
+            self._emit_comments()
+            self.report_status("Checklist updated.", "green")
+            return
+
+        if (
+            comment is not None
+            and revert is not None
+            and str(revert[0]) == str(comment_id)
+        ):
+            comment["checklist"] = [dict(item) for item in revert[1]]
+        self._emit_comments()
+        self.report_status(f"Checklist update failed: {message}", "red")
 
     def post(self, text: str, status_ref=None) -> None:
         text = (text or "").strip()

@@ -121,6 +121,8 @@ class TaskCard(QFrame):
         on_update_callback=None,
         comment_count: int = 0,
         unread_count: int = 0,
+        checklist_done: int = 0,
+        checklist_total: int = 0,
         on_comments_callback=None,
         **kwargs,
     ) -> None:
@@ -140,6 +142,8 @@ class TaskCard(QFrame):
         self.on_update_callback = on_update_callback
         self.comment_count = max(0, int(comment_count or 0))
         self.unread_count = max(0, int(unread_count or 0))
+        self.checklist_done = max(0, int(checklist_done or 0))
+        self.checklist_total = max(0, int(checklist_total or 0))
         self.on_comments_callback = on_comments_callback
 
         self.setObjectName("FloatingCard")
@@ -277,6 +281,14 @@ class TaskCard(QFrame):
         thumb_overlay.addWidget(self.comment_badge, 0, 0, Qt.AlignTop | Qt.AlignLeft)
         self._render_comment_badge()
 
+        self.checklist_badge = QLabel(self.thumb_container)
+        self.checklist_badge.setAlignment(Qt.AlignCenter)
+        self.checklist_badge.setFixedHeight(20)
+        thumb_overlay.addWidget(
+            self.checklist_badge, 0, 0, Qt.AlignBottom | Qt.AlignLeft
+        )
+        self._render_checklist_badge()
+
         main_layout.addWidget(self.thumb_container)
 
         btn_layout = QHBoxLayout()
@@ -395,10 +407,47 @@ class TaskCard(QFrame):
         if self.on_comments_callback is not None:
             self.on_comments_callback()
 
-    def set_comment_counts(self, total: int, unread: int) -> None:
+    def set_comment_counts(
+        self,
+        total: int,
+        unread: int,
+        checklist_done: int | None = None,
+        checklist_total: int | None = None,
+    ) -> None:
         self.comment_count = max(0, int(total or 0))
         self.unread_count = max(0, int(unread or 0))
+        if checklist_done is not None:
+            self.checklist_done = max(0, int(checklist_done or 0))
+        if checklist_total is not None:
+            self.checklist_total = max(0, int(checklist_total or 0))
         self._render_comment_badge()
+        self._render_checklist_badge()
+
+    def set_checklist_progress(self, done: int, total: int) -> None:
+        self.checklist_done = max(0, int(done or 0))
+        self.checklist_total = max(0, int(total or 0))
+        self._render_checklist_badge()
+
+    def _render_checklist_badge(self) -> None:
+        if self.checklist_total <= 0:
+            self.checklist_badge.hide()
+            return
+        completed = self.checklist_done >= self.checklist_total
+        background = "#10B981" if completed else "rgba(15, 23, 42, 0.88)"
+        foreground = "#0F172A" if completed else "#CBD5E1"
+        self.checklist_badge.setText(
+            f"☑ {self.checklist_done}/{self.checklist_total}"
+        )
+        self.checklist_badge.setStyleSheet(
+            f"background-color: {background}; color: {foreground};"
+            " border: 1px solid #334155; border-radius: 10px; padding: 0 6px;"
+            " font-size: 10px; font-weight: bold;"
+        )
+        self.checklist_badge.setToolTip(
+            self.tr(f"Checklist {self.checklist_done}/{self.checklist_total} completed")
+        )
+        self.checklist_badge.show()
+        self.checklist_badge.raise_()
 
     @staticmethod
     def _comment_icon(color: str) -> QIcon:

@@ -12,10 +12,10 @@ Click a project card (or its **Open Tasks** button) to jump to **My Tasks** scop
 
 Every task card shows a comment badge in the top-left corner of its thumbnail:
 
-* **`💬 N` in grey** — the task has `N` comments and you have already seen the latest activity.
-* **`💬 N` in orange** — there are new comments since the last time you opened this task's thread.
+* **`💬 N` in grey** — `N` is the **total** number of comments on the task (read + unread).
+* **`💬 N` in orange** — the same total, highlighted because there are new comments since the last time you opened this task's thread.
 
-The badge is always visible, so you can also use it as a quick activity indicator when scanning your tasks. Badges refresh when you load the dashboard or press **⟳ Refresh**.
+The badge is always visible, so you can also use it as a quick activity indicator when scanning your tasks. When the task has checklist items, a second badge at the bottom-left shows the aggregated progress (`☑ 2/3`). Badges refresh when you load the dashboard or press **⟳ Refresh**.
 
 ## The comments drawer
 
@@ -27,9 +27,20 @@ Click the comment badge to slide open the comments drawer on the right side of *
 
 Opening a thread marks it as seen for your Kitsu user on this machine, which clears the orange highlight. This read state is stored locally in `~/.openstudio/state/task_comments_seen.json`; Kitsu itself does not expose a per-user read flag, so a different workstation will show unread activity again.
 
+## Checklists
+
+Some comments carry a checklist (for example, "Check lighting", "Verify textures"). The drawer shows the list under the comment with a `Checklist x/y` header and one checkbox per item.
+
+* **Marking items:** tick an item to mark it as finalized in Kitsu. The change is saved immediately; it does **not** change the task status.
+* **Who can tick:** the assigned artist, managers and TDs with access to the task. Kitsu applies the final permission check.
+* **Visual feedback:** checked items are struck through. While the Hub is saving, the checkboxes are temporarily disabled; if Kitsu rejects the update, the Hub reverts the check and shows the error in the status bar.
+* **Task progress:** the task card aggregates all checklists of the task in the `☑ x/y` badge; the comment badge keeps showing the total comment count.
+
+TIP: Use **⟳ Refresh** after a teammate updates a checklist to pull their latest state.
+
 ## Working with feedback
 
-* Read the latest notes before launching a task.
+* Read the latest notes and tick the checklist items before launching a task.
 * Reply in the same thread to keep context; replies are linked to the original comment in Kitsu.
 * If a supervisor changes a comment's attachment or adds a new preview, refresh the dashboard to pull the updated thread.
 * Comment attachments are displayed as a count in this version; uploading new attachments from the Hub is not yet supported.

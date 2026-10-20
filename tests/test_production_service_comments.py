@@ -59,6 +59,10 @@ class FakeKitsu:
     def add_comment(self, task, status, comment="", **_kwargs):
         return {"id": "c2", "task_id": task["id"], "text": comment, "task_status_id": status["id"]}
 
+    def update_comment_checklist(self, comment_id, checklist):
+        self.updated_checklist = (comment_id, checklist)
+        return {"id": comment_id, "checklist": checklist}
+
     def get_task_status(self, status_id):
         return {"id": status_id, "name": "In Progress", "color": "#3B82F6"}
 
@@ -87,9 +91,14 @@ def test_apply_task_assignees_adds_and_removes():
 
 
 def test_comment_helpers_delegate_to_kitsu():
-    service = ProductionService(FakeKitsu())
+    kitsu = FakeKitsu()
+    service = ProductionService(kitsu)
 
     assert service.get_task_comments({"id": "t1"})[0]["text"] == "hi"
     assert service.get_project_comments("p1")[0]["task_id"] == "t1"
     assert service.add_task_comment({"id": "t1"}, {"id": "ts1"}, "note")["text"] == "note"
     assert service.get_task_status({"task_status_id": "ts1"})["name"] == "In Progress"
+
+    checklist = [{"text": "Check lighting", "checked": True}]
+    assert service.update_comment_checklist("c1", checklist)["checklist"] == checklist
+    assert kitsu.updated_checklist == ("c1", checklist)

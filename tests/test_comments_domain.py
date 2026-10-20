@@ -1,9 +1,11 @@
 """Unit tests for comment ordering and unread computation."""
 
 from src.domain.production.comments import (
+    checklist_progress,
     comment_author_id,
     comment_parent_id,
     newest_comment_timestamp,
+    normalize_checklist,
     parse_timestamp,
     sort_comments,
     to_iso,
@@ -62,3 +64,34 @@ def test_newest_comment_timestamp():
         _comment("b", "2026-10-20T12:00:00Z"),
     ]
     assert to_iso(newest_comment_timestamp(comments)) == "2026-10-20T12:00:00+00:00"
+
+
+def test_normalize_checklist_accepts_list_string_and_mapping():
+    expected = [
+        {"text": "Check lighting", "checked": True},
+        {"text": "Verify textures", "checked": False},
+    ]
+    value = [
+        {"text": "Check lighting", "checked": True},
+        {"text": "Verify textures", "checked": False},
+    ]
+    assert normalize_checklist(value) == expected
+    assert normalize_checklist('[{"text": "Check lighting", "checked": true}, '
+                               '{"text": "Verify textures", "checked": false}]') == expected
+    assert normalize_checklist(
+        {"item1": "Check lighting", "item2": "Verify textures"}
+    ) == [
+        {"text": "Check lighting", "checked": False},
+        {"text": "Verify textures", "checked": False},
+    ]
+    assert normalize_checklist(None) == []
+    assert normalize_checklist("not-json") == []
+
+
+def test_checklist_progress_counts_checked_items():
+    comments = [
+        {"checklist": [{"text": "a", "checked": True}, {"text": "b", "checked": False}]},
+        {"checklist": [{"text": "c", "checked": True}]},
+    ]
+    assert checklist_progress(comments) == (2, 3)
+    assert checklist_progress([]) == (0, 0)

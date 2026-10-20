@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.domain.production.comments import checklist_progress
 from src.interfaces.qt.components.assignee_dialog import AssigneeDialog
 from src.interfaces.qt.components.comment_panel import CommentPanel
 from src.interfaces.qt.components.pm_task_card import PmTaskCard, _comment_icon
@@ -48,6 +49,7 @@ class TaskBoardWidget(QFrame):
         self._thumb_labels: dict = {}
         self._thumb_cards: dict = {}
         self._comment_buttons: dict = {}
+        self._checklist_labels: dict = {}
         self._card_widgets: dict = {}
         self._current_cols = 0
         self._comment_task = None
@@ -195,9 +197,11 @@ class TaskBoardWidget(QFrame):
         self.vm.comments.comments_loaded.connect(self._on_comments_loaded)
         self.vm.comments.comments_failed.connect(lambda error: self.comment_panel.set_error(error))
         self.vm.comments.comment_posted.connect(self._on_comment_posted)
+        self.vm.comments.checklist_updating.connect(self.comment_panel.set_checklist_enabled)
         self.vm.comments.seen_updated.connect(self._on_seen_updated)
         self.comment_panel.close_requested.connect(self._close_comments)
         self.comment_panel.send_requested.connect(self._send_comment)
+        self.comment_panel.checklist_toggled.connect(self.vm.comments.toggle_checklist)
 
     # ------------------------------------------------------------------
     # Projects / tasks
@@ -290,6 +294,7 @@ class TaskBoardWidget(QFrame):
     # ------------------------------------------------------------------
     def _render_current_view(self) -> None:
         self._comment_buttons.clear()
+        self._checklist_labels.clear()
         self._card_widgets.clear()
         self._thumb_labels.clear()
         self._thumb_cards.clear()
@@ -317,12 +322,22 @@ class TaskBoardWidget(QFrame):
             self.table.setCellWidget(row, 2, self._status_cell(task))
             self.table.setCellWidget(row, 3, self._assignees_cell(task))
 
+            task_id = str(task.get("id", ""))
             button = self._comment_button(task)
-            self._comment_buttons[str(task.get("id", ""))] = button
+            self._comment_buttons[task_id] = button
             container = QWidget()
-            cell_layout = QHBoxLayout(container)
-            cell_layout.setContentsMargins(0, 0, 0, 0)
-            cell_layout.addWidget(button)
+            cell_layout = QVBoxLayout(container)
+            cell_layout.setContentsMargins(0, 2, 0, 2)
+            cell_layout.setSpacing(2)
+            cell_layout.addWidget(button, alignment=Qt.AlignHCenter)
+            checklist_label = QLabel("")
+            checklist_label.setAlignment(Qt.AlignCenter)
+            checklist_label.setStyleSheet(
+                "color: #93C5FD; font-size: 10px; font-weight: bold; border: none;"
+            )
+            self._checklist_labels[task_id] = checklist_label
+            self._render_checklist_label(checklist_label, task)
+            cell_layout.addWidget(checklist_label)
             self.table.setCellWidget(row, 4, container)
 
     def _entity_cell(self, task: dict) -> QWidget:
@@ -400,6 +415,19 @@ class TaskBoardWidget(QFrame):
         self._apply_comment_badge(button, task)
         button.clicked.connect(lambda _=False, t=task: self._open_comments(t))
         return button
+
+    def _render_checklist_label(self, label: QLabel, task: dict) -> None:
+        done = int(task.get("_checklist_done", 0) or 0)
+        total = int(task.get("_checklist_total", 0) or 0)
+        if total <= 0:
+            label.hide()
+            return
+        color = "#10B981" if done >= total else "#93C5FD"
+        label.setText(self.tr(f"☑ {done}/{total}"))
+        label.setStyleSheet(
+            f"color: {color}; font-size: 10px; font-weight: bold; border: none;"
+        )
+        label.show()
 
     def _apply_comment_badge(self, button: QToolButton, task: dict) -> None:
         total = int(task.get("_comment_count", 0) or 0)
@@ -562,6 +590,23 @@ class TaskBoardWidget(QFrame):
             return
         self.comment_panel.set_comments(comments)
         self.comment_panel.set_posting(False)
+        done, total = checklist_progress(comments)
+        self._update_checklist_progress(task_id, done, total)
+
+    def _update_checklist_progress(self, task_id: str, done: int, total: int) -> None:
+        for task in self.vm.tasks:
+            if str(task.get("id", "")) == str(task_id):
+                task["_checklist_done"] = done
+                task["_checklist_total"] = total
+                break
+        label = self._checklist_labels.get(str(task_id))
+        if label is not None:
+            self._render_checklist_label(
+                label, {"_checklist_done": done, "_checklist_total": total}
+            )
+        card = self._card_widgets.get(str(task_id))
+        if card is not None:
+            card.set_checklist_progress(done, total)
 
     def _on_comment_posted(self, task_id: str, success: bool, message: str) -> None:
         self.comment_panel.set_posting(False)
@@ -576,11 +621,18 @@ class TaskBoardWidget(QFrame):
             task = tasks.get(str(task_id))
             if task is not None:
                 self._apply_comment_badge(button, task)
+        for task_id, label in self._checklist_labels.items():
+            task = tasks.get(str(task_id))
+            if task is not None:
+                self._render_checklist_label(label, task)
         for task_id, card in self._card_widgets.items():
             task = tasks.get(str(task_id))
             if task is not None:
                 card.set_comment_counts(
                     task.get("_comment_count", 0), task.get("_unread_count", 0)
+                )
+                card.set_checklist_progress(
+                    task.get("_checklist_done", 0), task.get("_checklist_total", 0)
                 )
 
     def _on_seen_updated(self, task_id: str) -> None:

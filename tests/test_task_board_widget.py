@@ -19,6 +19,7 @@ class FakeComments(QObject):
     comments_loaded = Signal(str, list)
     comments_failed = Signal(str)
     comment_posted = Signal(str, bool, str)
+    checklist_updating = Signal(bool)
     seen_updated = Signal(str)
 
     def __init__(self):
@@ -33,6 +34,9 @@ class FakeComments(QObject):
         self.comment_posted.emit("t1", True, "ok")
 
     def mark_seen(self, *_args, **_kwargs):
+        pass
+
+    def toggle_checklist(self, *_args, **_kwargs):
         pass
 
 
@@ -92,6 +96,8 @@ def _tasks():
             "assignees": [{"id": "u1", "full_name": "Ada"}],
             "_comment_count": 2,
             "_unread_count": 1,
+            "_checklist_done": 1,
+            "_checklist_total": 2,
         },
         {
             "id": "t2",
@@ -114,7 +120,20 @@ def _board(qapp):
     vm.projects_loaded.emit([{"id": "p1", "name": "Neon"}])
     vm.tasks_loaded.emit("p1", tasks)
     vm.comment_counts_ready.emit(
-        {"t1": {"total": 2, "unread": 1}, "t2": {"total": 0, "unread": 0}}
+        {
+            "t1": {
+                "total": 2,
+                "unread": 1,
+                "checklist_done": 1,
+                "checklist_total": 2,
+            },
+            "t2": {
+                "total": 0,
+                "unread": 0,
+                "checklist_done": 0,
+                "checklist_total": 0,
+            },
+        }
     )
     return widget, vm
 
@@ -124,6 +143,7 @@ def test_table_renders_all_tasks(qapp):
 
     assert widget.table.rowCount() == 2
     assert "#F97316" in widget._comment_buttons["t1"].styleSheet()
+    assert "1/2" in widget._checklist_labels["t1"].text()
 
 
 def test_view_toggle_switches_to_cards(qapp):
@@ -133,6 +153,7 @@ def test_view_toggle_switches_to_cards(qapp):
 
     assert widget.stack.currentIndex() == 1
     assert set(widget._card_widgets) == {"t1", "t2"}
+    assert "1/2" in widget._card_widgets["t1"].lbl_checklist.text()
 
 
 def test_comment_button_opens_drawer(qapp):

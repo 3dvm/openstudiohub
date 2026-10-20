@@ -873,6 +873,17 @@ class KitsuManager:
         """Reply to an existing comment."""
         return gazu.task.reply_to_comment(task, comment, text, person=person)
 
+    def update_comment_checklist(self, comment_id: str, checklist: list) -> dict:
+        """Update only the checklist of a comment.
+
+        Kitsu denies non-author checklist updates when the body carries any key
+        other than ``checklist``/``pinned``, so we deliberately bypass
+        ``gazu.task.update_comment`` (which includes the comment ``id``).
+        """
+        return gazu.raw.put(
+            f"data/comments/{comment_id}", {"checklist": checklist}
+        )
+
     def add_attachment_files_to_comment(self, task, comment, attachments) -> dict:
         """Upload attachment file(s) onto an existing comment."""
         return gazu.task.add_attachment_files_to_comment(task, comment, attachments)

@@ -177,6 +177,10 @@ class ProductionService:
         """Post a comment; Kitsu requires the task status alongside the text."""
         return self.kitsu.add_comment(task, task_status, comment=text)
 
+    def update_comment_checklist(self, comment_id: str, checklist: list) -> dict:
+        """Persist a comment's checklist (assigned artists and managers may)."""
+        return self.kitsu.update_comment_checklist(comment_id, checklist)
+
     def get_task_status(self, task_data: dict) -> Optional[dict]:
         status = (task_data or {}).get("task_status")
         if isinstance(status, dict) and status.get("id"):

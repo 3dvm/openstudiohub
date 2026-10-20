@@ -68,8 +68,10 @@ The header includes a project selector, a search box (entity or task type), a st
 * **Table/List view** — one row per task with a 56 px thumbnail, entity, task type, status, responsibles and comment count. Best for scanning and assigning many tasks.
 * **Cards view** — a visual grid with a medium thumbnail, status badge, responsible list and comment badge.
 
-### Comments
-The comment badge (`💬 N`) turns orange when there is activity you have not seen. Click it to open the right-side comments drawer for that task, read the thread and reply. Posting a comment keeps the task's current status; this version does not include a status selector in the composer.
+### Comments and checklists
+The comment badge (`💬 N`) shows the **total** number of comments and turns orange when there is activity you have not seen. Click it to open the right-side comments drawer for that task, read the thread and reply. Posting a comment keeps the task's current status; this version does not include a status selector in the composer.
+
+Comments with a checklist render a `Checklist x/y` header and one checkbox per item. PMs, TDs with access and the assigned artist can tick items; the change is written to Kitsu and does **not** change the task status. The board aggregates the progress in the `☑ x/y` indicator for each task/row.
 
 Unread state is tracked locally per Kitsu user and machine (`~/.openstudio/state/task_comments_seen.json`), because Kitsu does not expose a per-user read flag. Press **⟳ Refresh** to pull new comments and update the badges.
 

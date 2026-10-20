@@ -67,6 +67,25 @@ class FetchProjectsCommentsWorker(ManagedWorker):
         self.data_ready.emit(payload)
 
 
+class UpdateCommentChecklistWorker(ManagedWorker):
+    finished_update = Signal(str, bool, str, object)  # (comment_id, ok, message, comment)
+
+    def __init__(self, production_service, comment_id: str, checklist: list) -> None:
+        super().__init__()
+        self.production_service = production_service
+        self.comment_id = str(comment_id or "")
+        self.checklist = list(checklist or [])
+
+    def run(self) -> None:
+        try:
+            updated = self.production_service.update_comment_checklist(
+                self.comment_id, self.checklist
+            )
+            self.finished_update.emit(self.comment_id, True, "Checklist updated.", updated)
+        except Exception as error:  # noqa: BLE001
+            self.finished_update.emit(self.comment_id, False, str(error), None)
+
+
 class PostTaskCommentWorker(ManagedWorker):
     finished_comment = Signal(str, bool, str, object)  # (task_id, ok, message, comment)
 

@@ -58,6 +58,8 @@ class PmTaskCard(QFrame):
         self._can_assign = can_assign
         self._comment_count = int(task.get("_comment_count", 0) or 0)
         self._unread_count = int(task.get("_unread_count", 0) or 0)
+        self._checklist_done = int(task.get("_checklist_done", 0) or 0)
+        self._checklist_total = int(task.get("_checklist_total", 0) or 0)
 
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 310)
@@ -127,6 +129,13 @@ class PmTaskCard(QFrame):
         project.setStyleSheet("color: #94A3B8; font-size: 11px;")
         layout.addWidget(project)
 
+        self.lbl_checklist = QLabel("")
+        self.lbl_checklist.setStyleSheet(
+            "color: #93C5FD; font-size: 11px; font-weight: bold;"
+        )
+        layout.addWidget(self.lbl_checklist)
+        self._render_checklist_progress()
+
         assignees_row = QHBoxLayout()
         self.lbl_assignees = QLabel("")
         self.lbl_assignees.setStyleSheet("color: #CBD5E1; font-size: 11px;")
@@ -187,6 +196,25 @@ class PmTaskCard(QFrame):
         self._comment_count = max(0, int(total or 0))
         self._unread_count = max(0, int(unread or 0))
         self._render_comment_badge()
+
+    def set_checklist_progress(self, done: int, total: int) -> None:
+        self._checklist_done = max(0, int(done or 0))
+        self._checklist_total = max(0, int(total or 0))
+        self._render_checklist_progress()
+
+    def _render_checklist_progress(self) -> None:
+        if self._checklist_total <= 0:
+            self.lbl_checklist.hide()
+            return
+        completed = self._checklist_done >= self._checklist_total
+        color = "#10B981" if completed else "#93C5FD"
+        self.lbl_checklist.setText(
+            f"☑ Checklist {self._checklist_done}/{self._checklist_total}"
+        )
+        self.lbl_checklist.setStyleSheet(
+            f"color: {color}; font-size: 11px; font-weight: bold;"
+        )
+        self.lbl_checklist.show()
 
     def _render_comment_badge(self) -> None:
         unread = self._unread_count > 0

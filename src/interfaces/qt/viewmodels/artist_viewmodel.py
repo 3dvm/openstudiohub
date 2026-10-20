@@ -23,6 +23,7 @@ from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.domain.production.comments import (
+    checklist_progress,
     newest_comment_timestamp,
     to_iso,
     unread_comment_count,
@@ -68,6 +69,8 @@ class ArtistTaskCardModel:
     lock_is_mine: bool = False
     comment_count: int = 0
     unread_count: int = 0
+    checklist_done: int = 0
+    checklist_total: int = 0
 
 
 class ArtistViewModel(BaseViewModel):
@@ -156,6 +159,8 @@ class ArtistViewModel(BaseViewModel):
                 card.lock_is_mine = prior.lock_is_mine
                 card.comment_count = prior.comment_count
                 card.unread_count = prior.unread_count
+                card.checklist_done = prior.checklist_done
+                card.checklist_total = prior.checklist_total
         self._cards = cards
         self.report_status(f"🟢 Synchronized: {len(tasks)} active tasks found.", "green")
         self.tasks_loaded.emit(cards)
@@ -216,7 +221,14 @@ class ArtistViewModel(BaseViewModel):
             if not comments:
                 card.comment_count = 0
                 card.unread_count = 0
-                counts[task_id] = {"total": 0, "unread": 0}
+                card.checklist_done = 0
+                card.checklist_total = 0
+                counts[task_id] = {
+                    "total": 0,
+                    "unread": 0,
+                    "checklist_done": 0,
+                    "checklist_total": 0,
+                }
                 continue
 
             last_seen = (
@@ -230,9 +242,17 @@ class ArtistViewModel(BaseViewModel):
             else:
                 unread = unread_comment_count(comments, user_id, last_seen)
 
+            checklist_done, checklist_total = checklist_progress(comments)
             card.comment_count = len(comments)
             card.unread_count = unread
-            counts[task_id] = {"total": len(comments), "unread": unread}
+            card.checklist_done = checklist_done
+            card.checklist_total = checklist_total
+            counts[task_id] = {
+                "total": len(comments),
+                "unread": unread,
+                "checklist_done": checklist_done,
+                "checklist_total": checklist_total,
+            }
 
         self.comment_counts_ready.emit(counts)
 
