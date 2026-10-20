@@ -51,6 +51,7 @@ class ProjectListWidget(QFrame):
         on_new_project_callback: Optional[Callable] = None,
         on_repair_callback: Optional[Callable] = None,
         vault_service=None,
+        on_open_tasks_callback: Optional[Callable] = None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -62,6 +63,7 @@ class ProjectListWidget(QFrame):
         self.on_new_project_callback = on_new_project_callback
         self.on_repair_callback = on_repair_callback
         self.vault_service = vault_service
+        self.on_open_tasks_callback = on_open_tasks_callback
 
         self.user_role = self.vm.user_role
 
@@ -508,6 +510,11 @@ class ProjectListWidget(QFrame):
                 on_publish=lambda name, pid=project_id: self.vm.request_project_publish(name),
                 on_reset=lambda name, pid=project_id: self._request_reset_working_copy(name),
                 on_configure=self._request_config,
+                on_open_tasks=(
+                    (lambda pid=project_id: self.on_open_tasks_callback(pid))
+                    if self.on_open_tasks_callback is not None
+                    else None
+                ),
             )
 
             self._project_widgets.append(card)

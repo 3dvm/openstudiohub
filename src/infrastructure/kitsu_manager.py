@@ -844,6 +844,10 @@ class KitsuManager:
         """Assign a task to a person."""
         return gazu.task.assign_task(task, person)
 
+    def clear_task_assignations(self, task, person=None) -> list:
+        """Remove a task's assignation(s); ``person=None`` clears them all."""
+        return gazu.task.clear_assignations(task, person=person)
+
     # ------------------------------------------------------------------
     # Comments, previews and attachments
     # ------------------------------------------------------------------

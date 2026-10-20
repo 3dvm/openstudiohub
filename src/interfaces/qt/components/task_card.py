@@ -14,7 +14,7 @@ import webbrowser
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 
 from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -118,6 +119,9 @@ class TaskCard(QFrame):
         on_install_callback,
         pending_change_count: int = 0,
         on_update_callback=None,
+        comment_count: int = 0,
+        unread_count: int = 0,
+        on_comments_callback=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -134,6 +138,9 @@ class TaskCard(QFrame):
         self.on_install_callback = on_install_callback
         self.pending_change_count = max(0, int(pending_change_count or 0))
         self.on_update_callback = on_update_callback
+        self.comment_count = max(0, int(comment_count or 0))
+        self.unread_count = max(0, int(unread_count or 0))
+        self.on_comments_callback = on_comments_callback
 
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 280)
@@ -261,6 +268,15 @@ class TaskCard(QFrame):
         self.lock_badge.hide()
         thumb_overlay.addWidget(self.lock_badge, 0, 0, Qt.AlignTop | Qt.AlignRight)
 
+        self.comment_badge = QToolButton(self.thumb_container)
+        self.comment_badge.setCursor(Qt.PointingHandCursor)
+        self.comment_badge.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.comment_badge.setIconSize(QSize(13, 13))
+        self.comment_badge.setFixedHeight(20)
+        self.comment_badge.clicked.connect(self._on_comments_clicked)
+        thumb_overlay.addWidget(self.comment_badge, 0, 0, Qt.AlignTop | Qt.AlignLeft)
+        self._render_comment_badge()
+
         main_layout.addWidget(self.thumb_container)
 
         btn_layout = QHBoxLayout()
@@ -372,10 +388,60 @@ class TaskCard(QFrame):
         self.lock_badge.show()
         self.lock_badge.raise_()
 
+    # ------------------------------------------------------------------
+    # Comment badge
+    # ------------------------------------------------------------------
+    def _on_comments_clicked(self) -> None:
+        if self.on_comments_callback is not None:
+            self.on_comments_callback()
+
+    def set_comment_counts(self, total: int, unread: int) -> None:
+        self.comment_count = max(0, int(total or 0))
+        self.unread_count = max(0, int(unread or 0))
+        self._render_comment_badge()
+
+    @staticmethod
+    def _comment_icon(color: str) -> QIcon:
+        icon_path = Path("assets/icons/comment.svg")
+        if not icon_path.exists():
+            return QIcon()
+        try:
+            pixmap = QIcon(str(icon_path)).pixmap(16, 16)
+            if pixmap.isNull():
+                return QIcon(str(icon_path))
+            painter = QPainter(pixmap)
+            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            painter.fillRect(pixmap.rect(), QColor(color))
+            painter.end()
+            return QIcon(pixmap)
+        except Exception:  # noqa: BLE001
+            return QIcon(str(icon_path))
+
+    def _render_comment_badge(self) -> None:
+        unread = self.unread_count > 0
+        color = "#FFFFFF" if unread else "#CBD5E1"
+        self.comment_badge.setText(str(self.comment_count))
+        self.comment_badge.setIcon(self._comment_icon(color))
+        if unread:
+            background, border = "#F97316", "#FB923C"
+        else:
+            background, border = "rgba(15, 23, 42, 0.88)", "#334155"
+        self.comment_badge.setStyleSheet(
+            f"QToolButton {{ background-color: {background}; color: {color};"
+            f" border: 1px solid {border}; border-radius: 10px; padding: 0 6px;"
+            " font-size: 10px; font-weight: bold; }"
+        )
+        self.comment_badge.setToolTip(
+            self.tr(f"{self.comment_count} comment(s), {self.unread_count} new")
+            if unread
+            else self.tr(f"{self.comment_count} comment(s)")
+        )
+        self.comment_badge.show()
+
     def _load_thumbnail(self) -> None:
         entity_id = self.task_data.get("entity_id")
 
-        if not entity_id:
+        if not entity_id or not self.token or not self.host:
             self._on_thumbnail_error("No preview image mapped")
             return
 

@@ -127,6 +127,8 @@ class ProjectCard(QFrame):
         on_publish: Optional[Callable] = None,
         on_reset: Optional[Callable] = None,
         on_configure: Optional[Callable] = None,
+        on_open_tasks: Optional[Callable] = None,
+        tasks_only: bool = False,
     ) -> None:
         super().__init__(parent)
 
@@ -135,6 +137,8 @@ class ProjectCard(QFrame):
         self.token = token
         self.host = host
         self.thumbnail_fetcher = thumbnail_fetcher
+        self.on_open_tasks = on_open_tasks
+        self.tasks_only = tasks_only
 
         self.on_install = on_install
         self.on_launch = on_launch
@@ -164,8 +168,13 @@ class ProjectCard(QFrame):
         self._build_ui()
         if status is not None:
             self.apply_status(status)
+        elif self.tasks_only and self.on_open_tasks is not None:
+            self.btn_primary_action.setText(self.tr("Open Tasks"))
+            self.btn_primary_action.setEnabled(True)
         else:
             self.btn_primary_action.setEnabled(False)
+        if self.tasks_only:
+            self.setCursor(Qt.PointingHandCursor)
         self._load_thumbnail()
 
     def _build_ui(self) -> None:
@@ -203,6 +212,11 @@ class ProjectCard(QFrame):
         action_config.triggered.connect(self._on_configure_requested)
         action_config.setEnabled(self.on_configure is not None)
 
+        if self.on_open_tasks is not None and not self.tasks_only:
+            action_tasks = self.options_menu.addAction(self.tr("📋 View Tasks"))
+            action_tasks.triggered.connect(self._on_open_tasks_requested)
+            self.options_menu.addSeparator()
+
         if self.user_role == "td":
             self.options_menu.addSeparator()
             action_export = self.options_menu.addAction(self.tr("📤 Export Kitsu Project…"))
@@ -223,6 +237,7 @@ class ProjectCard(QFrame):
             action_delete.triggered.connect(self._on_delete_requested)
 
         self.btn_options.setMenu(self.options_menu)
+        self.btn_options.setVisible(not self.tasks_only)
         header_layout.addWidget(self.btn_options)
         main_layout.addLayout(header_layout)
 
@@ -371,6 +386,18 @@ class ProjectCard(QFrame):
         self.project_dir = status.get("project_dir")
         self.is_installed = status.get("is_installed", False)
 
+        if self.tasks_only:
+            self.lbl_sync_status.setText(status.get("sync_text", ""))
+            self.lbl_sync_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
+            self.lbl_badge.setText(status.get("badge_text", ""))
+            self.btn_primary_action.setText(self.tr("Open Tasks"))
+            self.btn_primary_action.setStyleSheet(
+                "background-color: #3B82F6; color: white; font-weight: bold;"
+                " border-radius: 6px; border: none;"
+            )
+            self.btn_primary_action.setEnabled(self.on_open_tasks is not None)
+            return
+
         if status.get("is_corrupted"):
             error_msg = status.get("error_type", "Unknown Error")
             self.lbl_sync_status.setText(self.tr(f"Corrupted: {error_msg}"))
@@ -416,8 +443,27 @@ class ProjectCard(QFrame):
             self.actions_layout.addWidget(self.btn_primary_action)
         self.btn_primary_action.show()
 
+    def mousePressEvent(self, event) -> None:  # noqa: D102 (Qt override)
+        if (
+            self.tasks_only
+            and self.on_open_tasks is not None
+            and event.button() == Qt.LeftButton
+        ):
+            self._on_open_tasks_requested()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def _on_open_tasks_requested(self) -> None:
+        if self.on_open_tasks is not None:
+            self.on_open_tasks(self.project_data.get("id", ""))
+
     def _on_primary_action(self) -> None:
         """Dispatch the primary button click based on the latest audited status."""
+        if self.tasks_only and self.on_open_tasks is not None:
+            self._on_open_tasks_requested()
+            return
+
         if self.status.get("is_corrupted"):
             if self.on_repair:
                 self.on_repair(
@@ -489,6 +535,9 @@ class ProjectCard(QFrame):
 
     def _load_thumbnail(self) -> None:
         project_id = self.project_data.get("id")
+        if not project_id or not self.token or not self.host:
+            self._on_thumbnail_error("No thumbnail available")
+            return
         self.worker = ProjectThumbnailWorker(self.thumbnail_fetcher, project_id, self.token, self.host)
         self.worker.image_downloaded.connect(self._on_thumbnail_ready)
         self.worker.error_occurred.connect(self._on_thumbnail_error)

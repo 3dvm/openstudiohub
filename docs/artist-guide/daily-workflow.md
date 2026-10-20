@@ -1,17 +1,21 @@
 # The Daily Workflow: Work & Publish
 
-OpenStudioHub simplifies your daily routine into two main actions: clicking **Work** to start, and clicking **Publish** when you are ready for review. 
+OpenStudioHub simplifies your daily routine into two main actions: clicking **Work** to start, and clicking **Publish** when you are ready for review.
 
-## 0. Stay Up to Date (The "Update from VCS" Button)
-Before you start a task, select its project in the **My Assigned Tasks** toolbar and click **Update from VCS**. 
+## 0. Choose your Project and Stay Up to Date
+Your dashboard opens on **My Projects**, which lists only the productions where you have assigned tasks. Click a project card to open its **My Tasks** board.
 
-* **What happens?** The Hub pulls the latest revisions from the version control server into the project workspace, so you always work on top of your teammates' latest commits. 
+Before you start a task, select the project in the **My Tasks** toolbar and click **Update from VCS**.
+
+* **What happens?** The Hub pulls the latest revisions from the version control server into the project workspace, so you always work on top of your teammates' latest commits.
 * **Availability:** The button is enabled only when a specific project that uses version control is selected. Projects stored on the NAS only are not affected.
 
-## 1. Starting your Task (The "Launch Project" Button)
-When you find your assigned task on the dashboard, simply click the **Launch Project** button. 
+## 1. Review Feedback, then Start your Task
+Before launching, check the task's comment badge (`💬 N`). If it is highlighted in orange there are new comments from your supervisor or teammates. Click it to open the right-side comments drawer, read the thread and reply without leaving the Hub.
 
-* **What happens?** The Hub automatically launches your isolated Blender environment and opens your `.blend` file. 
+When the task is ready, click the **Launch Project** button.
+
+* **What happens?** The Hub automatically launches your isolated Blender environment and opens your `.blend` file.
 * **Dynamic Creation:** If the file doesn't exist yet, the Hub's Shot Builder dynamically generates it from the studio template so you don't start with an empty canvas.
 * **Context Injection:** The interface is pre-navigated to your specific task context, and only the tools you need (like the Flamenco Render Farm for lighting artists) are enabled.
 

@@ -22,7 +22,14 @@ from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 from src.application.services.task_file_sync_service import TaskFileSyncService
+from src.domain.production.comments import (
+    newest_comment_timestamp,
+    to_iso,
+    unread_comment_count,
+)
+from src.infrastructure.comment_read_store import CommentReadStore
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
+from src.interfaces.qt.viewmodels.task_comments_viewmodel import TaskCommentsViewModel
 from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     VcsPrompt,
     ensure_vcs_credentials,
@@ -38,6 +45,7 @@ from src.interfaces.qt.workers.artist_workers import (
     PublishVcsChangesWorker,
     UpdateVcsWorker,
 )
+from src.interfaces.qt.workers.comment_workers import FetchProjectsCommentsWorker
 from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
@@ -58,10 +66,14 @@ class ArtistTaskCardModel:
     vcs_enabled: bool = False
     lock_owner: str = ""
     lock_is_mine: bool = False
+    comment_count: int = 0
+    unread_count: int = 0
 
 
 class ArtistViewModel(BaseViewModel):
     tasks_loaded = Signal(list)  # list[ArtistTaskCardModel]
+    projects_loaded = Signal(list)  # [{id, name, task_count, installed}]
+    comment_counts_ready = Signal(dict)  # {task_id: {total, unread}}
     tasks_load_started = Signal()
     tasks_load_finished = Signal(bool)  # success
     vcs_changes_ready = Signal(str, list)  # (task_id, list[FileChange])
@@ -80,6 +92,7 @@ class ArtistViewModel(BaseViewModel):
         register_instance: Callable[[bool], None],
         status_sink: StatusSink | None = None,
         vcs_prompt: VcsPrompt | None = None,
+        comment_read_store: CommentReadStore | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -92,6 +105,13 @@ class ArtistViewModel(BaseViewModel):
         self.vcs_prompt = vcs_prompt
 
         self.task_file_sync_service = TaskFileSyncService(config_factory)
+        self.comment_read_store = comment_read_store or CommentReadStore()
+        self.comments = TaskCommentsViewModel(
+            production_service,
+            auth_service,
+            read_store=self.comment_read_store,
+            status_sink=status_sink,
+        )
         self._launching_card: Optional[ArtistTaskCardModel] = None
         self._cards: List[ArtistTaskCardModel] = []
         self._tasks_loading = False
@@ -122,22 +142,104 @@ class ArtistViewModel(BaseViewModel):
             self._cards = []
             self.report_status("You have no pending tasks. Enjoy your coffee! ☕", "white")
             self.tasks_loaded.emit([])
+            self.projects_loaded.emit([])
             self.tasks_load_finished.emit(True)
             return
 
         cards = [self.enrich_task(task) for task in tasks]
-        # Keep the live per-task VCS badges across a refresh.
+        # Keep the live per-task VCS/comment badges across a refresh.
         for card in cards:
             prior = previous.get(str(card.task_data.get("id", "")))
             if prior is not None:
                 card.pending_changes = list(prior.pending_changes)
                 card.lock_owner = prior.lock_owner
                 card.lock_is_mine = prior.lock_is_mine
+                card.comment_count = prior.comment_count
+                card.unread_count = prior.unread_count
         self._cards = cards
         self.report_status(f"🟢 Synchronized: {len(tasks)} active tasks found.", "green")
         self.tasks_loaded.emit(cards)
+        self.projects_loaded.emit(self._project_summaries(cards))
         self.tasks_load_finished.emit(True)
         self._refresh_task_locks(cards)
+        self._refresh_comment_counts(cards)
+
+    @staticmethod
+    def _project_summaries(cards: List[ArtistTaskCardModel]) -> list:
+        projects: dict = {}
+        for card in cards:
+            if not card.project_id:
+                continue
+            entry = projects.setdefault(
+                card.project_id,
+                {
+                    "id": card.project_id,
+                    "name": card.project_name,
+                    "task_count": 0,
+                    "installed": False,
+                },
+            )
+            entry["task_count"] += 1
+            entry["installed"] = entry["installed"] or bool(card.is_installed)
+        return sorted(projects.values(), key=lambda item: str(item["name"]).lower())
+
+    # ------------------------------------------------------------------
+    # Comment badges
+    # ------------------------------------------------------------------
+    def _user_id(self) -> str:
+        user = getattr(self.auth_service, "current_user", None)
+        return str(getattr(user, "id", "") or "")
+
+    def _refresh_comment_counts(self, cards: List[ArtistTaskCardModel]) -> None:
+        if self.production_service is None or not cards:
+            return
+        project_ids = sorted({card.project_id for card in cards if card.project_id})
+        if not project_ids or self.workers.is_running("comment_summary"):
+            return
+        worker = FetchProjectsCommentsWorker(self.production_service, project_ids)
+        worker.data_ready.connect(self._on_comment_summary)
+        self.workers.start("comment_summary", worker)
+
+    def _on_comment_summary(self, payload: dict) -> None:
+        user_id = self._user_id()
+        counts: dict = {}
+        by_task: dict = {}
+        for comments in (payload or {}).values():
+            for comment in comments or []:
+                task_id = str(comment.get("task_id", "") or "")
+                if task_id:
+                    by_task.setdefault(task_id, []).append(comment)
+
+        for card in self._cards:
+            task_id = self._task_id(card)
+            comments = by_task.get(task_id, [])
+            if not comments:
+                card.comment_count = 0
+                card.unread_count = 0
+                counts[task_id] = {"total": 0, "unread": 0}
+                continue
+
+            last_seen = (
+                self.comment_read_store.get_last_seen(user_id, task_id) if user_id else None
+            )
+            if last_seen is None:
+                newest = newest_comment_timestamp(comments)
+                if user_id and newest is not None:
+                    self.comment_read_store.set_last_seen(user_id, task_id, to_iso(newest))
+                unread = 0
+            else:
+                unread = unread_comment_count(comments, user_id, last_seen)
+
+            card.comment_count = len(comments)
+            card.unread_count = unread
+            counts[task_id] = {"total": len(comments), "unread": unread}
+
+        self.comment_counts_ready.emit(counts)
+
+    def thumbnail_fetcher(self, project_id: str, token: str, host: str):
+        if self.production_service is None:
+            return None
+        return self.production_service.download_project_thumbnail(project_id, token, host)
 
     def _on_tasks_fetch_failed(self, error: str) -> None:
         self._tasks_loading = False

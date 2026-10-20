@@ -11,8 +11,10 @@ Launch the OpenStudioHub application. You will be greeted by the login screen.
 ## 2. The Artist Dashboard
 Once logged in, you will see your main dashboard (`ViewArtist`).
 
-* **Your Tasks:** The Hub connects directly to the Kitsu API to display all your assigned tasks (e.g., "TODO", "WIP") as visual cards, complete with status tags and thumbnails.
-* **Dynamic Syncing:** If your supervisor assigns you a new task while the Hub is open, you don't need to restart the app. Simply click the "↻ Reload" button at the top of your panel to fetch the latest assignments.
+* **Your Projects:** The dashboard opens on **My Projects**, showing only the productions where you have assigned tasks. Each card displays the project thumbnail and how many tasks you own there.
+* **Your Tasks:** Click a project card (or its **Open Tasks** button) to jump to **My Tasks** scoped to that project. The task cards show status, thumbnail, a VCS lock badge when relevant, and a comment badge.
+* **Comments:** The comment badge (`💬 N`) is always visible and turns orange when there are new comments. Click it to open the right-side comments drawer, read the thread and reply. See [Managing Feedback & Notes](feedback-and-notes.md).
+* **Dynamic Syncing:** If your supervisor assigns you a new task or writes a comment while the Hub is open, click the "↻ Refresh" button to fetch the latest assignments and comment badges.
 
 ## 3. Your Workspace
 You don't need to configure Blender, install add-ons, or map network drives. The Hub downloads the studio-approved Blender version and sets up a standard, isolated workspace for you automatically.

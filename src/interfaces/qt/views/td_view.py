@@ -20,9 +20,11 @@ from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditVie
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
+from src.interfaces.qt.viewmodels.task_board_viewmodel import TaskBoardViewModel
 from src.interfaces.qt.widgets.infrastructure_widget import InfrastructureWidget
 from src.interfaces.qt.widgets.project_list_widget import ProjectListWidget
 from src.interfaces.qt.widgets.settings_widget import SettingsWidget
+from src.interfaces.qt.widgets.task_board_widget import TaskBoardWidget
 
 
 class ViewTD(BaseDashboardView):
@@ -42,6 +44,7 @@ class ViewTD(BaseDashboardView):
         on_new_project_callback=None,
         on_repair_callback=None,
         status_sink: StatusSink | None = None,
+        task_board_vm=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, auth_service, config_factory, on_logout, status_sink, **kwargs)
@@ -55,10 +58,14 @@ class ViewTD(BaseDashboardView):
         self.vault_service = vault_service
         self.on_new_project_callback = on_new_project_callback
         self.on_repair_callback = on_repair_callback
+        self.task_board_vm = task_board_vm or TaskBoardViewModel(
+            production_service, auth_service, status_sink=status_sink
+        )
 
         self.setObjectName("ViewTDBase")
 
         self.add_sidebar_button("proyectos", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._switch_panel("proyectos"), active=True)
+        self.add_sidebar_button("tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("tasks"))
         self.add_sidebar_button("infra", self.tr("Infrastructure"), "⚙️", "server.svg", lambda: self._switch_panel("infra"))
         self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
@@ -76,8 +83,12 @@ class ViewTD(BaseDashboardView):
             on_new_project_callback=self.on_new_project_callback,
             on_repair_callback=self.on_repair_callback,
             vault_service=self.vault_service,
+            on_open_tasks_callback=self._open_project_tasks,
         )
         self.stacked_content.addWidget(self.projects_view)
+
+        self.task_board = TaskBoardWidget(self.stacked_content, self.task_board_vm)
+        self.stacked_content.addWidget(self.task_board)
 
         self.vista_infra = InfrastructureWidget(
             parent=self.stacked_content,
@@ -96,7 +107,11 @@ class ViewTD(BaseDashboardView):
 
         self.content_layout.addWidget(self.stacked_content, stretch=1)
 
+    def _open_project_tasks(self, project_id: str) -> None:
+        self._switch_panel("tasks")
+        self.task_board.select_project(project_id)
+
     def _switch_panel(self, panel_id: str) -> None:
         self.set_active_sidebar_button(panel_id)
-        indices = {"proyectos": 0, "infra": 1, "settings": 2}
+        indices = {"proyectos": 0, "tasks": 1, "infra": 2, "settings": 3}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))

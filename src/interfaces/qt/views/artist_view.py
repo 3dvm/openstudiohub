@@ -10,7 +10,9 @@ Renders the assigned-task grid and the project filter. All data and actions
 are delegated to ``ArtistViewModel``.
 """
 
-from PySide6.QtCore import Qt
+import webbrowser
+
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -26,6 +28,8 @@ from PySide6.QtWidgets import (
 )
 
 from src.application.services.auth_service import AuthService
+from src.interfaces.qt.components.comment_panel import CommentPanel
+from src.interfaces.qt.components.project_card import ProjectCard
 from src.interfaces.qt.components.task_card import TaskCard, resolve_task_status
 from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
@@ -57,13 +61,21 @@ class ViewArtist(BaseDashboardView):
         self._cards = []
         self._current_cols = 0
 
+        self._project_widgets = []
+        self._current_project_cols = 0
+        self._comment_card = None
+        self._comment_closing = False
+
         self.setObjectName("ViewArtistBase")
 
-        self.add_sidebar_button("my_tasks", self.tr("My Tasks"), "📋", "list.svg", lambda: self._switch_panel("my_tasks"), active=True)
+        self.add_sidebar_button("projects", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._switch_panel("projects"), active=True)
+        self.add_sidebar_button("my_tasks", self.tr("My Tasks"), "📋", "list.svg", lambda: self._switch_panel("my_tasks"))
         self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_content()
         self.vm.tasks_loaded.connect(self._on_tasks_loaded)
+        self.vm.projects_loaded.connect(self._on_projects_loaded)
+        self.vm.comment_counts_ready.connect(self._on_comment_counts_ready)
         self.vm.tasks_load_started.connect(self._on_tasks_load_started)
         self.vm.tasks_load_finished.connect(self._on_tasks_load_finished)
         self.vm.vcs_changes_ready.connect(self._on_vcs_changes_ready)
@@ -71,17 +83,67 @@ class ViewArtist(BaseDashboardView):
         self.vm.vcs_update_finished.connect(self._on_vcs_update_finished)
         self.vm.task_locks_ready.connect(self._on_task_locks_ready)
         self.vm.task_statuses_loaded.connect(self._on_task_statuses_loaded)
+        self._connect_comments()
         self.vm.load_tasks()
 
     def _build_content(self) -> None:
         self.stacked_content = QStackedWidget()
 
-        self.panel_tasks = QFrame()
-        layout_tasks = QVBoxLayout(self.panel_tasks)
+        self.panel_projects = self._build_projects_panel()
+        self.stacked_content.addWidget(self.panel_projects)
+
+        self.panel_tasks = self._build_tasks_panel()
+        self.stacked_content.addWidget(self.panel_tasks)
+
+        self.panel_settings = self._build_settings_panel()
+        self.stacked_content.addWidget(self.panel_settings)
+
+        self.content_layout.addWidget(self.stacked_content, stretch=1)
+
+    def _build_projects_panel(self) -> QFrame:
+        panel = QFrame()
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(20)
+
+        header = QHBoxLayout()
+        title = QLabel(self.tr("My Projects"))
+        title.setObjectName("PageTitle")
+        self.btn_projects_refresh = QPushButton(self.tr("⟳ Refresh"))
+        self.btn_projects_refresh.setObjectName("SecondaryButton")
+        self.btn_projects_refresh.setFixedSize(110, 35)
+        self.btn_projects_refresh.setCursor(Qt.PointingHandCursor)
+        self.btn_projects_refresh.clicked.connect(self._refresh_tasks)
+        header.addWidget(title)
+        header.addStretch()
+        header.addWidget(self.btn_projects_refresh)
+        layout.addLayout(header)
+
+        self.projects_scroll_area = QScrollArea()
+        self.projects_scroll_area.setWidgetResizable(True)
+        self.projects_scroll_area.setObjectName("InvisibleScrollArea")
+        self.projects_grid_widget = QWidget()
+        self.projects_grid_widget.setObjectName("TransparentGridContainer")
+        self.projects_grid_layout = QGridLayout(self.projects_grid_widget)
+        self.projects_grid_layout.setSpacing(15)
+        self.projects_grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        self.projects_scroll_area.setWidget(self.projects_grid_widget)
+        layout.addWidget(self.projects_scroll_area, stretch=1)
+        return panel
+
+    def _build_tasks_panel(self) -> QFrame:
+        panel = QFrame()
+        layout_tasks = QVBoxLayout(panel)
         layout_tasks.setContentsMargins(0, 0, 0, 0)
         layout_tasks.setSpacing(20)
 
         header_layout = QHBoxLayout()
+
+        self.btn_back_projects = QPushButton(self.tr("← Projects"))
+        self.btn_back_projects.setObjectName("SecondaryButton")
+        self.btn_back_projects.setFixedHeight(35)
+        self.btn_back_projects.setCursor(Qt.PointingHandCursor)
+        self.btn_back_projects.clicked.connect(lambda: self._switch_panel("projects"))
 
         lbl_title = QLabel(self.tr("My Assigned Tasks"))
         lbl_title.setObjectName("PageTitle")
@@ -114,6 +176,7 @@ class ViewArtist(BaseDashboardView):
         )
         self.btn_update_vcs.clicked.connect(self._on_update_vcs_clicked)
 
+        header_layout.addWidget(self.btn_back_projects)
         header_layout.addWidget(lbl_title)
         header_layout.addStretch()
         header_layout.addWidget(self.btn_refresh)
@@ -136,14 +199,20 @@ class ViewArtist(BaseDashboardView):
         self.grid_layout.setAlignment(Qt.AlignTop | Qt.AlignLeft)
 
         self.scroll_area.setWidget(self.grid_widget)
-        layout_tasks.addWidget(self.scroll_area, stretch=1)
 
-        self.stacked_content.addWidget(self.panel_tasks)
+        self.comment_panel = CommentPanel(panel)
+        self._comment_animation = QPropertyAnimation(self.comment_panel, b"maximumWidth", self)
+        self._comment_animation.setDuration(200)
+        self._comment_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._comment_animation.finished.connect(self._on_comment_animation_finished)
 
-        self.panel_settings = self._build_settings_panel()
-        self.stacked_content.addWidget(self.panel_settings)
-
-        self.content_layout.addWidget(self.stacked_content, stretch=1)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(12)
+        body.addWidget(self.scroll_area, stretch=1)
+        body.addWidget(self.comment_panel)
+        layout_tasks.addLayout(body, stretch=1)
+        return panel
 
     def _build_settings_panel(self) -> QFrame:
         panel = QFrame()
@@ -185,6 +254,93 @@ class ViewArtist(BaseDashboardView):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         self._rearrange_grid()
+        self._rearrange_project_grid()
+
+    def _rearrange_project_grid(self) -> None:
+        if not self._project_widgets:
+            return
+        viewport_width = self.projects_scroll_area.viewport().width()
+        card_width = 320
+        spacing = self.projects_grid_layout.spacing()
+        cols = max(1, (viewport_width + spacing) // (card_width + spacing))
+        if getattr(self, "_current_project_cols", 0) == cols:
+            return
+        self._current_project_cols = cols
+        row, col = 0, 0
+        for widget in self._project_widgets:
+            self.projects_grid_layout.removeWidget(widget)
+            self.projects_grid_layout.addWidget(widget, row, col)
+            col += 1
+            if col >= cols:
+                col = 0
+                row += 1
+
+    # ------------------------------------------------------------------
+    # Project grid
+    # ------------------------------------------------------------------
+    def _on_projects_loaded(self, projects: list) -> None:
+        self._clear_project_grid()
+        for project in projects or []:
+            card = self._build_project_card(project)
+            self._project_widgets.append(card)
+        self._current_project_cols = 0
+        self._rearrange_project_grid()
+
+    def _build_project_card(self, project: dict) -> ProjectCard:
+        project_id = str(project.get("id", ""))
+        task_count = int(project.get("task_count", 0) or 0)
+        card = ProjectCard(
+            parent=self.projects_grid_widget,
+            project_data={
+                "id": project_id,
+                "name": project.get("name", "Project"),
+                "project_status_name": self.tr(f"{task_count} task(s)"),
+            },
+            user_role="artist",
+            status={
+                "project_dir": None,
+                "is_installed": False,
+                "is_corrupted": False,
+                "badge_text": self.tr(f"{task_count} task(s)"),
+                "sync_text": self.tr(f"🗂️ {task_count} task(s)"),
+            },
+            token=self._token,
+            host=self._host,
+            thumbnail_fetcher=self.vm.thumbnail_fetcher,
+            on_install=lambda *args, **kwargs: None,
+            on_launch=lambda *args, **kwargs: None,
+            on_delete=lambda *args, **kwargs: None,
+            on_open_kitsu=lambda sub_path, pid=project_id: self._open_kitsu(pid, sub_path),
+            on_watchtower=lambda *args, **kwargs: None,
+            on_open_tasks=lambda pid=project_id: self._open_project_tasks(pid),
+            tasks_only=True,
+        )
+        return card
+
+    def _open_project_tasks(self, project_id: str) -> None:
+        index = self.combo_projects.findData(project_id)
+        if index >= 0:
+            self.combo_projects.blockSignals(True)
+            self.combo_projects.setCurrentIndex(index)
+            self.combo_projects.blockSignals(False)
+        self._switch_panel("my_tasks")
+        self._apply_filters()
+        self.vm.load_task_statuses(project_id)
+
+    def _open_kitsu(self, project_id: str, sub_path: str = "") -> None:
+        base = str(self._host or "").rstrip("/")
+        if base.endswith("/api"):
+            base = base[: -len("/api")]
+        if base:
+            webbrowser.open(f"{base}/productions/{project_id}{sub_path or ''}")
+
+    def _clear_project_grid(self) -> None:
+        self._project_widgets.clear()
+        while self.projects_grid_layout.count():
+            child = self.projects_grid_layout.takeAt(0)
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()
 
     def _rearrange_grid(self) -> None:
         if not self._task_widgets:
@@ -213,8 +369,10 @@ class ViewArtist(BaseDashboardView):
 
     def _switch_panel(self, panel_id: str) -> None:
         self.set_active_sidebar_button(panel_id)
-        indices = {"my_tasks": 0, "settings": 1}
+        indices = {"projects": 0, "my_tasks": 1, "settings": 2}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
+        if panel_id != "my_tasks":
+            self._close_comments(instant=True)
 
         if panel_id == "settings":
             servers = self.vm.list_servers()
@@ -229,10 +387,14 @@ class ViewArtist(BaseDashboardView):
     def _on_tasks_load_started(self) -> None:
         self.btn_refresh.setEnabled(False)
         self.btn_refresh.setText(self.tr("⟳ Refreshing…"))
+        self.btn_projects_refresh.setEnabled(False)
+        self.btn_projects_refresh.setText(self.tr("⟳ Refreshing…"))
 
     def _on_tasks_load_finished(self, _success: bool) -> None:
         self.btn_refresh.setEnabled(True)
         self.btn_refresh.setText(self.tr("⟳ Refresh"))
+        self.btn_projects_refresh.setEnabled(True)
+        self.btn_projects_refresh.setText(self.tr("⟳ Refresh"))
 
     def _on_tasks_loaded(self, cards: list) -> None:
         self._cards = cards
@@ -308,6 +470,9 @@ class ViewArtist(BaseDashboardView):
                 on_install_callback=lambda c=card: self.vm.install(c),
                 pending_change_count=len(card.pending_changes),
                 on_update_callback=lambda c=card: self.vm.check_vcs_changes(c),
+                comment_count=card.comment_count,
+                unread_count=card.unread_count,
+                on_comments_callback=lambda c=card: self._open_comments(c),
             )
             task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
             self._task_widgets.append(task_card)
@@ -404,14 +569,91 @@ class ViewArtist(BaseDashboardView):
         if widget is not None:
             widget.set_pending_change_count(0)
 
+    # ------------------------------------------------------------------
+    # Task comments drawer
+    # ------------------------------------------------------------------
+    def _connect_comments(self) -> None:
+        self.comment_panel.close_requested.connect(self._close_comments)
+        self.comment_panel.send_requested.connect(self._send_comment)
+        self.vm.comments.comments_loaded.connect(self._on_comments_loaded)
+        self.vm.comments.comments_failed.connect(lambda error: self.comment_panel.set_error(error))
+        self.vm.comments.comment_posted.connect(self._on_comment_posted)
+        self.vm.comments.seen_updated.connect(self._on_seen_updated)
+
+    def _open_comments(self, card) -> None:
+        self._comment_card = card
+        self.comment_panel.set_task(card.task_data)
+        self.comment_panel.set_loading(True)
+        self._animate_comments(True)
+        self.vm.comments.load(card.task_data, mark_seen=True)
+
+    def _close_comments(self, instant: bool = False) -> None:
+        if instant:
+            self._comment_animation.stop()
+            self.comment_panel.setMaximumWidth(0)
+            self.comment_panel.hide()
+            self._comment_card = None
+            return
+        self._animate_comments(False)
+
+    def _animate_comments(self, opening: bool) -> None:
+        target = CommentPanel.PANEL_WIDTH if opening else 0
+        self.comment_panel.setVisible(True)
+        self._comment_animation.stop()
+        self._comment_animation.setStartValue(self.comment_panel.maximumWidth())
+        self._comment_animation.setEndValue(target)
+        self._comment_closing = not opening
+        self._comment_animation.start()
+
+    def _on_comment_animation_finished(self) -> None:
+        if self._comment_closing:
+            self.comment_panel.hide()
+            self._comment_card = None
+        self._current_cols = 0
+        self._rearrange_grid()
+
+    def _send_comment(self, text: str) -> None:
+        self.comment_panel.set_posting(True)
+        self.vm.comments.post(text)
+
+    def _on_comments_loaded(self, task_id: str, comments: list) -> None:
+        if self._comment_card is None:
+            return
+        if str(self._comment_card.task_data.get("id", "")) != str(task_id):
+            return
+        self.comment_panel.set_comments(comments)
+        self.comment_panel.set_posting(False)
+
+    def _on_comment_posted(self, task_id: str, success: bool, message: str) -> None:
+        self.comment_panel.set_posting(False)
+        if success:
+            self.comment_panel.clear_composer()
+        else:
+            self.comment_panel.set_error(message)
+
+    def _on_comment_counts_ready(self, counts: dict) -> None:
+        for task_id, payload in (counts or {}).items():
+            widget = self._task_cards_by_id.get(str(task_id))
+            if widget is not None:
+                widget.set_comment_counts(
+                    payload.get("total", 0), payload.get("unread", 0)
+                )
+
+    def _on_seen_updated(self, task_id: str) -> None:
+        widget = self._task_cards_by_id.get(str(task_id))
+        if widget is not None:
+            widget.set_comment_counts(widget.comment_count, 0)
+        for card in self._cards:
+            if str(card.task_data.get("id", "")) == str(task_id):
+                card.unread_count = 0
+                break
+
     def _clear_grid(self) -> None:
-        for widget in self._task_widgets:
-            widget.hide()
-            widget.deleteLater()
         self._task_widgets.clear()
         self._task_cards_by_id.clear()
 
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
+            widget = child.widget()
+            if widget is not None:
+                widget.deleteLater()

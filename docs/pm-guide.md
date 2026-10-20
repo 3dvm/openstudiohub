@@ -51,3 +51,33 @@ When you click "Batch Create", the Hub:
 2. Scaffolds the nested directories.
 3. Copies the base `.blend` template to prevent Sparse Checkout deadlocks for Vendors.
 4. Updates the Kitsu task metadata with the relative path to the newly created `.blend` file, allowing artists to launch the files directly from their Hub dashboards.
+
+## 4. Task Board, Comments & Assignments
+
+The **Tasks** board gives PMs and TDs a project-scoped view of every Kitsu task, with the same comment threads the artists see.
+
+### Opening the task board
+You can reach it in two ways:
+
+* **Sidebar → Tasks**: choose a project in the board's selector.
+* **Project card → View Tasks**: opens the board already scoped to that project.
+
+The header includes a project selector, a search box (entity or task type), a status filter, a refresh button and a table/cards view toggle. The selected view is remembered per user in `~/.openstudio/state/ui_prefs.json`.
+
+### Table or cards
+* **Table/List view** — one row per task with a 56 px thumbnail, entity, task type, status, responsibles and comment count. Best for scanning and assigning many tasks.
+* **Cards view** — a visual grid with a medium thumbnail, status badge, responsible list and comment badge.
+
+### Comments
+The comment badge (`💬 N`) turns orange when there is activity you have not seen. Click it to open the right-side comments drawer for that task, read the thread and reply. Posting a comment keeps the task's current status; this version does not include a status selector in the composer.
+
+Unread state is tracked locally per Kitsu user and machine (`~/.openstudio/state/task_comments_seen.json`), because Kitsu does not expose a per-user read flag. Press **⟳ Refresh** to pull new comments and update the badges.
+
+### Assigning responsibles (PM only)
+In **Table/List** view, the **Responsibles** column is an editable button for PMs; in **Cards** view use the **Edit** button next to the responsible list.
+
+1. Click the button to open the searchable people picker.
+2. Check one or more people (Kitsu supports multiple responsibles per task).
+3. Press **Apply**. The Hub assigns the new people and removes the unchecked ones in Kitsu.
+
+Only users with the **manager (PM)** role can edit responsibles. TDs can open the same task board and see the responsible list, but the field is read-only. Artists see their own assignments and cannot reassign tasks.

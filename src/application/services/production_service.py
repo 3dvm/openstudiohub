@@ -159,6 +159,131 @@ class ProductionService:
             print(f"[ProductionService] Error fetching task statuses: {error}")
             return []
 
+    # ------------------------------------------------------------------
+    # Task comments, people and assignment
+    # ------------------------------------------------------------------
+    def get_task_comments(self, task) -> List[dict]:
+        # Let failures propagate so the comment drawer can show the real error.
+        return self.kitsu.all_comments_for_task(task)
+
+    def get_project_comments(self, project_id: str) -> List[dict]:
+        try:
+            return self.kitsu.all_comments_for_project(project_id)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching project comments: {error}")
+            return []
+
+    def add_task_comment(self, task, task_status, text: str) -> dict:
+        """Post a comment; Kitsu requires the task status alongside the text."""
+        return self.kitsu.add_comment(task, task_status, comment=text)
+
+    def get_task_status(self, task_data: dict) -> Optional[dict]:
+        status = (task_data or {}).get("task_status")
+        if isinstance(status, dict) and status.get("id"):
+            return status
+        status_id = (task_data or {}).get("task_status_id")
+        if not status_id:
+            return None
+        try:
+            return self.kitsu.get_task_status(status_id)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching task status: {error}")
+            return None
+
+    def list_persons(self) -> List[dict]:
+        try:
+            return self.kitsu.all_persons()
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error listing persons: {error}")
+            return []
+
+    def get_project_task_board(self, project_id: str) -> List[dict]:
+        """Flat, presentation-ready task rows for a project (PM/TD board)."""
+        try:
+            tasks = self.kitsu.all_tasks_for_project(project_id)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching project tasks: {error}")
+            return []
+
+        by_person = {str(p.get("id", "")): p for p in self.list_persons()}
+
+        task_types: Dict[str, dict] = {}
+        try:
+            task_types = {str(t.get("id", "")): t for t in self.kitsu.all_task_types()}
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Warning: failed to fetch task types: {error}")
+
+        statuses: Dict[str, dict] = {}
+        try:
+            statuses = {
+                str(s.get("id", "")): s
+                for s in self.kitsu.all_task_statuses_for_project(project_id)
+            }
+        except Exception:  # noqa: BLE001 - fall back to the global status list
+            try:
+                statuses = {str(s.get("id", "")): s for s in self.kitsu.all_task_statuses()}
+            except Exception as error:  # noqa: BLE001
+                print(f"[ProductionService] Warning: failed to fetch task statuses: {error}")
+
+        rows: List[dict] = []
+        for task in tasks or []:
+            row = dict(task)
+            if not row.get("task_type_name"):
+                task_type = task_types.get(str(row.get("task_type_id", "")))
+                if task_type:
+                    row["task_type_name"] = task_type.get("name", "")
+            if not (row.get("task_status") or {}).get("name"):
+                status = statuses.get(str(row.get("task_status_id", "")))
+                if status:
+                    row["task_status"] = status
+            row["assignees"] = self._normalize_assignees(row.get("assignees"), by_person)
+            if not row.get("entity_name"):
+                row["entity_name"] = row.get("entity_id") or row.get("name") or "—"
+            if not row.get("entity_type_name"):
+                row["entity_type_name"] = row.get("entity_type") or ""
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _normalize_assignees(assignees, by_person: Dict[str, dict]) -> List[dict]:
+        result: List[dict] = []
+        for entry in assignees or []:
+            if isinstance(entry, dict):
+                result.append(entry)
+                continue
+            person = by_person.get(str(entry))
+            result.append(person or {"id": str(entry), "full_name": str(entry)})
+        return result
+
+    def apply_task_assignees(
+        self, task: dict, add_ids: List[str], remove_ids: List[str]
+    ) -> List[dict]:
+        """Add/remove assignees and return the refreshed assignee list.
+
+        New assignees are applied before removals so a failure cannot leave the
+        task with no responsible person.
+        """
+        by_person = {str(p.get("id", "")): p for p in self.list_persons()}
+        add = {str(pid) for pid in add_ids or []}
+        remove = {str(pid) for pid in remove_ids or []}
+
+        for person_id in add - remove:
+            self.kitsu.assign_task(task, by_person.get(person_id) or {"id": person_id})
+        for person_id in remove - add:
+            self.kitsu.clear_task_assignations(task, by_person.get(person_id) or {"id": person_id})
+
+        try:
+            refreshed = self.kitsu.get_task(str(task.get("id", "")))
+            return self._normalize_assignees(refreshed.get("assignees"), by_person)
+        except Exception:  # noqa: BLE001 - fall back to the locally computed set
+            current = self._normalize_assignees(task.get("assignees"), by_person)
+            current_ids = {str(person.get("id", "")) for person in current}
+            current_ids = (current_ids - remove) | add
+            return [
+                by_person.get(person_id) or {"id": person_id, "full_name": person_id}
+                for person_id in current_ids
+            ]
+
     def list_all_projects(self) -> List[dict]:
         """Return all projects (open + closed) for the project grid."""
         try:

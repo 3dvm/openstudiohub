@@ -19,8 +19,10 @@ from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderVie
 from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
+from src.interfaces.qt.viewmodels.task_board_viewmodel import TaskBoardViewModel
 from src.interfaces.qt.widgets.blend_builder_widget import BlendBuilderWidget
 from src.interfaces.qt.widgets.project_list_widget import ProjectListWidget
+from src.interfaces.qt.widgets.task_board_widget import TaskBoardWidget
 
 
 class ViewPM(BaseDashboardView):
@@ -36,6 +38,7 @@ class ViewPM(BaseDashboardView):
         on_logout,
         status_sink: StatusSink | None = None,
         credential_vault=None,
+        task_board_vm=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, auth_service, config_factory, on_logout, status_sink, **kwargs)
@@ -45,10 +48,15 @@ class ViewPM(BaseDashboardView):
         self.audit_vm = audit_vm
         self.repair_vm = repair_vm
         self.credential_vault = credential_vault
+        self.production_service = production_service
+        self.task_board_vm = task_board_vm or TaskBoardViewModel(
+            production_service, auth_service, status_sink=status_sink
+        )
 
         self.setObjectName("ViewPMBase")
 
         self.add_sidebar_button("btn_projects", self.tr("Projects"), "📁", "folder.svg", lambda: self._switch_panel("btn_projects"), active=True)
+        self.add_sidebar_button("btn_tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("btn_tasks"))
         self.add_sidebar_button("btn_batch", self.tr("Batch Creation"), "📦", "box.svg", lambda: self._switch_panel("btn_batch"))
         self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
@@ -63,8 +71,12 @@ class ViewPM(BaseDashboardView):
             audit_vm=self.audit_vm,
             repair_vm=self.repair_vm,
             on_open_wizard_callback=self._open_wizard_for_project,
+            on_open_tasks_callback=self._open_project_tasks,
         )
         self.stacked_content.addWidget(self.project_list)
+
+        self.task_board = TaskBoardWidget(self.stacked_content, self.task_board_vm)
+        self.stacked_content.addWidget(self.task_board)
 
         self.blend_builder = BlendBuilderWidget(
             parent=self.stacked_content,
@@ -134,9 +146,13 @@ class ViewPM(BaseDashboardView):
             for server in registry.servers
         ]
 
+    def _open_project_tasks(self, project_id: str) -> None:
+        self._switch_panel("btn_tasks")
+        self.task_board.select_project(project_id)
+
     def _switch_panel(self, panel_id: str) -> None:
         self.set_active_sidebar_button(panel_id)
-        indices = {"btn_projects": 0, "btn_batch": 1, "settings": 2}
+        indices = {"btn_projects": 0, "btn_tasks": 1, "btn_batch": 2, "settings": 3}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
 
         if panel_id == "btn_projects":

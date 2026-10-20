@@ -36,8 +36,26 @@ class FakeConfig:
         return "Test Studio"
 
 
+class FakeComments(QObject):
+    comments_loaded = Signal(str, list)
+    comments_failed = Signal(str)
+    comment_posted = Signal(str, bool, str)
+    seen_updated = Signal(str)
+
+    def load(self, *_args, **_kwargs):
+        pass
+
+    def post(self, *_args, **_kwargs):
+        pass
+
+    def mark_seen(self, *_args, **_kwargs):
+        pass
+
+
 class FakeViewModel(QObject):
     tasks_loaded = Signal(list)
+    projects_loaded = Signal(list)
+    comment_counts_ready = Signal(dict)
     tasks_load_started = Signal()
     tasks_load_finished = Signal(bool)
     vcs_changes_ready = Signal(str, list)
@@ -52,6 +70,10 @@ class FakeViewModel(QObject):
         self.update_calls = []
         self.status_calls = []
         self._update_running = False
+        self.comments = FakeComments()
+
+    def thumbnail_fetcher(self, _project_id, _token, _host):
+        return None
 
     def load_tasks(self):
         self.load_calls += 1
@@ -128,6 +150,21 @@ def test_refresh_button_triggers_load(qapp):
     view.btn_refresh.click()
 
     assert vm.load_calls == 1
+
+
+def test_project_card_opens_project_tasks(qapp):
+    view, vm = _view()
+    vm.tasks_loaded.emit([_card("p1", "Neon")])
+    vm.projects_loaded.emit(
+        [{"id": "p1", "name": "Neon", "task_count": 1, "installed": False}]
+    )
+
+    assert len(view._project_widgets) == 1
+
+    view._project_widgets[0].btn_primary_action.click()
+
+    assert view.stacked_content.currentIndex() == 1
+    assert view.combo_projects.currentData() == "p1"
 
 
 def test_refresh_button_disabled_while_loading(qapp):

@@ -16,7 +16,7 @@ We built this tool to solve the most expensive problem in 3D production: **Human
 
 * **[Automated QA & Auto-Fixing (Gatekeeper)](features/automated-qa.md):** Detects and automatically fixes missing textures, dirty geometry, and wrong naming conventions *before* the artist publishes their work.
 * **[Vendor Jailing & Sparse Checkout](features/vendor-jailing.md):** Protects your IP and saves bandwidth. Freelancers only download the exact files they need for their assigned task, nothing else.
-* **[Automated Task Orchestration](features/kitsu-orchestration.md):** Connects directly to Kitsu. Translates database tasks into physical folder structures and generates master `.blend` files automatically.
+* **[Automated Task Orchestration](features/kitsu-orchestration.md):** Connects directly to Kitsu. Translates database tasks into physical folder structures and generates master `.blend` files automatically. Includes project-scoped task boards, two-way comment threads with unread badges, and PM-side responsible assignment.
 * **[Standardized Workspaces](features/standardized-workspaces.md):** Downloads exact Blender versions and extensions, running them in an isolated sandbox to ensure the whole team is strictly on the same page.
 
 ---
