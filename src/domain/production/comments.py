@@ -63,6 +63,15 @@ def comment_author_id(comment: dict) -> str:
     return str(comment.get("person_id") or "")
 
 
+def comment_task_id(comment: dict) -> str:
+    """Task id a comment belongs to.
+
+    Kitsu stores the task reference in ``object_id``; older exports use
+    ``task_id``. Both must map to the same task for badge aggregation.
+    """
+    return str(comment.get("object_id") or comment.get("task_id") or "")
+
+
 def sort_comments(comments: Iterable[dict]) -> List[dict]:
     """Return parents before their replies, stable by ``created_at``."""
     items = [comment for comment in comments or [] if isinstance(comment, dict)]
@@ -130,20 +139,6 @@ def normalize_checklist(value) -> List[dict]:
         item["checked"] = bool(item.get("checked"))
         normalized.append(item)
     return normalized
-
-
-def checklist_progress(comments: Iterable[dict]) -> tuple[int, int]:
-    """Return ``(checked, total)`` across every checklist in ``comments``."""
-    checked = total = 0
-    for comment in comments or []:
-        value = comment.get("checklist")
-        if not value:
-            value = comment.get("_checklist")
-        for item in normalize_checklist(value):
-            total += 1
-            if item["checked"]:
-                checked += 1
-    return checked, total
 
 
 def unread_comment_count(

@@ -103,10 +103,7 @@ class TaskCommentsViewModel(BaseViewModel):
             item["_created"] = self._created_label(item)
             status = item.get("task_status")
             item["_status"] = status.get("name", "") if isinstance(status, dict) else ""
-            checklist = normalize_checklist(item.get("checklist"))
-            item["_checklist"] = checklist
-            item["_checklist_done"] = sum(1 for entry in checklist if entry["checked"])
-            item["_checklist_total"] = len(checklist)
+            item["_checklist"] = normalize_checklist(item.get("checklist"))
             decorated.append(item)
         return decorated
 

@@ -11,7 +11,7 @@ from typing import List, Optional
 from PySide6.QtCore import Signal
 
 from src.domain.production.comments import (
-    checklist_progress,
+    comment_task_id,
     newest_comment_timestamp,
     to_iso,
     unread_comment_count,
@@ -20,7 +20,7 @@ from src.infrastructure.comment_read_store import CommentReadStore
 from src.infrastructure.ui_prefs_store import UiPrefsStore
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.viewmodels.task_comments_viewmodel import TaskCommentsViewModel
-from src.interfaces.qt.workers.comment_workers import FetchProjectCommentsWorker
+from src.interfaces.qt.workers.comment_workers import FetchProjectsCommentsWorker
 from src.interfaces.qt.workers.task_board_workers import (
     AssignTaskWorker,
     FetchPersonsWorker,
@@ -39,6 +39,10 @@ class TaskBoardViewModel(BaseViewModel):
     view_mode_changed = Signal(str)
 
     VIEW_KEY = "task_board_view"
+    COMMENT_WIDTH_KEY = "comment_panel_width"
+    DEFAULT_COMMENT_WIDTH = 360
+    MIN_COMMENT_WIDTH = 240
+    MAX_COMMENT_WIDTH = 900
 
     def __init__(
         self,
@@ -178,9 +182,15 @@ class TaskBoardViewModel(BaseViewModel):
         if self.workers.is_running("comments"):
             self._pending_comments_project_id = target
             return
-        worker = FetchProjectCommentsWorker(self.production_service, target)
-        worker.data_ready.connect(self._on_project_comments)
+        worker = FetchProjectsCommentsWorker(
+            self.production_service, {target: list(self._tasks)}
+        )
+        worker.data_ready.connect(self._on_projects_comments)
         self.workers.start("comments", worker, on_finished=self._drain_pending_comments)
+
+    def _on_projects_comments(self, payload: dict) -> None:
+        for project_id, comments in (payload or {}).items():
+            self._on_project_comments(project_id, comments)
 
     def _drain_pending_comments(self) -> None:
         project_id = self._pending_comments_project_id
@@ -194,7 +204,7 @@ class TaskBoardViewModel(BaseViewModel):
         user_id = self._user_id()
         by_task: dict = {}
         for comment in comments or []:
-            task_id = str(comment.get("task_id", "") or "")
+            task_id = comment_task_id(comment)
             if task_id:
                 by_task.setdefault(task_id, []).append(comment)
 
@@ -210,17 +220,9 @@ class TaskBoardViewModel(BaseViewModel):
                 unread = 0
             else:
                 unread = unread_comment_count(task_comments, user_id, last_seen)
-            done, checklist_total = checklist_progress(task_comments)
             task["_comment_count"] = len(task_comments)
             task["_unread_count"] = unread
-            task["_checklist_done"] = done
-            task["_checklist_total"] = checklist_total
-            counts[task_id] = {
-                "total": len(task_comments),
-                "unread": unread,
-                "checklist_done": done,
-                "checklist_total": checklist_total,
-            }
+            counts[task_id] = {"total": len(task_comments), "unread": unread}
 
         self.comment_counts_ready.emit(counts)
 
@@ -237,6 +239,29 @@ class TaskBoardViewModel(BaseViewModel):
         except Exception:  # noqa: BLE001 - preference persistence is best-effort
             pass
         self.view_mode_changed.emit(mode)
+
+    def comment_panel_width(self) -> int:
+        try:
+            value = int(
+                self.prefs_store.get(
+                    self._user_id(),
+                    self.COMMENT_WIDTH_KEY,
+                    self.DEFAULT_COMMENT_WIDTH,
+                )
+            )
+        except (TypeError, ValueError):
+            value = self.DEFAULT_COMMENT_WIDTH
+        return max(self.MIN_COMMENT_WIDTH, min(value, self.MAX_COMMENT_WIDTH))
+
+    def set_comment_panel_width(self, width: int) -> None:
+        try:
+            self.prefs_store.set(
+                self._user_id(),
+                self.COMMENT_WIDTH_KEY,
+                max(self.MIN_COMMENT_WIDTH, min(int(width), self.MAX_COMMENT_WIDTH)),
+            )
+        except Exception:  # noqa: BLE001 - preference persistence is best-effort
+            pass
 
     # ------------------------------------------------------------------
     # Assignment

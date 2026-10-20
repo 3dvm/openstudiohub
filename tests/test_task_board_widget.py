@@ -73,6 +73,12 @@ class FakeVM(QObject):
     def assignment_allowed(self):
         return True
 
+    def comment_panel_width(self):
+        return 360
+
+    def set_comment_panel_width(self, width):
+        self.comment_width = width
+
     def apply_assignees(self, task, add_ids, remove_ids):
         self.applied.append((str(task.get("id")), list(add_ids), list(remove_ids)))
 
@@ -96,8 +102,6 @@ def _tasks():
             "assignees": [{"id": "u1", "full_name": "Ada"}],
             "_comment_count": 2,
             "_unread_count": 1,
-            "_checklist_done": 1,
-            "_checklist_total": 2,
         },
         {
             "id": "t2",
@@ -120,20 +124,7 @@ def _board(qapp):
     vm.projects_loaded.emit([{"id": "p1", "name": "Neon"}])
     vm.tasks_loaded.emit("p1", tasks)
     vm.comment_counts_ready.emit(
-        {
-            "t1": {
-                "total": 2,
-                "unread": 1,
-                "checklist_done": 1,
-                "checklist_total": 2,
-            },
-            "t2": {
-                "total": 0,
-                "unread": 0,
-                "checklist_done": 0,
-                "checklist_total": 0,
-            },
-        }
+        {"t1": {"total": 2, "unread": 1}, "t2": {"total": 0, "unread": 0}}
     )
     return widget, vm
 
@@ -143,7 +134,6 @@ def test_table_renders_all_tasks(qapp):
 
     assert widget.table.rowCount() == 2
     assert "#F97316" in widget._comment_buttons["t1"].styleSheet()
-    assert "1/2" in widget._checklist_labels["t1"].text()
 
 
 def test_view_toggle_switches_to_cards(qapp):
@@ -153,7 +143,6 @@ def test_view_toggle_switches_to_cards(qapp):
 
     assert widget.stack.currentIndex() == 1
     assert set(widget._card_widgets) == {"t1", "t2"}
-    assert "1/2" in widget._card_widgets["t1"].lbl_checklist.text()
 
 
 def test_comment_button_opens_drawer(qapp):
@@ -162,3 +151,20 @@ def test_comment_button_opens_drawer(qapp):
     widget._comment_buttons["t1"].click()
 
     assert vm.comments.loaded == ["t1"]
+    assert widget.comment_panel.isHidden() is False
+
+    widget.comment_panel.close_requested.emit()
+    assert widget.comment_panel.isHidden() is True
+
+
+def test_checklist_enablement_follows_busy_signal(qapp):
+    widget, vm = _board(qapp)
+    widget.comment_panel.set_comments(
+        [{"id": "c1", "_checklist": [{"text": "Check lighting", "checked": False}]}]
+    )
+
+    vm.comments.checklist_updating.emit(False)
+    assert widget.comment_panel._checklist_boxes[0].isEnabled() is True
+
+    vm.comments.checklist_updating.emit(True)
+    assert widget.comment_panel._checklist_boxes[0].isEnabled() is False

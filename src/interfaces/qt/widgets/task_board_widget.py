@@ -8,7 +8,7 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PySide6.QtCore import QEasingCurve, Qt, QVariantAnimation
 from PySide6.QtGui import QIcon, QImage, QPixmap, QResizeEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QTableWidget,
     QToolButton,
@@ -30,7 +31,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.domain.production.comments import checklist_progress
 from src.interfaces.qt.components.assignee_dialog import AssigneeDialog
 from src.interfaces.qt.components.comment_panel import CommentPanel
 from src.interfaces.qt.components.pm_task_card import PmTaskCard, _comment_icon
@@ -49,11 +49,10 @@ class TaskBoardWidget(QFrame):
         self._thumb_labels: dict = {}
         self._thumb_cards: dict = {}
         self._comment_buttons: dict = {}
-        self._checklist_labels: dict = {}
         self._card_widgets: dict = {}
         self._current_cols = 0
         self._comment_task = None
-        self._comment_closing = False
+        self._comment_anim = None
 
         self.setObjectName("TaskBoardWidgetBase")
         self._build_ui()
@@ -176,17 +175,20 @@ class TaskBoardWidget(QFrame):
         self.stack.addWidget(self.cards_scroll)
 
         self.comment_panel = CommentPanel(self)
-        self._comment_animation = QPropertyAnimation(self.comment_panel, b"maximumWidth", self)
-        self._comment_animation.setDuration(200)
-        self._comment_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self._comment_animation.finished.connect(self._on_comment_animation_finished)
-
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(12)
-        body.addWidget(self.stack, stretch=1)
-        body.addWidget(self.comment_panel)
-        layout.addLayout(body, stretch=1)
+        self.comment_panel.hide()
+        self.comment_splitter = QSplitter(Qt.Horizontal)
+        self.comment_splitter.setChildrenCollapsible(False)
+        self.comment_splitter.setHandleWidth(6)
+        self.comment_splitter.setStyleSheet(
+            "QSplitter::handle { background-color: #1E293B; }"
+            "QSplitter::handle:hover { background-color: #3B82F6; }"
+        )
+        self.comment_splitter.addWidget(self.stack)
+        self.comment_splitter.addWidget(self.comment_panel)
+        self.comment_splitter.setStretchFactor(0, 1)
+        self.comment_splitter.setStretchFactor(1, 0)
+        self.comment_splitter.splitterMoved.connect(self._on_comment_splitter_moved)
+        layout.addWidget(self.comment_splitter, stretch=1)
 
     def _connect(self) -> None:
         self.vm.projects_loaded.connect(self._on_projects_loaded)
@@ -197,7 +199,7 @@ class TaskBoardWidget(QFrame):
         self.vm.comments.comments_loaded.connect(self._on_comments_loaded)
         self.vm.comments.comments_failed.connect(lambda error: self.comment_panel.set_error(error))
         self.vm.comments.comment_posted.connect(self._on_comment_posted)
-        self.vm.comments.checklist_updating.connect(self.comment_panel.set_checklist_enabled)
+        self.vm.comments.checklist_updating.connect(self._on_checklist_updating)
         self.vm.comments.seen_updated.connect(self._on_seen_updated)
         self.comment_panel.close_requested.connect(self._close_comments)
         self.comment_panel.send_requested.connect(self._send_comment)
@@ -294,7 +296,6 @@ class TaskBoardWidget(QFrame):
     # ------------------------------------------------------------------
     def _render_current_view(self) -> None:
         self._comment_buttons.clear()
-        self._checklist_labels.clear()
         self._card_widgets.clear()
         self._thumb_labels.clear()
         self._thumb_cards.clear()
@@ -326,18 +327,9 @@ class TaskBoardWidget(QFrame):
             button = self._comment_button(task)
             self._comment_buttons[task_id] = button
             container = QWidget()
-            cell_layout = QVBoxLayout(container)
-            cell_layout.setContentsMargins(0, 2, 0, 2)
-            cell_layout.setSpacing(2)
-            cell_layout.addWidget(button, alignment=Qt.AlignHCenter)
-            checklist_label = QLabel("")
-            checklist_label.setAlignment(Qt.AlignCenter)
-            checklist_label.setStyleSheet(
-                "color: #93C5FD; font-size: 10px; font-weight: bold; border: none;"
-            )
-            self._checklist_labels[task_id] = checklist_label
-            self._render_checklist_label(checklist_label, task)
-            cell_layout.addWidget(checklist_label)
+            cell_layout = QHBoxLayout(container)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.addWidget(button)
             self.table.setCellWidget(row, 4, container)
 
     def _entity_cell(self, task: dict) -> QWidget:
@@ -415,19 +407,6 @@ class TaskBoardWidget(QFrame):
         self._apply_comment_badge(button, task)
         button.clicked.connect(lambda _=False, t=task: self._open_comments(t))
         return button
-
-    def _render_checklist_label(self, label: QLabel, task: dict) -> None:
-        done = int(task.get("_checklist_done", 0) or 0)
-        total = int(task.get("_checklist_total", 0) or 0)
-        if total <= 0:
-            label.hide()
-            return
-        color = "#10B981" if done >= total else "#93C5FD"
-        label.setText(self.tr(f"☑ {done}/{total}"))
-        label.setStyleSheet(
-            f"color: {color}; font-size: 10px; font-weight: bold; border: none;"
-        )
-        label.show()
 
     def _apply_comment_badge(self, button: QToolButton, task: dict) -> None:
         total = int(task.get("_comment_count", 0) or 0)
@@ -551,37 +530,54 @@ class TaskBoardWidget(QFrame):
         self._comment_task = task
         self.comment_panel.set_task(task)
         self.comment_panel.set_loading(True)
-        self._animate_comments(True)
+        self.comment_panel.show()
+        self._animate_comment_width(self.vm.comment_panel_width())
         self.vm.comments.load(task, mark_seen=True)
 
     def _close_comments(self, instant: bool = False) -> None:
-        if instant:
-            self._comment_animation.stop()
-            self.comment_panel.setMaximumWidth(0)
-            self.comment_panel.hide()
-            self._comment_task = None
+        if self._comment_anim is not None:
+            self._comment_anim.stop()
+        self.comment_panel.hide()
+        self._comment_task = None
+        self._apply_comment_width(0)
+
+    def _animate_comment_width(self, target: int) -> None:
+        if self._comment_anim is not None:
+            self._comment_anim.stop()
+            self._comment_anim.deleteLater()
+        self._comment_anim = QVariantAnimation(self)
+        self._comment_anim.setDuration(180)
+        self._comment_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._comment_anim.setStartValue(0)
+        self._comment_anim.setEndValue(int(target))
+        self._comment_anim.valueChanged.connect(
+            lambda value: self._apply_comment_width(int(value))
+        )
+        self._comment_anim.start()
+
+    def _apply_comment_width(self, width: int) -> None:
+        total = max(1, self.comment_splitter.width())
+        if width <= 0:
+            self.comment_splitter.setSizes([total, 0])
             return
-        self._animate_comments(False)
+        width = max(CommentPanel.MIN_WIDTH, min(int(width), int(total * 0.6)))
+        self.comment_splitter.setSizes([max(1, total - width), width])
+        self._current_cols = 0
+        self._rearrange_cards()
 
-    def _animate_comments(self, opening: bool) -> None:
-        target = CommentPanel.PANEL_WIDTH if opening else 0
-        self.comment_panel.setVisible(True)
-        self._comment_animation.stop()
-        self._comment_animation.setStartValue(self.comment_panel.maximumWidth())
-        self._comment_animation.setEndValue(target)
-        self._comment_closing = not opening
-        self._comment_animation.start()
-
-    def _on_comment_animation_finished(self) -> None:
-        if self._comment_closing:
-            self.comment_panel.hide()
-            self._comment_task = None
+    def _on_comment_splitter_moved(self, _pos: int, _index: int) -> None:
+        sizes = self.comment_splitter.sizes()
+        if len(sizes) == 2 and sizes[1] > 0:
+            self.vm.set_comment_panel_width(sizes[1])
         self._current_cols = 0
         self._rearrange_cards()
 
     def _send_comment(self, text: str) -> None:
         self.comment_panel.set_posting(True)
         self.vm.comments.post(text)
+
+    def _on_checklist_updating(self, busy: bool) -> None:
+        self.comment_panel.set_checklist_enabled(not busy)
 
     def _on_comments_loaded(self, task_id: str, comments: list) -> None:
         if self._comment_task is None:
@@ -590,23 +586,6 @@ class TaskBoardWidget(QFrame):
             return
         self.comment_panel.set_comments(comments)
         self.comment_panel.set_posting(False)
-        done, total = checklist_progress(comments)
-        self._update_checklist_progress(task_id, done, total)
-
-    def _update_checklist_progress(self, task_id: str, done: int, total: int) -> None:
-        for task in self.vm.tasks:
-            if str(task.get("id", "")) == str(task_id):
-                task["_checklist_done"] = done
-                task["_checklist_total"] = total
-                break
-        label = self._checklist_labels.get(str(task_id))
-        if label is not None:
-            self._render_checklist_label(
-                label, {"_checklist_done": done, "_checklist_total": total}
-            )
-        card = self._card_widgets.get(str(task_id))
-        if card is not None:
-            card.set_checklist_progress(done, total)
 
     def _on_comment_posted(self, task_id: str, success: bool, message: str) -> None:
         self.comment_panel.set_posting(False)
@@ -621,18 +600,11 @@ class TaskBoardWidget(QFrame):
             task = tasks.get(str(task_id))
             if task is not None:
                 self._apply_comment_badge(button, task)
-        for task_id, label in self._checklist_labels.items():
-            task = tasks.get(str(task_id))
-            if task is not None:
-                self._render_checklist_label(label, task)
         for task_id, card in self._card_widgets.items():
             task = tasks.get(str(task_id))
             if task is not None:
                 card.set_comment_counts(
                     task.get("_comment_count", 0), task.get("_unread_count", 0)
-                )
-                card.set_checklist_progress(
-                    task.get("_checklist_done", 0), task.get("_checklist_total", 0)
                 )
 
     def _on_seen_updated(self, task_id: str) -> None:

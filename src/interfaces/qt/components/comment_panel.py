@@ -33,7 +33,8 @@ class CommentPanel(QFrame):
     send_requested = Signal(str)
     checklist_toggled = Signal(str, int, bool)  # (comment_id, item_index, checked)
 
-    PANEL_WIDTH = 360
+    DEFAULT_WIDTH = 360
+    MIN_WIDTH = 240
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -41,9 +42,7 @@ class CommentPanel(QFrame):
         self.setStyleSheet(
             "QFrame#CommentPanel { background-color: #0F172A; border-left: 1px solid #334155; }"
         )
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self.setMinimumWidth(0)
-        self.setMaximumWidth(0)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self._task = None
         self._checklist_enabled = True

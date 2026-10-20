@@ -99,16 +99,17 @@ def test_project_comments_compute_unread_and_baseline(qapp, tmp_path):
         ],
     )
 
-    assert captured["t1"] == {
-        "total": 1,
-        "unread": 1,
-        "checklist_done": 0,
-        "checklist_total": 0,
-    }
-    assert captured["t2"] == {
-        "total": 1,
-        "unread": 0,
-        "checklist_done": 0,
-        "checklist_total": 0,
-    }
+    assert captured["t1"] == {"total": 1, "unread": 1}
+    assert captured["t2"] == {"total": 1, "unread": 0}
     assert store.get_last_seen("me", "t2") == "2026-10-20T09:00:00+00:00"
+
+
+def test_comment_panel_width_is_persisted(qapp, tmp_path):
+    vm = _vm(tmp_path)
+    assert vm.comment_panel_width() == vm.DEFAULT_COMMENT_WIDTH
+
+    vm.set_comment_panel_width(420)
+
+    assert _vm(tmp_path).comment_panel_width() == 420
+    vm.set_comment_panel_width(10)
+    assert vm.comment_panel_width() == vm.MIN_COMMENT_WIDTH

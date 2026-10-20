@@ -12,7 +12,7 @@ are delegated to ``ArtistViewModel``.
 
 import webbrowser
 
-from PySide6.QtCore import QEasingCurve, QPropertyAnimation, Qt
+from PySide6.QtCore import QEasingCurve, Qt, QVariantAnimation
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QComboBox,
@@ -22,13 +22,13 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from src.application.services.auth_service import AuthService
-from src.domain.production.comments import checklist_progress
 from src.interfaces.qt.components.comment_panel import CommentPanel
 from src.interfaces.qt.components.project_card import ProjectCard
 from src.interfaces.qt.components.task_card import TaskCard, resolve_task_status
@@ -65,7 +65,7 @@ class ViewArtist(BaseDashboardView):
         self._project_widgets = []
         self._current_project_cols = 0
         self._comment_card = None
-        self._comment_closing = False
+        self._comment_anim = None
 
         self.setObjectName("ViewArtistBase")
 
@@ -202,17 +202,20 @@ class ViewArtist(BaseDashboardView):
         self.scroll_area.setWidget(self.grid_widget)
 
         self.comment_panel = CommentPanel(panel)
-        self._comment_animation = QPropertyAnimation(self.comment_panel, b"maximumWidth", self)
-        self._comment_animation.setDuration(200)
-        self._comment_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self._comment_animation.finished.connect(self._on_comment_animation_finished)
-
-        body = QHBoxLayout()
-        body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(12)
-        body.addWidget(self.scroll_area, stretch=1)
-        body.addWidget(self.comment_panel)
-        layout_tasks.addLayout(body, stretch=1)
+        self.comment_panel.hide()
+        self.comment_splitter = QSplitter(Qt.Horizontal)
+        self.comment_splitter.setChildrenCollapsible(False)
+        self.comment_splitter.setHandleWidth(6)
+        self.comment_splitter.setStyleSheet(
+            "QSplitter::handle { background-color: #1E293B; }"
+            "QSplitter::handle:hover { background-color: #3B82F6; }"
+        )
+        self.comment_splitter.addWidget(self.scroll_area)
+        self.comment_splitter.addWidget(self.comment_panel)
+        self.comment_splitter.setStretchFactor(0, 1)
+        self.comment_splitter.setStretchFactor(1, 0)
+        self.comment_splitter.splitterMoved.connect(self._on_comment_splitter_moved)
+        layout_tasks.addWidget(self.comment_splitter, stretch=1)
         return panel
 
     def _build_settings_panel(self) -> QFrame:
@@ -473,8 +476,6 @@ class ViewArtist(BaseDashboardView):
                 on_update_callback=lambda c=card: self.vm.check_vcs_changes(c),
                 comment_count=card.comment_count,
                 unread_count=card.unread_count,
-                checklist_done=card.checklist_done,
-                checklist_total=card.checklist_total,
                 on_comments_callback=lambda c=card: self._open_comments(c),
             )
             task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
@@ -582,44 +583,61 @@ class ViewArtist(BaseDashboardView):
         self.vm.comments.comments_loaded.connect(self._on_comments_loaded)
         self.vm.comments.comments_failed.connect(lambda error: self.comment_panel.set_error(error))
         self.vm.comments.comment_posted.connect(self._on_comment_posted)
-        self.vm.comments.checklist_updating.connect(self.comment_panel.set_checklist_enabled)
+        self.vm.comments.checklist_updating.connect(self._on_checklist_updating)
         self.vm.comments.seen_updated.connect(self._on_seen_updated)
 
     def _open_comments(self, card) -> None:
         self._comment_card = card
         self.comment_panel.set_task(card.task_data)
         self.comment_panel.set_loading(True)
-        self._animate_comments(True)
+        self.comment_panel.show()
+        self._animate_comment_width(self.vm.comment_panel_width())
         self.vm.comments.load(card.task_data, mark_seen=True)
 
     def _close_comments(self, instant: bool = False) -> None:
-        if instant:
-            self._comment_animation.stop()
-            self.comment_panel.setMaximumWidth(0)
-            self.comment_panel.hide()
-            self._comment_card = None
+        if self._comment_anim is not None:
+            self._comment_anim.stop()
+        self.comment_panel.hide()
+        self._comment_card = None
+        self._apply_comment_width(0)
+
+    def _animate_comment_width(self, target: int) -> None:
+        if self._comment_anim is not None:
+            self._comment_anim.stop()
+            self._comment_anim.deleteLater()
+        self._comment_anim = QVariantAnimation(self)
+        self._comment_anim.setDuration(180)
+        self._comment_anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._comment_anim.setStartValue(0)
+        self._comment_anim.setEndValue(int(target))
+        self._comment_anim.valueChanged.connect(
+            lambda value: self._apply_comment_width(int(value))
+        )
+        self._comment_anim.start()
+
+    def _apply_comment_width(self, width: int) -> None:
+        total = max(1, self.comment_splitter.width())
+        if width <= 0:
+            self.comment_splitter.setSizes([total, 0])
             return
-        self._animate_comments(False)
+        width = max(CommentPanel.MIN_WIDTH, min(int(width), int(total * 0.6)))
+        self.comment_splitter.setSizes([max(1, total - width), width])
+        self._current_cols = 0
+        self._rearrange_grid()
 
-    def _animate_comments(self, opening: bool) -> None:
-        target = CommentPanel.PANEL_WIDTH if opening else 0
-        self.comment_panel.setVisible(True)
-        self._comment_animation.stop()
-        self._comment_animation.setStartValue(self.comment_panel.maximumWidth())
-        self._comment_animation.setEndValue(target)
-        self._comment_closing = not opening
-        self._comment_animation.start()
-
-    def _on_comment_animation_finished(self) -> None:
-        if self._comment_closing:
-            self.comment_panel.hide()
-            self._comment_card = None
+    def _on_comment_splitter_moved(self, _pos: int, _index: int) -> None:
+        sizes = self.comment_splitter.sizes()
+        if len(sizes) == 2 and sizes[1] > 0:
+            self.vm.set_comment_panel_width(sizes[1])
         self._current_cols = 0
         self._rearrange_grid()
 
     def _send_comment(self, text: str) -> None:
         self.comment_panel.set_posting(True)
         self.vm.comments.post(text)
+
+    def _on_checklist_updating(self, busy: bool) -> None:
+        self.comment_panel.set_checklist_enabled(not busy)
 
     def _on_comments_loaded(self, task_id: str, comments: list) -> None:
         if self._comment_card is None:
@@ -628,18 +646,6 @@ class ViewArtist(BaseDashboardView):
             return
         self.comment_panel.set_comments(comments)
         self.comment_panel.set_posting(False)
-        done, total = checklist_progress(comments)
-        self._update_checklist_progress(task_id, done, total)
-
-    def _update_checklist_progress(self, task_id: str, done: int, total: int) -> None:
-        widget = self._task_cards_by_id.get(str(task_id))
-        if widget is not None:
-            widget.set_checklist_progress(done, total)
-        for card in self._cards:
-            if str(card.task_data.get("id", "")) == str(task_id):
-                card.checklist_done = done
-                card.checklist_total = total
-                break
 
     def _on_comment_posted(self, task_id: str, success: bool, message: str) -> None:
         self.comment_panel.set_posting(False)
@@ -653,21 +659,13 @@ class ViewArtist(BaseDashboardView):
             widget = self._task_cards_by_id.get(str(task_id))
             if widget is not None:
                 widget.set_comment_counts(
-                    payload.get("total", 0),
-                    payload.get("unread", 0),
-                    payload.get("checklist_done", 0),
-                    payload.get("checklist_total", 0),
+                    payload.get("total", 0), payload.get("unread", 0)
                 )
 
     def _on_seen_updated(self, task_id: str) -> None:
         widget = self._task_cards_by_id.get(str(task_id))
         if widget is not None:
-            widget.set_comment_counts(
-                widget.comment_count,
-                0,
-                widget.checklist_done,
-                widget.checklist_total,
-            )
+            widget.set_comment_counts(widget.comment_count, 0)
         for card in self._cards:
             if str(card.task_data.get("id", "")) == str(task_id):
                 card.unread_count = 0

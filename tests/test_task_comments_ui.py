@@ -131,28 +131,3 @@ def test_checklist_can_be_disabled_while_saving(qapp):
     panel.set_checklist_enabled(False)
 
     assert panel._checklist_boxes[0].isEnabled() is False
-
-
-def test_task_card_checklist_progress_badge(qapp):
-    card = TaskCard(
-        parent=None,
-        task_data={"id": "t1", "entity_name": "Monkey", "task_type_name": "Modeling"},
-        project_root="/tmp/does-not-exist",
-        is_installed=True,
-        can_work=True,
-        blocked_reason="",
-        token="",
-        host="",
-        on_launch_callback=lambda: None,
-        on_install_callback=lambda: None,
-        comment_count=5,
-        unread_count=2,
-        checklist_done=1,
-        checklist_total=3,
-    )
-
-    assert card.comment_badge.text() == "5"
-    assert "☑ 1/3" in card.checklist_badge.text()
-
-    card.set_checklist_progress(3, 3)
-    assert "☑ 3/3" in card.checklist_badge.text()

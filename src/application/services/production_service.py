@@ -167,11 +167,8 @@ class ProductionService:
         return self.kitsu.all_comments_for_task(task)
 
     def get_project_comments(self, project_id: str) -> List[dict]:
-        try:
-            return self.kitsu.all_comments_for_project(project_id)
-        except Exception as error:  # noqa: BLE001
-            print(f"[ProductionService] Error fetching project comments: {error}")
-            return []
+        # Let failures propagate so the caller can fall back to task comments.
+        return self.kitsu.all_comments_for_project(project_id)
 
     def add_task_comment(self, task, task_status, text: str) -> dict:
         """Post a comment; Kitsu requires the task status alongside the text."""

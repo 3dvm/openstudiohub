@@ -1,7 +1,6 @@
 """Unit tests for comment ordering and unread computation."""
 
 from src.domain.production.comments import (
-    checklist_progress,
     comment_author_id,
     comment_parent_id,
     newest_comment_timestamp,
@@ -86,12 +85,3 @@ def test_normalize_checklist_accepts_list_string_and_mapping():
     ]
     assert normalize_checklist(None) == []
     assert normalize_checklist("not-json") == []
-
-
-def test_checklist_progress_counts_checked_items():
-    comments = [
-        {"checklist": [{"text": "a", "checked": True}, {"text": "b", "checked": False}]},
-        {"checklist": [{"text": "c", "checked": True}]},
-    ]
-    assert checklist_progress(comments) == (2, 3)
-    assert checklist_progress([]) == (0, 0)

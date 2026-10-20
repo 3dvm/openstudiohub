@@ -116,6 +116,12 @@ class FakeViewModel(QObject):
         self.update_calls.append((project_id, project_root))
         return True
 
+    def comment_panel_width(self):
+        return 360
+
+    def set_comment_panel_width(self, width):
+        self.comment_width = width
+
 
 def _card(
     project_id: str,
@@ -309,4 +315,30 @@ def test_status_filter_preserved_across_refresh(qapp):
     )
 
     assert view.combo_status.currentData() == "Retake"
+
+
+def test_checklist_enablement_follows_busy_signal(qapp):
+    view, vm = _view()
+    view.comment_panel.set_comments(
+        [{"id": "c1", "_checklist": [{"text": "Check lighting", "checked": False}]}]
+    )
+
+    vm.comments.checklist_updating.emit(False)
+    assert view.comment_panel._checklist_boxes[0].isEnabled() is True
+
+    vm.comments.checklist_updating.emit(True)
+    assert view.comment_panel._checklist_boxes[0].isEnabled() is False
+
+
+def test_comment_drawer_uses_splitter(qapp):
+    view, vm = _view()
+    view._on_tasks_loaded([_card("p1", "Neon")])
+
+    view._task_widgets[0].comment_badge.click()
+
+    assert view.comment_panel.isHidden() is False
+    assert view.comment_splitter.count() == 2
+
+    view.comment_panel.close_requested.emit()
+    assert view.comment_panel.isHidden() is True
 

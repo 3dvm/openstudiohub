@@ -23,12 +23,13 @@ from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
 from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.domain.production.comments import (
-    checklist_progress,
+    comment_task_id,
     newest_comment_timestamp,
     to_iso,
     unread_comment_count,
 )
 from src.infrastructure.comment_read_store import CommentReadStore
+from src.infrastructure.ui_prefs_store import UiPrefsStore
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.viewmodels.task_comments_viewmodel import TaskCommentsViewModel
 from src.interfaces.qt.viewmodels.vcs_credential_gate import (
@@ -69,8 +70,6 @@ class ArtistTaskCardModel:
     lock_is_mine: bool = False
     comment_count: int = 0
     unread_count: int = 0
-    checklist_done: int = 0
-    checklist_total: int = 0
 
 
 class ArtistViewModel(BaseViewModel):
@@ -85,6 +84,11 @@ class ArtistViewModel(BaseViewModel):
     task_locks_ready = Signal(dict)  # {task_id: {"owner": str, "is_mine": bool}}
     task_statuses_loaded = Signal(str, list)  # (project_id, list[dict])
 
+    COMMENT_WIDTH_KEY = "comment_panel_width"
+    DEFAULT_COMMENT_WIDTH = 360
+    MIN_COMMENT_WIDTH = 240
+    MAX_COMMENT_WIDTH = 900
+
     def __init__(
         self,
         production_service: ProductionService,
@@ -96,6 +100,7 @@ class ArtistViewModel(BaseViewModel):
         status_sink: StatusSink | None = None,
         vcs_prompt: VcsPrompt | None = None,
         comment_read_store: CommentReadStore | None = None,
+        prefs_store: UiPrefsStore | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -109,6 +114,7 @@ class ArtistViewModel(BaseViewModel):
 
         self.task_file_sync_service = TaskFileSyncService(config_factory)
         self.comment_read_store = comment_read_store or CommentReadStore()
+        self.prefs_store = prefs_store or UiPrefsStore()
         self.comments = TaskCommentsViewModel(
             production_service,
             auth_service,
@@ -159,8 +165,6 @@ class ArtistViewModel(BaseViewModel):
                 card.lock_is_mine = prior.lock_is_mine
                 card.comment_count = prior.comment_count
                 card.unread_count = prior.unread_count
-                card.checklist_done = prior.checklist_done
-                card.checklist_total = prior.checklist_total
         self._cards = cards
         self.report_status(f"🟢 Synchronized: {len(tasks)} active tasks found.", "green")
         self.tasks_loaded.emit(cards)
@@ -195,13 +199,39 @@ class ArtistViewModel(BaseViewModel):
         user = getattr(self.auth_service, "current_user", None)
         return str(getattr(user, "id", "") or "")
 
+    def comment_panel_width(self) -> int:
+        try:
+            value = int(
+                self.prefs_store.get(
+                    self._user_id(),
+                    self.COMMENT_WIDTH_KEY,
+                    self.DEFAULT_COMMENT_WIDTH,
+                )
+            )
+        except (TypeError, ValueError):
+            value = self.DEFAULT_COMMENT_WIDTH
+        return max(self.MIN_COMMENT_WIDTH, min(value, self.MAX_COMMENT_WIDTH))
+
+    def set_comment_panel_width(self, width: int) -> None:
+        try:
+            self.prefs_store.set(
+                self._user_id(),
+                self.COMMENT_WIDTH_KEY,
+                max(self.MIN_COMMENT_WIDTH, min(int(width), self.MAX_COMMENT_WIDTH)),
+            )
+        except Exception:  # noqa: BLE001 - preference persistence is best-effort
+            pass
+
     def _refresh_comment_counts(self, cards: List[ArtistTaskCardModel]) -> None:
         if self.production_service is None or not cards:
             return
-        project_ids = sorted({card.project_id for card in cards if card.project_id})
-        if not project_ids or self.workers.is_running("comment_summary"):
+        projects: dict = {}
+        for card in cards:
+            if card.project_id:
+                projects.setdefault(card.project_id, []).append(card.task_data)
+        if not projects or self.workers.is_running("comment_summary"):
             return
-        worker = FetchProjectsCommentsWorker(self.production_service, project_ids)
+        worker = FetchProjectsCommentsWorker(self.production_service, projects)
         worker.data_ready.connect(self._on_comment_summary)
         self.workers.start("comment_summary", worker)
 
@@ -211,7 +241,7 @@ class ArtistViewModel(BaseViewModel):
         by_task: dict = {}
         for comments in (payload or {}).values():
             for comment in comments or []:
-                task_id = str(comment.get("task_id", "") or "")
+                task_id = comment_task_id(comment)
                 if task_id:
                     by_task.setdefault(task_id, []).append(comment)
 
@@ -221,14 +251,7 @@ class ArtistViewModel(BaseViewModel):
             if not comments:
                 card.comment_count = 0
                 card.unread_count = 0
-                card.checklist_done = 0
-                card.checklist_total = 0
-                counts[task_id] = {
-                    "total": 0,
-                    "unread": 0,
-                    "checklist_done": 0,
-                    "checklist_total": 0,
-                }
+                counts[task_id] = {"total": 0, "unread": 0}
                 continue
 
             last_seen = (
@@ -242,17 +265,9 @@ class ArtistViewModel(BaseViewModel):
             else:
                 unread = unread_comment_count(comments, user_id, last_seen)
 
-            checklist_done, checklist_total = checklist_progress(comments)
             card.comment_count = len(comments)
             card.unread_count = unread
-            card.checklist_done = checklist_done
-            card.checklist_total = checklist_total
-            counts[task_id] = {
-                "total": len(comments),
-                "unread": unread,
-                "checklist_done": checklist_done,
-                "checklist_total": checklist_total,
-            }
+            counts[task_id] = {"total": len(comments), "unread": unread}
 
         self.comment_counts_ready.emit(counts)
 
