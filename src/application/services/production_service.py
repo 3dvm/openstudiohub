@@ -207,6 +207,9 @@ class ProductionService:
             return []
 
         by_person = {str(p.get("id", "")): p for p in self.list_persons()}
+        entity_names: Dict[tuple, str] = {}
+        if any(not task.get("entity_name") for task in tasks or []):
+            entity_names = self._project_entity_names(project_id)
 
         task_types: Dict[str, dict] = {}
         try:
@@ -239,11 +242,57 @@ class ProductionService:
                     row["task_status"] = status
             row["assignees"] = self._normalize_assignees(row.get("assignees"), by_person)
             if not row.get("entity_name"):
-                row["entity_name"] = row.get("entity_id") or row.get("name") or "—"
+                row["entity_name"] = self._resolve_entity_name(row, entity_names)
             if not row.get("entity_type_name"):
                 row["entity_type_name"] = row.get("entity_type") or ""
             rows.append(row)
         return rows
+
+    def _project_entity_names(self, project_id: str) -> Dict[tuple, str]:
+        """Map ``(entity_type, entity_id)`` to the project entity name."""
+        names: Dict[tuple, str] = {}
+        getters = (
+            ("shot", self.kitsu.all_shots_for_project),
+            ("asset", self.kitsu.all_assets_for_project),
+            ("sequence", self.kitsu.all_sequences_for_project),
+            ("edit", self.kitsu.all_edits_for_project),
+            ("episode", self.kitsu.all_episodes_for_project),
+        )
+        for type_name, getter in getters:
+            try:
+                entities = getter(project_id) or []
+            except Exception as error:  # noqa: BLE001
+                print(
+                    f"[ProductionService] Warning: failed to fetch {type_name}s: {error}"
+                )
+                continue
+            for entity in entities:
+                entity_id = str(entity.get("id", "") or "")
+                name = entity.get("name") or entity.get("full_name") or ""
+                if entity_id and name:
+                    names[(type_name, entity_id)] = str(name)
+        return names
+
+    @staticmethod
+    def _resolve_entity_name(row: dict, names: Dict[tuple, str]) -> str:
+        entity = row.get("entity")
+        if isinstance(entity, dict) and entity.get("name"):
+            return str(entity["name"])
+
+        entity_id = str(row.get("entity_id", "") or "")
+        entity_type = str(
+            row.get("entity_type_name") or row.get("entity_type") or ""
+        ).strip().lower()
+        if entity_id:
+            if entity_type:
+                name = names.get((entity_type, entity_id))
+                if name:
+                    return name
+            for (_type_name, candidate_id), name in names.items():
+                if candidate_id == entity_id:
+                    return name
+
+        return "—"
 
     @staticmethod
     def _normalize_assignees(assignees, by_person: Dict[str, dict]) -> List[dict]:

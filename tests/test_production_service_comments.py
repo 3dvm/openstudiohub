@@ -10,6 +10,7 @@ class FakeKitsu:
                 "id": "t1",
                 "name": "main",
                 "entity_id": "e1",
+                "entity_type_name": "Shot",
                 "task_type_id": "tt1",
                 "task_status_id": "ts1",
                 "assignees": ["u1"],
@@ -32,6 +33,21 @@ class FakeKitsu:
 
     def all_task_statuses_for_project(self, _project_id):
         return [{"id": "ts1", "name": "In Progress", "color": "#3B82F6"}]
+
+    def all_shots_for_project(self, _project_id):
+        return [{"id": "e1", "name": "Hero Shot"}]
+
+    def all_assets_for_project(self, _project_id):
+        return []
+
+    def all_sequences_for_project(self, _project_id):
+        return []
+
+    def all_edits_for_project(self, _project_id):
+        return []
+
+    def all_episodes_for_project(self, _project_id):
+        return []
 
     def get_task(self, task_id):
         return dict(self.tasks[task_id])
@@ -75,7 +91,7 @@ def test_get_project_task_board_enriches_rows():
     assert rows[0]["task_type_name"] == "Modeling"
     assert rows[0]["task_status"]["name"] == "In Progress"
     assert rows[0]["assignees"][0]["full_name"] == "Ada"
-    assert rows[0]["entity_name"] == "e1"
+    assert rows[0]["entity_name"] == "Hero Shot"
 
 
 def test_apply_task_assignees_adds_and_removes():
