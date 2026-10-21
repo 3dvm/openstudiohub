@@ -57,16 +57,16 @@ class InfrastructureWidget(QFrame):
         layout.setSpacing(20)
 
         header = QLabel(self.tr("Studio Infrastructure (Zero-Config Environments)"))
-        header.setStyleSheet("color: #F8FAFC; font-size: 20px; font-weight: bold;")
+        header.setObjectName("PageTitle")
         layout.addWidget(header)
 
         desc = QLabel(self.tr("Deploy local instances of Subversion and Kitsu for testing and development. Requires Docker installed and running."))
-        desc.setStyleSheet("color: #94A3B8; font-size: 13px;")
+        desc.setObjectName("PageDescription")
         desc.setWordWrap(True)
         layout.addWidget(desc)
 
         grid = QGridLayout()
-        grid.setSpacing(20)
+        grid.setSpacing(16)
 
         svn_card = self._build_service_card(
             title="Local VCS Server (SVN)",
@@ -89,40 +89,32 @@ class InfrastructureWidget(QFrame):
 
     def _build_service_card(self, title: str, desc: str, port: str, start_callback, stop_callback) -> QFrame:
         card = QFrame()
-        card.setStyleSheet("""
-            QFrame { background-color: #1E293B; border-radius: 12px; border: 1px solid #334155; }
-        """)
+        card.setObjectName("CardFrame")
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(20, 20, 20, 20)
+        c_layout.setContentsMargins(16, 16, 16, 16)
 
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: #F8FAFC; font-size: 16px; font-weight: bold; border: none;")
+        lbl_title.setObjectName("SectionTitle")
         c_layout.addWidget(lbl_title)
 
         lbl_desc = QLabel(desc)
-        lbl_desc.setStyleSheet("color: #94A3B8; font-size: 12px; border: none;")
+        lbl_desc.setObjectName("MutedLabel")
         lbl_desc.setWordWrap(True)
         c_layout.addWidget(lbl_desc)
 
         lbl_port = QLabel(f"Port: {port}")
-        lbl_port.setStyleSheet("color: #3B82F6; font-size: 11px; font-weight: bold; border: none;")
+        lbl_port.setObjectName("InfoLabel")
         c_layout.addWidget(lbl_port)
 
         c_layout.addStretch()
 
         btn_layout = QHBoxLayout()
         btn_start = QPushButton(self.tr("Deploy & Start"))
-        btn_start.setStyleSheet("""
-            QPushButton { background-color: #10B981; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }
-            QPushButton:hover { background-color: #059669; }
-        """)
+        btn_start.setObjectName("SuccessButton")
         btn_start.clicked.connect(start_callback)
 
         btn_stop = QPushButton(self.tr("Stop & Destroy"))
-        btn_stop.setStyleSheet("""
-            QPushButton { background-color: #EF4444; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }
-            QPushButton:hover { background-color: #DC2626; }
-        """)
+        btn_stop.setObjectName("DangerButton")
         btn_stop.clicked.connect(stop_callback)
 
         btn_layout.addWidget(btn_start)
@@ -135,15 +127,12 @@ class InfrastructureWidget(QFrame):
         field = QLineEdit()
         field.setFixedHeight(30)
         field.setPlaceholderText(placeholder)
-        field.setStyleSheet(
-            "QLineEdit { background-color: #0F172A; border: 1px solid #475569; color: #F8FAFC; "
-            "border-radius: 6px; padding-left: 8px; }"
-        )
+        field.setObjectName("FormInput")
         return field
 
     def _styled_label(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px; border: none;")
+        label.setObjectName("InputLabel")
         return label
 
     def _browse_into(self, line_edit: QLineEdit) -> None:
@@ -153,13 +142,13 @@ class InfrastructureWidget(QFrame):
 
     def _build_remote_server_card(self) -> QFrame:
         card = QFrame()
-        card.setStyleSheet("QFrame { background-color: #1E293B; border-radius: 12px; border: 1px solid #334155; }")
+        card.setObjectName("CardFrame")
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(20, 20, 20, 20)
+        c_layout.setContentsMargins(16, 16, 16, 16)
         c_layout.setSpacing(10)
 
         title = QLabel(self.tr("VCS Servers"))
-        title.setStyleSheet("color: #F8FAFC; font-size: 16px; font-weight: bold; border: none;")
+        title.setObjectName("SectionTitle")
         c_layout.addWidget(title)
 
         desc = QLabel(self.tr(
@@ -168,7 +157,7 @@ class InfrastructureWidget(QFrame):
             "over the tailnet; artist credentials live in the Session Credentials tab and the SSH "
             "passphrase is only needed for provisioning (kept in RAM)."
         ))
-        desc.setStyleSheet("color: #94A3B8; font-size: 12px; border: none;")
+        desc.setObjectName("MutedLabel")
         desc.setWordWrap(True)
         c_layout.addWidget(desc)
 
@@ -179,24 +168,22 @@ class InfrastructureWidget(QFrame):
         selector = QHBoxLayout()
         self.combo_servers = QComboBox()
         self.combo_servers.setFixedHeight(30)
-        self.combo_servers.setStyleSheet(
-            "QComboBox { background-color: #0F172A; border: 1px solid #475569; color: #F8FAFC; border-radius: 6px; padding-left: 8px; }"
-        )
+        self.combo_servers.setObjectName("StandardComboBox")
         self.combo_servers.currentIndexChanged.connect(self._on_server_selected)
         selector.addWidget(self.combo_servers, stretch=1)
 
         btn_new = QPushButton(self.tr("New"))
-        btn_new.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 6px; font-weight: bold; }")
+        btn_new.setObjectName("SecondaryButton")
         btn_new.clicked.connect(self._on_new_server)
         selector.addWidget(btn_new)
 
         btn_remove = QPushButton(self.tr("Remove"))
-        btn_remove.setStyleSheet("QPushButton { background-color: #7F1D1D; color: white; border-radius: 6px; padding: 6px; font-weight: bold; }")
+        btn_remove.setObjectName("DangerButton")
         btn_remove.clicked.connect(self._on_remove_server)
         selector.addWidget(btn_remove)
 
         btn_default = QPushButton(self.tr("Set Default"))
-        btn_default.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 6px; font-weight: bold; }")
+        btn_default.setObjectName("SecondaryButton")
         btn_default.clicked.connect(self._on_set_default)
         selector.addWidget(btn_default)
         c_layout.addLayout(selector)
@@ -209,7 +196,6 @@ class InfrastructureWidget(QFrame):
         self.combo_adapter.addItems(["svn", "git-lfs", "none"])
         self.entry_svn_url = self._styled_input("svn://svn-vps")
         self.chk_sparse = QCheckBox(self.tr("Enable Jailing (Vendor Sparse Checkout)"))
-        self.chk_sparse.setStyleSheet("color: #94A3B8; border: none;")
         self.combo_server_mode = QComboBox()
         self.combo_server_mode.addItems(["local_docker", "remote_ssh"])
         self.entry_local_container = self._styled_input("openstudio_local_svn")
@@ -228,7 +214,6 @@ class InfrastructureWidget(QFrame):
         self.entry_ca_file = self._styled_input("/path/to/studio-ca.crt")
         self.chk_trust_default_ca = QCheckBox(self.tr("Trust system CA certificates"))
         self.chk_trust_default_ca.setChecked(True)
-        self.chk_trust_default_ca.setStyleSheet("color: #94A3B8; border: none;")
         self.entry_trust_failures = self._styled_input("unknown-ca,cn-mismatch")
 
         form.addRow(self._styled_label(self.tr("Name:")), self.entry_server_name)
@@ -261,22 +246,21 @@ class InfrastructureWidget(QFrame):
 
         buttons = QHBoxLayout()
         btn_save = QPushButton(self.tr("Save Server"))
-        btn_save.setStyleSheet("QPushButton { background-color: #10B981; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }")
+        btn_save.setObjectName("SuccessButton")
         btn_save.clicked.connect(self._save_server)
         buttons.addWidget(btn_save)
 
         btn_test_ssh = QPushButton(self.tr("Test SSH"))
-        btn_test_ssh.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }")
+        btn_test_ssh.setObjectName("SecondaryButton")
         btn_test_ssh.clicked.connect(lambda: self._test_server("ssh"))
         buttons.addWidget(btn_test_ssh)
 
         btn_test_svn = QPushButton(self.tr("Test SVN"))
-        btn_test_svn.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }")
+        btn_test_svn.setObjectName("SecondaryButton")
         btn_test_svn.clicked.connect(lambda: self._test_server("svn"))
         buttons.addWidget(btn_test_svn)
 
         self.chk_verbose_ssh = QCheckBox(self.tr("Verbose (ssh -v)"))
-        self.chk_verbose_ssh.setStyleSheet("color: #94A3B8; border: none;")
         self.chk_verbose_ssh.setToolTip(self.tr(
             "Run the SSH test with '-v' and write full diagnostics to "
             "~/.openstudio/logs."
@@ -295,7 +279,7 @@ class InfrastructureWidget(QFrame):
         row.addWidget(line_edit)
         btn = QPushButton(self.tr("..."))
         btn.setFixedWidth(32)
-        btn.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 6px; }")
+        btn.setObjectName("SecondaryButton")
         btn.clicked.connect(lambda: self._browse_into(line_edit))
         row.addWidget(btn)
         return container
@@ -481,41 +465,33 @@ class InfrastructureWidget(QFrame):
 
     def _build_kitsu_service_card(self) -> QFrame:
         card = QFrame()
-        card.setStyleSheet("""
-            QFrame { background-color: #1E293B; border-radius: 12px; border: 1px solid #334155; }
-        """)
+        card.setObjectName("CardFrame")
         c_layout = QVBoxLayout(card)
-        c_layout.setContentsMargins(20, 20, 20, 20)
+        c_layout.setContentsMargins(16, 16, 16, 16)
         c_layout.setSpacing(10)
 
         lbl_title = QLabel("Production Tracker (Kitsu 1.0+)")
-        lbl_title.setStyleSheet("color: #F8FAFC; font-size: 16px; font-weight: bold; border: none;")
+        lbl_title.setObjectName("SectionTitle")
         c_layout.addWidget(lbl_title)
 
         lbl_desc = QLabel(self.tr("Database, API, and Web Frontend for Shot and Asset management."))
-        lbl_desc.setStyleSheet("color: #94A3B8; font-size: 12px; border: none;")
+        lbl_desc.setObjectName("MutedLabel")
         lbl_desc.setWordWrap(True)
         c_layout.addWidget(lbl_desc)
 
         lbl_port = QLabel("Port: 8080")
-        lbl_port.setStyleSheet("color: #3B82F6; font-size: 11px; font-weight: bold; border: none;")
+        lbl_port.setObjectName("InfoLabel")
         c_layout.addWidget(lbl_port)
 
         c_layout.addStretch()
 
         btn_layout1 = QHBoxLayout()
         btn_start = QPushButton(self.tr("Deploy & Start"))
-        btn_start.setStyleSheet("""
-            QPushButton { background-color: #10B981; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }
-            QPushButton:hover { background-color: #059669; }
-        """)
+        btn_start.setObjectName("SuccessButton")
         btn_start.clicked.connect(self.vm.deploy_kitsu)
 
         btn_stop = QPushButton(self.tr("Stop & Destroy"))
-        btn_stop.setStyleSheet("""
-            QPushButton { background-color: #EF4444; color: white; border-radius: 6px; padding: 8px; font-weight: bold; }
-            QPushButton:hover { background-color: #DC2626; }
-        """)
+        btn_stop.setObjectName("DangerButton")
         btn_stop.clicked.connect(self.vm.stop_kitsu)
         btn_layout1.addWidget(btn_start)
         btn_layout1.addWidget(btn_stop)
@@ -523,18 +499,12 @@ class InfrastructureWidget(QFrame):
         btn_layout2 = QHBoxLayout()
         btn_seed_admin = QPushButton(self.tr("1. Create Admin Account"))
         btn_seed_admin.setToolTip("Runs 'zou create-admin' inside the container.")
-        btn_seed_admin.setStyleSheet("""
-            QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 8px; font-weight: bold; font-size: 11px; }
-            QPushButton:hover { background-color: #475569; }
-        """)
+        btn_seed_admin.setObjectName("SecondaryButton")
         btn_seed_admin.clicked.connect(lambda: self.vm.run_seeder("admin"))
 
         btn_seed_dummy = QPushButton(self.tr("2. Seed Dummy Team"))
         btn_seed_dummy.setToolTip("Injects PM, TD and Artist via the Gazu API.")
-        btn_seed_dummy.setStyleSheet("""
-            QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 8px; font-weight: bold; font-size: 11px; }
-            QPushButton:hover { background-color: #475569; }
-        """)
+        btn_seed_dummy.setObjectName("SecondaryButton")
         btn_seed_dummy.clicked.connect(lambda: self.vm.run_seeder("dummy"))
         btn_layout2.addWidget(btn_seed_admin)
         btn_layout2.addWidget(btn_seed_dummy)

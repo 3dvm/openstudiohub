@@ -41,7 +41,7 @@ class AddonConfigPanel(QWidget):
             widget.setEnabled(False)
 
             label = QLabel(spec.get("label", field_name))
-            label.setStyleSheet("color: #94A3B8; font-size: 11px;")
+            label.setObjectName("HintLabel")
             layout.addRow(label, widget)
             self._widgets[field_name] = (widget, field_type)
 

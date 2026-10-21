@@ -24,6 +24,8 @@ class Sidebar(QFrame):
         self.setObjectName("SidebarFrame")
         self.setFixedWidth(240)
         self.sidebar_buttons = {}
+        self._button_icons: dict[str, Path] = {}
+        self._footer_ids: set[str] = set()
 
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(15, 20, 15, 20)
@@ -36,6 +38,14 @@ class Sidebar(QFrame):
         self.main_layout.addLayout(self.nav_layout)
 
         self.main_layout.addStretch()
+
+        self.separator = QFrame()
+        self.separator.setObjectName("SidebarSeparator")
+        self.main_layout.addWidget(self.separator)
+
+        self.footer_layout = QVBoxLayout()
+        self.footer_layout.setSpacing(8)
+        self.main_layout.addLayout(self.footer_layout)
 
     def _build_branding(self) -> None:
         self.branding_layout = QHBoxLayout()
@@ -51,7 +61,6 @@ class Sidebar(QFrame):
         studio_name = self.config_factory.get_studio_name() or "OpenStudio"
         self.lbl_title = QLabel(self.tr("{0} Hub").format(studio_name))
         self.lbl_title.setObjectName("SidebarBrandTitle")
-        self.lbl_title.setStyleSheet("color: #F8FAFC; font-size: 15px; font-weight: bold;")
         self.lbl_title.setWordWrap(True)
         self.branding_layout.addWidget(self.lbl_title)
 
@@ -59,27 +68,74 @@ class Sidebar(QFrame):
         self.main_layout.addLayout(self.branding_layout)
 
     def add_button(self, btn_id: str, text: str, emoji: str, icon_name: str, callback, active: bool = False) -> None:
+        self._add_button(
+            btn_id, text, emoji, icon_name, callback, active, footer=False, icon_size=22
+        )
+
+    def add_footer_button(
+        self,
+        btn_id: str,
+        text: str,
+        emoji: str,
+        icon_name: str,
+        callback,
+        active: bool = False,
+    ) -> None:
+        """Add a compact button to the sidebar footer (Settings, etc.)."""
+        self._footer_ids.add(btn_id)
+        self._add_button(
+            btn_id, text, emoji, icon_name, callback, active, footer=True, icon_size=18
+        )
+
+    def _add_button(
+        self,
+        btn_id: str,
+        text: str,
+        emoji: str,
+        icon_name: str,
+        callback,
+        active: bool,
+        *,
+        footer: bool,
+        icon_size: int,
+    ) -> None:
         btn = QPushButton()
         color_hex = "#F97316" if active else "#94A3B8"
 
         icon_path = Path(f"assets/icons/{icon_name}")
         if icon_name and icon_path.exists() and icon_path.is_file():
             btn.setIcon(self._create_colored_icon(icon_path, color_hex))
-            btn.setIconSize(QSize(22, 22))
+            btn.setIconSize(QSize(icon_size, icon_size))
             btn.setText(f"   {text}")
+            self._button_icons[btn_id] = icon_path
         else:
             btn.setText(f"{emoji}   {text}")
 
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setObjectName("SidebarNavActive" if active else "SidebarNavInactive")
+        btn.setObjectName(self._button_object_name(footer, active))
         btn.clicked.connect(callback)
 
         self.sidebar_buttons[btn_id] = btn
-        self.nav_layout.addWidget(btn)
+        target = self.footer_layout if footer else self.nav_layout
+        target.addWidget(btn)
+
+    @staticmethod
+    def _button_object_name(footer: bool, active: bool) -> str:
+        if footer:
+            return "SidebarFooterActive" if active else "SidebarFooterInactive"
+        return "SidebarNavActive" if active else "SidebarNavInactive"
 
     def set_active_button(self, btn_id: str) -> None:
         for key, btn in self.sidebar_buttons.items():
-            btn.setObjectName("SidebarNavActive" if key == btn_id else "SidebarNavInactive")
+            active = key == btn_id
+            btn.setObjectName(self._button_object_name(key in self._footer_ids, active))
+            icon_path = self._button_icons.get(key)
+            if icon_path is not None:
+                btn.setIcon(
+                    self._create_colored_icon(
+                        icon_path, "#F97316" if active else "#94A3B8"
+                    )
+                )
             btn.style().unpolish(btn)
             btn.style().polish(btn)
 

@@ -49,7 +49,7 @@ class MigrationServerDialog(QDialog):
         layout.addWidget(title)
 
         lbl_project = QLabel(self.tr(f"Project: {project_name}"))
-        lbl_project.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        lbl_project.setObjectName("MutedLabel")
         layout.addWidget(lbl_project)
 
         notice = QLabel(
@@ -59,7 +59,7 @@ class MigrationServerDialog(QDialog):
             )
         )
         notice.setWordWrap(True)
-        notice.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        notice.setObjectName("MutedLabel")
         layout.addWidget(notice)
 
         form = QFormLayout()
@@ -67,14 +67,14 @@ class MigrationServerDialog(QDialog):
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         source_label = QLabel(self.tr("Source:"))
-        source_label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+        source_label.setObjectName("InputLabel")
         source_value = QLabel(
             self.tr(f"{source_server.get('name', 'Unknown')}  ({source_server.get('repository_url', '')})")
         )
-        source_value.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 13px;")
+        source_value.setObjectName("BodyValue")
 
         target_label = QLabel(self.tr("Target:"))
-        target_label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+        target_label.setObjectName("InputLabel")
         self.combo_target = QComboBox()
         self.combo_target.setObjectName("FormInput")
         self.combo_target.setFixedHeight(35)

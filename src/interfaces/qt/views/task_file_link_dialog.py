@@ -67,7 +67,7 @@ class TaskFileLinkDialog(QDialog):
         layout.addWidget(title)
 
         info = QLabel(f"{self.entity_label}  •  {self.task_type_name}")
-        info.setStyleSheet("color: #94A3B8; font-weight: bold;")
+        info.setObjectName("MutedLabel")
         info.setAlignment(Qt.AlignCenter)
         layout.addWidget(info)
 
@@ -96,6 +96,7 @@ class TaskFileLinkDialog(QDialog):
         layout.addLayout(actions)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
         layout.addStretch()
@@ -150,7 +151,8 @@ class TaskFileLinkDialog(QDialog):
 
     def _show_status(self, message: str, error: bool = False) -> None:
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet("color: #EF4444;" if error else "color: #10B981;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "error" if error else "success")
 
     # ------------------------------------------------------------------
     # Actions

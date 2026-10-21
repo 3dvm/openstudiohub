@@ -141,7 +141,6 @@ class RemoteExplorerWidget(QFrame):
         self.chk_mac = QCheckBox("macOS")
 
         for chk in [self.chk_win, self.chk_lin, self.chk_mac]:
-            chk.setStyleSheet("color: #F8FAFC; font-size: 13px; margin-left: 10px; spacing: 5px;")
             chk.stateChanged.connect(self._apply_os_filters)
             os_layout.addWidget(chk)
 
@@ -150,10 +149,10 @@ class RemoteExplorerWidget(QFrame):
 
         self.remote_scroll = QScrollArea()
         self.remote_scroll.setWidgetResizable(True)
-        self.remote_scroll.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 6px; background-color: #0F172A; }")
+        self.remote_scroll.setObjectName("DataScroll")
 
         self.remote_widget = QWidget()
-        self.remote_widget.setStyleSheet("background: transparent;")
+        self.remote_widget.setObjectName("TransparentGridContainer")
         self.remote_list_layout = QVBoxLayout(self.remote_widget)
         self.remote_list_layout.setAlignment(Qt.AlignTop)
         self.remote_list_layout.setSpacing(8)
@@ -165,7 +164,7 @@ class RemoteExplorerWidget(QFrame):
         self.progress_bar.setFixedHeight(8)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("QProgressBar { border: none; background: #1F2531; } QProgressBar::chunk { background-color: #10B981; }")
+        self.progress_bar.setObjectName("SuccessProgress")
         self.progress_bar.hide()
         browser_layout.addWidget(self.progress_bar)
 
@@ -181,12 +180,28 @@ class RemoteExplorerWidget(QFrame):
         self._clear_layout()
         lbl = QLabel(message)
         lbl.setAlignment(Qt.AlignCenter)
-        lbl.setStyleSheet(f"color: {color}; font-size: 13px; font-style: italic; margin-top: 30px;")
+        lbl.setObjectName("HintLabel")
+        self._apply_label_state(lbl, color)
         self.remote_list_layout.addWidget(lbl)
+
+    @staticmethod
+    def _apply_label_state(label: QLabel, color: str) -> None:
+        from src.interfaces.qt.ui_style import set_ui_state
+
+        color = (color or "").lower()
+        if color in ("#ef4444", "#fca5a5"):
+            state = "error"
+        elif color in ("#10b981", "#059669"):
+            state = "success"
+        elif color in ("#f59e0b", "#fb923c"):
+            state = "warning"
+        else:
+            state = ""
+        set_ui_state(label, state)
 
     def _wrap_in_frame(self, layout) -> QFrame:
         frame = QFrame()
-        frame.setStyleSheet("background-color: #1E293B; border-radius: 6px; padding: 4px;")
+        frame.setObjectName("RowFrame")
         frame.setLayout(layout)
         return frame
 
@@ -211,12 +226,12 @@ class RemoteExplorerWidget(QFrame):
             row.setContentsMargins(10, 5, 10, 5)
 
             lbl = QLabel(f" Blender {version}")
-            lbl.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 14px;")
+            lbl.setObjectName("BoardName")
             row.addWidget(lbl)
 
             if version in MACUARE_LTS_VERSIONS:
                 lts = QLabel("LTS")
-                lts.setStyleSheet("background-color: #3B82F6; color: white; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold;")
+                lts.setObjectName("BadgeBlue")
                 row.addWidget(lts)
 
             row.addStretch()
@@ -284,7 +299,7 @@ class RemoteExplorerWidget(QFrame):
 
         if shown == 0:
             lbl = QLabel(self.tr("No packages match the selected OS filters."))
-            lbl.setStyleSheet("color: #94A3B8; font-style: italic; margin-top: 10px;")
+            lbl.setObjectName("HintLabel")
             self.remote_list_layout.addWidget(lbl)
 
     def _create_file_row(self, base_version: str, version: str, os_type: str, filename: str) -> None:
@@ -301,7 +316,7 @@ class RemoteExplorerWidget(QFrame):
         row.addWidget(lbl_os)
 
         lbl_file = QLabel(filename)
-        lbl_file.setStyleSheet("color: #E2E8F0; font-size: 13px;")
+        lbl_file.setObjectName("BodyValue")
         row.addWidget(lbl_file)
         row.addStretch()
 
@@ -310,7 +325,7 @@ class RemoteExplorerWidget(QFrame):
 
         if local_path.exists():
             lbl_ok = QLabel(self.tr("✓ In Vault"))
-            lbl_ok.setStyleSheet("color: #10B981; font-weight: bold; font-size: 13px; padding-right: 10px;")
+            lbl_ok.setObjectName("SuccessLabel")
             row.addWidget(lbl_ok)
         else:
             btn_dl = QPushButton(self.tr("📥 Download"))

@@ -105,7 +105,7 @@ class RepairProjectDialog(QDialog):
         main_layout.addSpacing(5)
 
         lbl_name = QLabel(self.tr("Project:"))
-        lbl_name.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_name.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_name)
 
         self.entry_name = QLineEdit(self.project_name)
@@ -120,6 +120,7 @@ class RepairProjectDialog(QDialog):
             self._build_kitsu_orphan_fields(main_layout)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.hide()
         main_layout.addWidget(self.lbl_status)
@@ -133,14 +134,12 @@ class RepairProjectDialog(QDialog):
 
     def _build_nas_ghost_fields(self, main_layout) -> None:
         lbl_template = QLabel(self.tr("Kitsu Template:"))
-        lbl_template.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_template.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_template)
 
         self.combo_kitsu_template = QComboBox()
         self.combo_kitsu_template.setFixedHeight(40)
-        self.combo_kitsu_template.setStyleSheet(
-            "QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }"
-        )
+        self.combo_kitsu_template.setObjectName("StandardComboBox")
         self.combo_kitsu_template.addItem(self.tr("Loading templates..."))
         self.combo_kitsu_template.setEnabled(False)
         main_layout.addWidget(self.combo_kitsu_template)
@@ -148,30 +147,26 @@ class RepairProjectDialog(QDialog):
 
     def _build_kitsu_orphan_fields(self, main_layout) -> None:
         lbl_version = QLabel(self.tr("Target Blender Version:"))
-        lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_version.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_version)
 
         versions = list(self.vault_data.keys()) if self.vault_data else []
         self.combo_version = QComboBox()
         self.combo_version.addItems(versions)
         self.combo_version.setFixedHeight(40)
-        self.combo_version.setStyleSheet(
-            "QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }"
-        )
+        self.combo_version.setObjectName("StandardComboBox")
         self.combo_version.currentTextChanged.connect(self._draw_dynamic_dependencies)
         main_layout.addWidget(self.combo_version)
 
         lbl_addons = QLabel(self.tr("Vault Components (vault_manifest.json):"))
-        lbl_addons.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        lbl_addons.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_addons)
 
         self.scroll_addons = QScrollArea()
         self.scroll_addons.setWidgetResizable(True)
-        self.scroll_addons.setStyleSheet(
-            "QScrollArea { border: 1px solid #334155; border-radius: 8px; background-color: #1E293B; }"
-        )
+        self.scroll_addons.setObjectName("DataScroll")
         self.addons_widget = QWidget()
-        self.addons_widget.setStyleSheet("background: transparent;")
+        self.addons_widget.setObjectName("TransparentGridContainer")
         self.addons_layout = QVBoxLayout(self.addons_widget)
         self.addons_layout.setAlignment(Qt.AlignTop)
         self.scroll_addons.setWidget(self.addons_widget)
@@ -233,7 +228,7 @@ class RepairProjectDialog(QDialog):
 
         for category, items in available_categories.items():
             lbl_cat = QLabel(f"[{category.upper()}]")
-            lbl_cat.setStyleSheet("color: #10B981; font-weight: bold; margin-top: 10px;")
+            lbl_cat.setObjectName("SuccessLabel")
             self.addons_layout.addWidget(lbl_cat)
             self.tool_checkboxes[category] = {}
 
@@ -245,11 +240,9 @@ class RepairProjectDialog(QDialog):
 
                 if category == "templates":
                     cb = QRadioButton(label_text)
-                    cb.setStyleSheet("QRadioButton { color: #F8FAFC; padding: 5px; }")
                     self.template_group.addButton(cb)
                 else:
                     cb = QCheckBox(label_text)
-                    cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; }")
 
                 cb.toggled.connect(
                     lambda checked, c=category, n=item_name, r=entry.get("requires", []): self._resolve_sub_dependencies(checked, c, n, r)
@@ -386,7 +379,8 @@ class RepairProjectDialog(QDialog):
 
     def _set_busy_status(self, message: str) -> None:
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "warning")
         self.lbl_status.show()
 
     # ------------------------------------------------------------------
@@ -426,14 +420,16 @@ class RepairProjectDialog(QDialog):
         self._disconnect_repair_signal()
         if success:
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "success")
             self.on_success()
             self.close()
         else:
             self.btn_repair.setEnabled(True)
             self.btn_repair.setText(self.tr("Repair Project"))
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "error")
 
 
 class RepairBatchDialog(QDialog):
@@ -456,9 +452,7 @@ class RepairBatchDialog(QDialog):
         layout.addWidget(lbl_title)
 
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.list_widget.setObjectName("DataList")
         for project in damaged_projects:
             label = f"{project['name']} — {project['error_type']}"
             item = QListWidgetItem(label)

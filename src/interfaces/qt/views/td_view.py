@@ -48,9 +48,18 @@ class ViewTD(BaseDashboardView):
         on_repair_callback=None,
         status_sink: StatusSink | None = None,
         task_board_vm=None,
+        notifications_vm=None,
         **kwargs,
     ) -> None:
-        super().__init__(parent, auth_service, config_factory, on_logout, status_sink, **kwargs)
+        super().__init__(
+            parent,
+            auth_service,
+            config_factory,
+            on_logout,
+            status_sink,
+            notifications_vm=notifications_vm,
+            **kwargs,
+        )
 
         self.project_list_vm = project_list_vm
         self.infrastructure_vm = infrastructure_vm
@@ -72,7 +81,7 @@ class ViewTD(BaseDashboardView):
         self.add_sidebar_button("tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("tasks"))
         self.add_sidebar_button("infra", self.tr("Infrastructure"), "⚙️", "server.svg", lambda: self._switch_panel("infra"))
         self.add_sidebar_button("audit", self.tr("VCS Audit"), "", "list.svg", lambda: self._switch_panel("audit"))
-        self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
+        self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_td_content()
         self.projects_view.refresh()

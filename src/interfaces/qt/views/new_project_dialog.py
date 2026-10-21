@@ -81,12 +81,12 @@ class NewProjectDialog(QDialog):
         main_layout.addWidget(self.entry_name)
 
         lbl_kitsu_template = QLabel(self.tr("Kitsu Template:"))
-        lbl_kitsu_template.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_kitsu_template.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_kitsu_template)
 
         self.combo_kitsu_template = QComboBox()
         self.combo_kitsu_template.setFixedHeight(40)
-        self.combo_kitsu_template.setStyleSheet("QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }")
+        self.combo_kitsu_template.setObjectName("StandardComboBox")
         self.combo_kitsu_template.addItem(self.tr("Loading templates..."))
         self.combo_kitsu_template.setEnabled(False)
         main_layout.addWidget(self.combo_kitsu_template)
@@ -98,27 +98,27 @@ class NewProjectDialog(QDialog):
         main_layout.addWidget(self.combo_vcs)
 
         lbl_version = QLabel(self.tr("Target Blender Version:"))
-        lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_version.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_version)
 
         versions = list(self.vault_data.keys()) if self.vault_data else []
         self.combo_version = QComboBox()
         self.combo_version.addItems(versions)
         self.combo_version.setFixedHeight(40)
-        self.combo_version.setStyleSheet("QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }")
+        self.combo_version.setObjectName("StandardComboBox")
         self.combo_version.currentTextChanged.connect(self._draw_dynamic_dependencies)
         main_layout.addWidget(self.combo_version)
 
         lbl_addons = QLabel(self.tr("Vault Components (vault_manifest.json):"))
-        lbl_addons.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        lbl_addons.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_addons)
 
         self.scroll_addons = QScrollArea()
         self.scroll_addons.setWidgetResizable(True)
-        self.scroll_addons.setStyleSheet("QScrollArea { border: 1px solid #334155; border-radius: 8px; background-color: #1E293B; }")
+        self.scroll_addons.setObjectName("DataScroll")
 
         self.addons_widget = QWidget()
-        self.addons_widget.setStyleSheet("background: transparent;")
+        self.addons_widget.setObjectName("TransparentGridContainer")
         self.addons_layout = QVBoxLayout(self.addons_widget)
         self.addons_layout.setAlignment(Qt.AlignTop)
         self.scroll_addons.setWidget(self.addons_widget)
@@ -128,7 +128,7 @@ class NewProjectDialog(QDialog):
             self._draw_dynamic_dependencies(self.combo_version.currentText())
 
         lbl_splash = QLabel(self.tr("Custom Splash Screen (1000x500px):"))
-        lbl_splash.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_splash.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_splash)
 
         splash_layout = QHBoxLayout()
@@ -142,11 +142,12 @@ class NewProjectDialog(QDialog):
         splash_layout.addWidget(self.btn_splash)
 
         self.lbl_splash_name = QLabel(self.tr("No image"))
-        self.lbl_splash_name.setStyleSheet("color: #64748B; padding-left: 10px;")
+        self.lbl_splash_name.setObjectName("HintLabel")
         splash_layout.addWidget(self.lbl_splash_name, stretch=1)
         main_layout.addLayout(splash_layout)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.hide()
         main_layout.addWidget(self.lbl_status)
@@ -160,7 +161,7 @@ class NewProjectDialog(QDialog):
 
         if not self.vault_data:
             self.lbl_status.setText(self.tr("⚠️ OPERATION BLOCKED: Vault not initialized."))
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold; padding: 12px; background-color: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 6px;")
+            self.lbl_status.setObjectName("InlineError")
             self.lbl_status.show()
             self.entry_name.setEnabled(False)
             self.combo_version.setEnabled(False)
@@ -196,7 +197,7 @@ class NewProjectDialog(QDialog):
         if path:
             self.splash_path = path
             self.lbl_splash_name.setText(Path(path).name)
-            self.lbl_splash_name.setStyleSheet("color: #F8FAFC; padding-left: 10px;")
+            self.lbl_splash_name.setObjectName("BodyValue")
 
     def _clear_addons_layout(self) -> None:
         while self.addons_layout.count():
@@ -218,7 +219,7 @@ class NewProjectDialog(QDialog):
 
         for category, items in available_categories.items():
             lbl_cat = QLabel(f"[{category.upper()}]")
-            lbl_cat.setStyleSheet("color: #10B981; font-weight: bold; margin-top: 10px;")
+            lbl_cat.setObjectName("SuccessLabel")
             self.addons_layout.addWidget(lbl_cat)
             self.tool_checkboxes[category] = {}
 
@@ -230,11 +231,9 @@ class NewProjectDialog(QDialog):
 
                 if category == "templates":
                     cb = QRadioButton(label_text)
-                    cb.setStyleSheet("QRadioButton { color: #F8FAFC; padding: 5px; }")
                     self.template_group.addButton(cb)
                 else:
                     cb = QCheckBox(label_text)
-                    cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; }")
 
                 cb.toggled.connect(lambda checked, c=category, n=item_name, r=entry.get("requires", []): self._resolve_sub_dependencies(checked, c, n, r))
                 self.addons_layout.addWidget(cb)
@@ -300,7 +299,8 @@ class NewProjectDialog(QDialog):
         self.btn_create.setEnabled(False)
         self.btn_create.setText(self.tr("Creating..."))
         self.lbl_status.setText(self.tr("Forging structure and connecting repositories..."))
-        self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "warning")
         self.lbl_status.show()
 
         self.vm.create_project(
@@ -333,7 +333,9 @@ class NewProjectDialog(QDialog):
     def _on_creation_finished(self, outcome: CreationOutcome) -> None:
         if outcome.success:
             self.lbl_status.setText(outcome.message)
-            self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold;")
+            from src.interfaces.qt.ui_style import set_ui_state
+
+            set_ui_state(self.lbl_status, "success")
             self.on_success()
             self.close()
             return
@@ -351,14 +353,18 @@ class NewProjectDialog(QDialog):
             self.btn_create.setEnabled(False)
             self.btn_create.setText(self.tr("Retrying..."))
             self.lbl_status.setText(self.tr("Retrying the failed step..."))
-            self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+            from src.interfaces.qt.ui_style import set_ui_state
+
+            set_ui_state(self.lbl_status, "warning")
             self.lbl_status.show()
             self.vm.retry_creation()
         elif dialog.action == CreationErrorAction.ROLLBACK:
             self.btn_create.setEnabled(False)
             self.btn_create.setText(self.tr("Deleting..."))
             self.lbl_status.setText(self.tr("Deleting the created data..."))
-            self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+            from src.interfaces.qt.ui_style import set_ui_state
+
+            set_ui_state(self.lbl_status, "warning")
             self.lbl_status.show()
             self.vm.rollback_creation()
         else:
@@ -369,7 +375,8 @@ class NewProjectDialog(QDialog):
         self.btn_create.setText(self.tr("Generate Project"))
         color = "#10B981" if success else "#EF4444"
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "success" if success else "warning")
         self.lbl_status.show()
         if success:
             self.on_success()
@@ -378,7 +385,8 @@ class NewProjectDialog(QDialog):
         self.btn_create.setEnabled(True)
         self.btn_create.setText(self.tr("Generate Project"))
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "error")
         self.lbl_status.show()
 
     def try_safe_delete(self) -> None:

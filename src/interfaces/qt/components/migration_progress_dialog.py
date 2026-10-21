@@ -48,11 +48,11 @@ class MigrationProgressDialog(QDialog):
         route = QLabel(
             self.tr(f"{source.get('name', '?')}  →  {target.get('name', '?')}")
         )
-        route.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 13px;")
+        route.setObjectName("SectionTitle")
         layout.addWidget(route)
 
         self.lbl_status = QLabel(self.tr("Starting..."))
-        self.lbl_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_status.setObjectName("StatusLabel")
         layout.addWidget(self.lbl_status)
 
         self.progress = QProgressBar()
@@ -61,15 +61,12 @@ class MigrationProgressDialog(QDialog):
         layout.addWidget(self.progress)
 
         self.lbl_stats = QLabel(self.tr("Preparing..."))
-        self.lbl_stats.setStyleSheet("color: #94A3B8; font-size: 11px; font-family: monospace;")
+        self.lbl_stats.setObjectName("HintLabel")
         layout.addWidget(self.lbl_stats)
 
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setObjectName("FormInput")
-        self.log_output.setStyleSheet(
-            "font-family: monospace; font-size: 11px; color: #94A3B8; background-color: #0F172A;"
-        )
+        self.log_output.setObjectName("TerminalView")
         layout.addWidget(self.log_output, stretch=1)
 
         buttons = QHBoxLayout()
@@ -123,10 +120,12 @@ class MigrationProgressDialog(QDialog):
         if success:
             self.progress.setValue(100)
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold; font-size: 12px;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "success")
         else:
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 12px;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "error")
         self.append_log(("✅ " if success else "❌ ") + message)
 
     # ------------------------------------------------------------------

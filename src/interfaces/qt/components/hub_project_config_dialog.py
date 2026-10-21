@@ -99,7 +99,7 @@ class HubProjectConfigDialog(QDialog):
 
         self.lbl_subtitle = QLabel(self.project_name)
         self.lbl_subtitle.setAlignment(Qt.AlignCenter)
-        self.lbl_subtitle.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_subtitle.setObjectName("MutedLabel")
         main_layout.addWidget(self.lbl_subtitle)
 
         main_layout.addWidget(self._build_info_form())
@@ -112,11 +112,7 @@ class HubProjectConfigDialog(QDialog):
                 )
             )
             notice.setWordWrap(True)
-            notice.setStyleSheet(
-                "color: #F59E0B; font-size: 12px; padding: 8px; "
-                "background-color: rgba(245, 158, 11, 0.08); "
-                "border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 6px;"
-            )
+            notice.setObjectName("NoticeWarning")
             main_layout.addWidget(notice)
 
         main_layout.addWidget(self._build_vcs_section())
@@ -124,6 +120,7 @@ class HubProjectConfigDialog(QDialog):
         main_layout.addWidget(self._build_splash_section())
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.setWordWrap(True)
         self.lbl_status.hide()
@@ -171,10 +168,10 @@ class HubProjectConfigDialog(QDialog):
 
         for label_text, value in rows:
             label = QLabel(label_text)
-            label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 11px;")
+            label.setObjectName("InputLabel")
             widget = QLabel(value)
             widget.setWordWrap(True)
-            widget.setStyleSheet("color: #F8FAFC; font-size: 12px;")
+            widget.setObjectName("BodyValue")
             form.addRow(label, widget)
 
         container = QWidget()
@@ -188,16 +185,13 @@ class HubProjectConfigDialog(QDialog):
         layout.setSpacing(6)
 
         label = QLabel(self.tr("Version Control System (VCS):"))
-        label.setStyleSheet("font-weight: bold; margin-top: 5px;")
+        label.setObjectName("SectionTitle")
         layout.addWidget(label)
 
         row = QHBoxLayout()
         self.combo_vcs = QComboBox()
         self.combo_vcs.setFixedHeight(36)
-        self.combo_vcs.setStyleSheet(
-            "QComboBox { background-color: #0F172A; border: 1px solid #475569; "
-            "border-radius: 8px; color: #F8FAFC; padding: 5px; }"
-        )
+        self.combo_vcs.setObjectName("StandardComboBox")
         self._populate_vcs_servers()
         row.addWidget(self.combo_vcs, stretch=1)
 
@@ -211,7 +205,7 @@ class HubProjectConfigDialog(QDialog):
 
         self.lbl_vcs_status = QLabel("")
         self.lbl_vcs_status.setWordWrap(True)
-        self.lbl_vcs_status.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        self.lbl_vcs_status.setObjectName("StatusLabel")
         layout.addWidget(self.lbl_vcs_status)
 
         return container
@@ -223,15 +217,12 @@ class HubProjectConfigDialog(QDialog):
         layout.setSpacing(6)
 
         label = QLabel(self.tr("Blender Version & Vault Components:"))
-        label.setStyleSheet("font-weight: bold;")
+        label.setObjectName("SectionTitle")
         layout.addWidget(label)
 
         self.combo_version = QComboBox()
         self.combo_version.setFixedHeight(36)
-        self.combo_version.setStyleSheet(
-            "QComboBox { background-color: #0F172A; border: 1px solid #475569; "
-            "border-radius: 8px; color: #F8FAFC; padding: 5px; }"
-        )
+        self.combo_version.setObjectName("StandardComboBox")
         versions = list(self.vault_data.keys()) if self.vault_data else []
         current_version = str(self.blueprint.get("blender_version", "") or "")
         if current_version and current_version not in versions:
@@ -242,11 +233,9 @@ class HubProjectConfigDialog(QDialog):
 
         self.scroll_addons = QScrollArea()
         self.scroll_addons.setWidgetResizable(True)
-        self.scroll_addons.setStyleSheet(
-            "QScrollArea { border: 1px solid #334155; border-radius: 8px; background-color: #1E293B; }"
-        )
+        self.scroll_addons.setObjectName("DataScroll")
         self.addons_widget = QWidget()
-        self.addons_widget.setStyleSheet("background: transparent;")
+        self.addons_widget.setObjectName("TransparentGridContainer")
         self.addons_layout = QVBoxLayout(self.addons_widget)
         self.addons_layout.setAlignment(Qt.AlignTop)
         self.scroll_addons.setWidget(self.addons_widget)
@@ -261,17 +250,14 @@ class HubProjectConfigDialog(QDialog):
         layout.setSpacing(6)
 
         label = QLabel(self.tr("Splash Screen (1000x500px):"))
-        label.setStyleSheet("font-weight: bold;")
+        label.setObjectName("SectionTitle")
         layout.addWidget(label)
 
         row = QHBoxLayout()
         self.lbl_splash_preview = QLabel()
         self.lbl_splash_preview.setFixedSize(220, 110)
         self.lbl_splash_preview.setAlignment(Qt.AlignCenter)
-        self.lbl_splash_preview.setStyleSheet(
-            "background-color: #0F172A; border: 1px dashed #334155; "
-            "border-radius: 8px; color: #64748B; font-size: 11px;"
-        )
+        self.lbl_splash_preview.setObjectName("SplashPreview")
         self._set_splash_preview(self.config.get("splash_path") or "")
         row.addWidget(self.lbl_splash_preview)
 
@@ -288,7 +274,7 @@ class HubProjectConfigDialog(QDialog):
         self.lbl_splash_name = QLabel(
             Path(self.config.get("splash_path")).name if self.config.get("splash_path") else self.tr("Keeping current")
         )
-        self.lbl_splash_name.setStyleSheet("color: #64748B; font-size: 11px;")
+        self.lbl_splash_name.setObjectName("HintLabel")
         self.lbl_splash_name.setWordWrap(True)
         controls.addWidget(self.lbl_splash_name)
         controls.addStretch()
@@ -344,7 +330,7 @@ class HubProjectConfigDialog(QDialog):
             hint = QLabel(
                 self.tr("No vault components found for Blender {0}.").format(selected_version)
             )
-            hint.setStyleSheet("color: #64748B; font-size: 11px;")
+            hint.setObjectName("HintLabel")
             self.addons_layout.addWidget(hint)
             return
 
@@ -354,7 +340,7 @@ class HubProjectConfigDialog(QDialog):
 
         for category, items in available_categories.items():
             lbl_cat = QLabel(f"[{category.upper()}]")
-            lbl_cat.setStyleSheet("color: #10B981; font-weight: bold; margin-top: 10px;")
+            lbl_cat.setObjectName("SuccessLabel")
             self.addons_layout.addWidget(lbl_cat)
             self.tool_checkboxes[category] = {}
 
@@ -368,12 +354,10 @@ class HubProjectConfigDialog(QDialog):
 
                 if category == "templates":
                     cb = QRadioButton(label_text)
-                    cb.setStyleSheet("QRadioButton { color: #F8FAFC; padding: 5px; }")
                     self.template_group.addButton(cb)
                     should_check = item_name == saved_template
                 else:
                     cb = QCheckBox(label_text)
-                    cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; }")
                     should_check = item_name in selected_in_category
 
                 requires = entry.get("requires", [])
@@ -434,7 +418,7 @@ class HubProjectConfigDialog(QDialog):
             self.splash_source_path = path
             self._set_splash_preview(path)
             self.lbl_splash_name.setText(Path(path).name)
-            self.lbl_splash_name.setStyleSheet("color: #F8FAFC; font-size: 11px;")
+            self.lbl_splash_name.setObjectName("BodyValue")
 
     # ------------------------------------------------------------------
     # VCS probe / save
@@ -468,7 +452,8 @@ class HubProjectConfigDialog(QDialog):
         else:
             color = "#F59E0B"
         self.lbl_vcs_status.setText(message)
-        self.lbl_vcs_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_vcs_status, "success" if color == "#10B981" else ("error" if color == "#EF4444" else ""))
 
     def _collect_payload(self) -> dict:
         # No vault data for the selected version: preserve what the project
@@ -574,5 +559,6 @@ class HubProjectConfigDialog(QDialog):
         else:
             color = "#F59E0B"
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet(f"color: {color}; font-weight: bold;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "success" if color == "#10B981" else ("error" if color == "#EF4444" else "warning" if color == "#F59E0B" else ""))
         self.lbl_status.show()

@@ -53,7 +53,7 @@ class VcsCredentialsDialog(QDialog):
 
         if server_label:
             lbl_server = QLabel(self.tr(f"Server: {server_label}"))
-            lbl_server.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 13px;")
+            lbl_server.setObjectName("SectionTitle")
             layout.addWidget(lbl_server)
 
         lbl_notice = QLabel(
@@ -63,7 +63,7 @@ class VcsCredentialsDialog(QDialog):
             )
         )
         lbl_notice.setWordWrap(True)
-        lbl_notice.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        lbl_notice.setObjectName("MutedLabel")
         layout.addWidget(lbl_notice)
 
         form = QFormLayout()
@@ -82,9 +82,9 @@ class VcsCredentialsDialog(QDialog):
         self.entry_pwd.setPlaceholderText(self.tr("VCS password"))
 
         lbl_user = QLabel(self.tr("Username:"))
-        lbl_user.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+        lbl_user.setObjectName("InputLabel")
         lbl_pwd = QLabel(self.tr("Password:"))
-        lbl_pwd.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+        lbl_pwd.setObjectName("InputLabel")
         form.addRow(lbl_user, self.entry_user)
         form.addRow(lbl_pwd, self.entry_pwd)
 
@@ -96,7 +96,7 @@ class VcsCredentialsDialog(QDialog):
             self.entry_passphrase.setEchoMode(QLineEdit.Password)
             self.entry_passphrase.setPlaceholderText(self.tr("optional SSH key passphrase"))
             lbl_pass = QLabel(self.tr("SSH Passphrase:"))
-            lbl_pass.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+            lbl_pass.setObjectName("InputLabel")
             form.addRow(lbl_pass, self.entry_passphrase)
 
         layout.addLayout(form)
@@ -105,7 +105,7 @@ class VcsCredentialsDialog(QDialog):
             self.tr("Values are kept in RAM only for this session and are never written to disk.")
         )
         lbl_session.setWordWrap(True)
-        lbl_session.setStyleSheet("color: #F59E0B; font-size: 11px;")
+        lbl_session.setObjectName("WarningLabel")
         layout.addWidget(lbl_session)
 
         layout.addStretch()

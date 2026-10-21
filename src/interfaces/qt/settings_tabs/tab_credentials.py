@@ -37,12 +37,12 @@ class TabCredentials(QWidget):
 
     def _build_ui(self) -> None:
         layout = QFormLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(15)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         lbl_section = QLabel(self.tr("Session VCS Credentials"))
-        lbl_section.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 14px; margin-bottom: 5px;")
+        lbl_section.setObjectName("SectionTitle")
         layout.addRow("", lbl_section)
 
         self.combo_server = QComboBox()
@@ -61,14 +61,13 @@ class TabCredentials(QWidget):
         layout.addRow(self._styled_label(self.tr("SSH Passphrase:")), self.entry_ssh_pass)
 
         self.chk_vcs_enabled = QCheckBox(self.tr("Enable VCS for this session"))
-        self.chk_vcs_enabled.setStyleSheet("color: #94A3B8; font-weight: bold;")
         self.chk_vcs_enabled.setCursor(Qt.PointingHandCursor)
         layout.addRow("", self.chk_vcs_enabled)
 
         self.lbl_notice = QLabel(
             self.tr("Credentials are kept in RAM only for this session and are never written to disk.")
         )
-        self.lbl_notice.setStyleSheet("color: #F59E0B; font-size: 12px;")
+        self.lbl_notice.setObjectName("WarningLabel")
         self.lbl_notice.setWordWrap(True)
         layout.addRow("", self.lbl_notice)
 
@@ -81,7 +80,7 @@ class TabCredentials(QWidget):
 
     def _styled_label(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+        label.setObjectName("InputLabel")
         return label
 
     def _connect_signals(self) -> None:

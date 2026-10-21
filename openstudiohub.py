@@ -271,6 +271,7 @@ class OpenStudioHub(QMainWindow):
             on_new_project_callback=self._open_new_project_dialog,
             on_repair_callback=self._open_repair_dialog,
             status_sink=self.ctx.status_sink,
+            notifications_vm=self.ctx.notifications_vm,
         )
 
     def _build_pm_view(self, nas_dir):
@@ -297,6 +298,7 @@ class OpenStudioHub(QMainWindow):
             on_logout=self.ejecutar_logout,
             status_sink=self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,
+            notifications_vm=self.ctx.notifications_vm,
         )
 
     def _build_artist_view(self, nas_dir):
@@ -318,6 +320,7 @@ class OpenStudioHub(QMainWindow):
             config_factory=self.ctx.config_factory,
             on_logout=self.ejecutar_logout,
             status_sink=self.ctx.status_sink,
+            notifications_vm=self.ctx.notifications_vm,
         )
 
     def _open_new_project_dialog(self) -> None:

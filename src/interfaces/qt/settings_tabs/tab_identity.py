@@ -61,8 +61,8 @@ class TabIdentity(QWidget):
 
     def _build_ui(self) -> None:
         layout = QFormLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         name_layout = QHBoxLayout()
@@ -102,7 +102,7 @@ class TabIdentity(QWidget):
 
     def _styled_label(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 13px;")
+        label.setObjectName("InputLabel")
         return label
 
     def _connect_signals(self) -> None:

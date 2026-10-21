@@ -67,28 +67,25 @@ class LoginSettingsDialog(QDialog):
         self.clear_callback = clear_callback
 
         self.setWindowTitle(self.tr("Login Settings"))
-        self.setFixedSize(320, 160)
-        self.setStyleSheet("""
-            QDialog { background-color: #0F172A; border: 1px solid #334155; border-radius: 8px; }
-            QLabel { color: #F8FAFC; }
-        """)
+        self.setFixedSize(340, 180)
+        self.setObjectName("ViewLoginBase")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
 
         lbl_title = QLabel(self.tr("Advanced Configuration"))
-        lbl_title.setStyleSheet("font-size: 14px; font-weight: bold;")
+        lbl_title.setObjectName("CardTitle")
         layout.addWidget(lbl_title)
 
         lbl_desc = QLabel(self.tr("Delete the active Studio Seed to load a new one. This action reverts the application to Day 0."))
-        lbl_desc.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        lbl_desc.setObjectName("MutedLabel")
         lbl_desc.setWordWrap(True)
         layout.addWidget(lbl_desc)
 
         layout.addStretch()
 
         btn_clear = QPushButton(self.tr("Clear Local Configuration"))
-        btn_clear.setStyleSheet("background-color: #EF4444; color: white; font-weight: bold; border-radius: 4px; padding: 8px; border: none;")
+        btn_clear.setObjectName("DangerButton")
         btn_clear.setCursor(Qt.PointingHandCursor)
         btn_clear.clicked.connect(self._confirm_clear)
         layout.addWidget(btn_clear)
@@ -206,8 +203,8 @@ class ViewLogin(QWidget):
 
         self.lbl_card_title = QLabel(self.tr("Welcome to OpenStudioHub"))
         self.lbl_card_title.setObjectName("CardTitle")
-        self.lbl_card_title.setStyleSheet("margin-bottom: 30px;")
         form_layout.addWidget(self.lbl_card_title)
+        form_layout.addSpacing(20)
 
         lbl_host = QLabel(self.tr("Server URL"))
         lbl_host.setObjectName("InputLabel")
@@ -275,7 +272,7 @@ class ViewLogin(QWidget):
         links_layout.addWidget(self.btn_forgot, alignment=Qt.AlignLeft)
 
         lbl_version = QLabel(f"Version {__version__}")
-        lbl_version.setStyleSheet("color: #64748B; font-size: 11px;")
+        lbl_version.setObjectName("HintLabel")
         links_layout.addWidget(lbl_version, alignment=Qt.AlignRight)
 
         form_layout.addLayout(links_layout)
@@ -326,13 +323,22 @@ class ViewLogin(QWidget):
     def _on_config_state_changed(self, has_config: bool) -> None:
         if has_config:
             self.entry_host.setReadOnly(True)
-            self.entry_host.setStyleSheet("background-color: #0F172A; color: #64748B; border: 1px solid #1E293B;")
+            self.entry_host.setObjectName("ReadOnlyInput")
+            self._repolish(self.entry_host)
             self.settings_icon.show()
         else:
             self.entry_host.clear()
             self.entry_host.setReadOnly(False)
-            self.entry_host.setStyleSheet("")
+            self.entry_host.setObjectName("FormInput")
+            self._repolish(self.entry_host)
             self.settings_icon.hide()
+
+    @staticmethod
+    def _repolish(widget) -> None:
+        style = widget.style()
+        if style is not None:
+            style.unpolish(widget)
+            style.polish(widget)
 
     def _on_setup_state_changed(self, required: bool) -> None:
         self.btn_initial_setup.setVisible(bool(required))
@@ -353,7 +359,6 @@ class ViewLogin(QWidget):
 
     def _show_error(self, message: str) -> None:
         self.lbl_error.setText(message)
-        self.lbl_error.setStyleSheet("color: #EF4444;")
         self.lbl_error.show()
 
     # ------------------------------------------------------------------
@@ -365,7 +370,6 @@ class ViewLogin(QWidget):
         host = self.entry_host.text().strip()
 
         self.lbl_error.hide()
-        self.lbl_error.setStyleSheet("color: #EF4444;")
 
         if not email or not password or not host:
             self._show_error(self.tr("Please fill all the required fields."))

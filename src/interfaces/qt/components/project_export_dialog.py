@@ -97,7 +97,7 @@ class ProjectExportDialog(QDialog):
             )
         )
         notice.setWordWrap(True)
-        notice.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        notice.setObjectName("MutedLabel")
         layout.addWidget(notice)
 
         dest_layout = QHBoxLayout()
@@ -153,11 +153,11 @@ class ProjectExportDialog(QDialog):
         layout.addWidget(self.table)
 
         self.lbl_approx = QLabel(self.tr("Sizes are approximate."))
-        self.lbl_approx.setStyleSheet("color: #64748B; font-size: 11px;")
+        self.lbl_approx.setObjectName("HintLabel")
         layout.addWidget(self.lbl_approx)
 
         self.lbl_status = QLabel(self.tr("Configure the export and press Export."))
-        self.lbl_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_status.setObjectName("StatusLabel")
         layout.addWidget(self.lbl_status)
 
         self.progress = QProgressBar()
@@ -169,9 +169,7 @@ class ProjectExportDialog(QDialog):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setObjectName("FormInput")
-        self.log_output.setStyleSheet(
-            "font-family: monospace; font-size: 11px; color: #94A3B8; background-color: #0F172A;"
-        )
+        self.log_output.setObjectName("TerminalView")
         self.log_output.hide()
         layout.addWidget(self.log_output, stretch=1)
 
@@ -250,7 +248,8 @@ class ProjectExportDialog(QDialog):
         destination = self.destination_dir()
         if not destination:
             self.lbl_status.setText(self.tr("Choose a destination folder first."))
-            self.lbl_status.setStyleSheet("color: #EF4444; font-size: 12px;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "error")
             return
         self._running = True
         self.btn_export.setEnabled(False)
@@ -278,11 +277,13 @@ class ProjectExportDialog(QDialog):
     def set_estimate(self, sizes: dict) -> None:
         self._populate_table(sizes or {})
         self.lbl_status.setText(self.tr("Approximate size updated."))
-        self.lbl_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "")
 
     def set_phase(self, message: str) -> None:
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet("color: #F59E0B; font-size: 12px;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "warning")
 
     def set_progress(self, percent: int) -> None:
         self.progress.setValue(max(0, min(100, int(percent))))
@@ -303,10 +304,12 @@ class ProjectExportDialog(QDialog):
         if success:
             self.progress.setValue(100)
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold; font-size: 12px;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "success")
         else:
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 12px;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "error")
         self.append_log(("Exported: " if success else "Failed: ") + message)
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)

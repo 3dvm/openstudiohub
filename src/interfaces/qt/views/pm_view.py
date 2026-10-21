@@ -41,9 +41,18 @@ class ViewPM(BaseDashboardView):
         status_sink: StatusSink | None = None,
         credential_vault=None,
         task_board_vm=None,
+        notifications_vm=None,
         **kwargs,
     ) -> None:
-        super().__init__(parent, auth_service, config_factory, on_logout, status_sink, **kwargs)
+        super().__init__(
+            parent,
+            auth_service,
+            config_factory,
+            on_logout,
+            status_sink,
+            notifications_vm=notifications_vm,
+            **kwargs,
+        )
 
         self.project_list_vm = project_list_vm
         self.blend_builder_vm = blend_builder_vm
@@ -64,7 +73,7 @@ class ViewPM(BaseDashboardView):
         self.add_sidebar_button("btn_projects", self.tr("Projects"), "📁", "folder.svg", lambda: self._switch_panel("btn_projects"), active=True)
         self.add_sidebar_button("btn_tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("btn_tasks"))
         self.add_sidebar_button("btn_batch", self.tr("Batch Creation"), "📦", "box.svg", lambda: self._switch_panel("btn_batch"))
-        self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
+        self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_pm_content()
 

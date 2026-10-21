@@ -98,7 +98,7 @@ class WebContextView(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("WebContextView")
-        self.setStyleSheet("background-color: #0F172A;")
+        self.setObjectName("WebContextView")
 
         # Off-the-record profile: tokens/cookies stay in RAM only. Parent it to
         # the application so it outlives the page during teardown.
@@ -119,26 +119,20 @@ class WebContextView(QFrame):
 
         self.top_bar = QFrame()
         self.top_bar.setFixedHeight(50)
-        self.top_bar.setStyleSheet("background-color: #1E293B; border-bottom: 1px solid #141820;")
+        self.top_bar.setObjectName("TopBar")
 
         top_layout = QHBoxLayout(self.top_bar)
         top_layout.setContentsMargins(15, 0, 15, 0)
         top_layout.setSpacing(15)
 
         self.btn_back = QPushButton("⬅  Return to Hub")
+        self.btn_back.setObjectName("SecondaryButton")
         self.btn_back.setCursor(Qt.PointingHandCursor)
-        self.btn_back.setStyleSheet("""
-            QPushButton {
-                background-color: #3B82F6; color: white; border-radius: 6px;
-                padding: 6px 15px; font-weight: bold; font-size: 13px; border: none;
-            }
-            QPushButton:hover { background-color: #2563EB; }
-        """)
         self.btn_back.clicked.connect(self._on_back_clicked)
         top_layout.addWidget(self.btn_back)
 
         self.lbl_title = QLabel("Initializing...")
-        self.lbl_title.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 13px; border: none;")
+        self.lbl_title.setObjectName("MutedLabel")
         top_layout.addWidget(self.lbl_title)
 
         top_layout.addStretch()

@@ -186,7 +186,7 @@ class TaskCard(QFrame):
 
         self.title_label = QLabel(title_text)
         self.title_label.setObjectName("H2Title")
-        self.title_label.setStyleSheet("color: #F8FAFC; font-size: 14px; font-weight: bold;")
+        self.title_label.setObjectName("CardTitleSmall")
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
 
@@ -209,7 +209,7 @@ class TaskCard(QFrame):
 
         self.thumb_stack = QStackedWidget()
         self.thumb_stack.setFixedHeight(140)
-        self.thumb_stack.setStyleSheet("QStackedWidget { background-color: #0F172A; border-radius: 8px; border: 1px solid #1E293B; }")
+        self.thumb_stack.setObjectName("ThumbnailFrame")
 
         self.page_placeholder = QWidget()
         placeholder_layout = QVBoxLayout(self.page_placeholder)
@@ -245,12 +245,12 @@ class TaskCard(QFrame):
             self.lbl_placeholder_icon.setPixmap(base_pixmap)
         else:
             self.lbl_placeholder_icon.setText("⚙️")
-            self.lbl_placeholder_icon.setStyleSheet("font-size: 40px; background: transparent; color: #64748B;")
+            self.lbl_placeholder_icon.setObjectName("PlaceholderIcon")
 
         safe_task_name = self.task_data.get("task_type_name", "TASK").upper()
         self.lbl_placeholder_text = QLabel(self.tr(f"{safe_task_name} TASK"))
         self.lbl_placeholder_text.setAlignment(Qt.AlignCenter)
-        self.lbl_placeholder_text.setStyleSheet("color: #64748B; font-size: 10px; font-weight: bold; letter-spacing: 1px; background: transparent;")
+        self.lbl_placeholder_text.setObjectName("PlaceholderText")
 
         placeholder_layout.addStretch()
         placeholder_layout.addWidget(self.lbl_placeholder_icon)
@@ -259,7 +259,6 @@ class TaskCard(QFrame):
 
         self.thumb_label = QLabel()
         self.thumb_label.setAlignment(Qt.AlignCenter)
-        self.thumb_label.setStyleSheet("border-radius: 8px; background-color: transparent;")
 
         self.thumb_stack.addWidget(self.page_placeholder)
         self.thumb_stack.addWidget(self.thumb_label)
@@ -295,13 +294,9 @@ class TaskCard(QFrame):
 
         if self.on_kitsu_callback is not None and self.task_data.get("id") and self.task_data.get("project_id"):
             self.kitsu_btn = QPushButton(self.tr("Kitsu"))
-            self.kitsu_btn.setObjectName("LinkButton")
+            self.kitsu_btn.setObjectName("KitsuTaskButton")
             self.kitsu_btn.setFixedSize(80, 36)
             self.kitsu_btn.setCursor(Qt.PointingHandCursor)
-            self.kitsu_btn.setStyleSheet("""
-                QPushButton#LinkButton { background-color: #1E293B; color: #94A3B8; border: 1px solid #334155; border-radius: 6px; font-size: 12px; }
-                QPushButton#LinkButton:hover { background-color: #334155; color: #F8FAFC; }
-            """)
             self.kitsu_btn.clicked.connect(
                 lambda checked=False: self.on_kitsu_callback(self.task_data)
             )
@@ -309,31 +304,25 @@ class TaskCard(QFrame):
 
         if not self.project_root:
             self.action_btn = QPushButton(self.tr("Folder Missing on NAS"))
+            self.action_btn.setObjectName("DangerOutlineButton")
             self.action_btn.setEnabled(False)
-            self.action_btn.setStyleSheet("QPushButton { border: 1px solid #EF4444; color: #EF4444; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }")
 
         elif not self.can_work:
             msg = self.blocked_reason if self.blocked_reason else self.tr("Access Denied")
             self.action_btn = QPushButton(f"🔒 {msg}")
+            self.action_btn.setObjectName("MutedOutlineButton")
             self.action_btn.setEnabled(False)
-            self.action_btn.setStyleSheet("QPushButton:disabled { border: 1px solid #475569; color: #94A3B8; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }")
 
         elif self.is_installed:
             self.action_btn = QPushButton(self.tr("Launch Project Environment"))
+            self.action_btn.setObjectName("SuccessOutlineButton")
             self.action_btn.setCursor(Qt.PointingHandCursor)
-            self.action_btn.setStyleSheet("""
-                QPushButton { border: 1px solid #10B981; color: #10B981; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }
-                QPushButton:hover { background-color: rgba(16, 185, 129, 0.1); }
-            """)
             self.action_btn.clicked.connect(lambda checked=False: self.on_launch_callback())
 
         else:
             self.action_btn = QPushButton(self.tr("Install Project Locally"))
+            self.action_btn.setObjectName("WarningOutlineButton")
             self.action_btn.setCursor(Qt.PointingHandCursor)
-            self.action_btn.setStyleSheet("""
-                QPushButton { border: 1px solid #F59E0B; color: #F59E0B; background: transparent; border-radius: 6px; font-weight: bold; font-size: 13px; }
-                QPushButton:hover { background-color: rgba(245, 158, 11, 0.1); }
-            """)
             self.action_btn.clicked.connect(lambda checked=False: self.on_install_callback())
 
         self.action_btn.setFixedHeight(36)
@@ -343,12 +332,9 @@ class TaskCard(QFrame):
         main_layout.addLayout(btn_layout)
 
         self.update_vcs_btn = QPushButton()
+        self.update_vcs_btn.setObjectName("UpdateVcsButton")
         self.update_vcs_btn.setCursor(Qt.PointingHandCursor)
         self.update_vcs_btn.setFixedHeight(32)
-        self.update_vcs_btn.setStyleSheet("""
-            QPushButton { border: 1px solid #3B82F6; color: #93C5FD; background: rgba(59, 130, 246, 0.08); border-radius: 6px; font-weight: bold; font-size: 12px; }
-            QPushButton:hover { background-color: rgba(59, 130, 246, 0.2); color: #DBEAFE; }
-        """)
         self.update_vcs_btn.clicked.connect(self._on_update_clicked)
         main_layout.addWidget(self.update_vcs_btn)
         self._sync_update_button()

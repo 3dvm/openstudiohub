@@ -96,11 +96,7 @@ class ManifestEditorWidget(QFrame):
         self.tree_manifest.setColumnWidth(0, 220)
         self.tree_manifest.setColumnWidth(1, 80)
         self.tree_manifest.setColumnWidth(2, 350)
-        self.tree_manifest.setStyleSheet("""
-            QTreeWidget { background-color: #1E293B; border: 1px solid #334155; border-radius: 8px; color: #F8FAFC; outline: none; }
-            QHeaderView::section { background-color: #0F172A; color: #94A3B8; font-weight: bold; padding: 5px; border: 1px solid #334155; }
-            QTreeWidget::item:hover { background-color: #334155; }
-        """)
+        self.tree_manifest.setObjectName("DataTree")
         self.tree_manifest.itemChanged.connect(self._on_tree_item_changed)
         manifest_layout.addWidget(self.tree_manifest, stretch=1)
 
@@ -118,7 +114,7 @@ class ManifestEditorWidget(QFrame):
         self.progress_bar.setFixedHeight(8)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("QProgressBar { background-color: #1F2531; border: none; } QProgressBar::chunk { background-color: #06B6D4; }")
+        self.progress_bar.setObjectName("InfoProgress")
         self.progress_bar.hide()
         manifest_layout.addWidget(self.progress_bar)
 

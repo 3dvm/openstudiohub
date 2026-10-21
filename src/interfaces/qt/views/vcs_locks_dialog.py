@@ -26,7 +26,9 @@ class VcsLocksDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(self.tr("VCS Locks"))
         self.setObjectName("ViewLoginBase")
-        self.setFixedSize(720, 560)
+        self.setMinimumSize(720, 560)
+        self.resize(720, 560)
+        self.setSizeGripEnabled(True)
         self.setModal(True)
 
         self.vm = viewmodel
@@ -44,7 +46,7 @@ class VcsLocksDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
         title = QLabel(self.tr("Repository Locks"))
@@ -57,24 +59,22 @@ class VcsLocksDialog(QDialog):
                 "Use it only for stale or abandoned locks."
             ).format(self.project_name)
         )
+        subtitle.setObjectName("MutedLabel")
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #94A3B8;")
         layout.addWidget(subtitle)
 
         self.lock_list = QListWidget()
-        self.lock_list.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; "
-            "border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.lock_list.setObjectName("DataList")
         self.lock_list.currentItemChanged.connect(self._update_actions)
         layout.addWidget(self.lock_list, stretch=1)
 
         self.detail = QLabel("")
+        self.detail.setObjectName("HintLabel")
         self.detail.setWordWrap(True)
-        self.detail.setStyleSheet("color: #94A3B8; font-size: 11px;")
         layout.addWidget(self.detail)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
@@ -161,12 +161,10 @@ class VcsLocksDialog(QDialog):
         if ok:
             self.locks = [lock for lock in self.locks if str(lock.get("path", "")) != path]
             self._refresh()
+        from src.interfaces.qt.ui_style import set_ui_state
+
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet(
-            "color: #10B981; font-weight: bold;"
-            if ok
-            else "color: #EF4444; font-weight: bold;"
-        )
+        set_ui_state(self.lbl_status, "success" if ok else "error")
 
     # ------------------------------------------------------------------
     # Teardown

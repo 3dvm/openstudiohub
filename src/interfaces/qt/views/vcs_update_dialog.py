@@ -32,7 +32,9 @@ class VcsUpdateDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(self.tr("VCS Update Needs Attention"))
         self.setObjectName("ViewLoginBase")
-        self.setFixedSize(680, 520)
+        self.setMinimumSize(680, 520)
+        self.resize(680, 520)
+        self.setSizeGripEnabled(True)
         self.setModal(True)
 
         self.vm = viewmodel
@@ -49,7 +51,7 @@ class VcsUpdateDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
         title = QLabel(self.tr("VCS Update Needs Attention"))
@@ -63,15 +65,12 @@ class VcsUpdateDialog(QDialog):
                 "Move them aside or ignore them, then retry the update."
             )
         )
+        message.setObjectName("WarningLabel")
         message.setWordWrap(True)
-        message.setStyleSheet("color: #F59E0B;")
         layout.addWidget(message)
 
         self.issue_list = QListWidget()
-        self.issue_list.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; "
-            "border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.issue_list.setObjectName("DataList")
         self.issue_list.currentItemChanged.connect(self._update_actions)
         layout.addWidget(self.issue_list, stretch=1)
 
@@ -82,11 +81,12 @@ class VcsUpdateDialog(QDialog):
                 "Conflicts must be resolved from the task's publish window."
             )
         )
+        hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #64748B; font-size: 11px;")
         layout.addWidget(hint)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
@@ -177,9 +177,7 @@ class VcsUpdateDialog(QDialog):
         self._refresh_list()
 
     def _show_result(self, ok: bool, message: str) -> None:
+        from src.interfaces.qt.ui_style import set_ui_state
+
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet(
-            "color: #10B981; font-weight: bold;"
-            if ok
-            else "color: #EF4444; font-weight: bold;"
-        )
+        set_ui_state(self.lbl_status, "success" if ok else "error")

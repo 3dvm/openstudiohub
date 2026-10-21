@@ -59,7 +59,7 @@ class VcsAuditWidget(QWidget):
     # ------------------------------------------------------------------
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(10)
 
         header = QHBoxLayout()
@@ -75,7 +75,7 @@ class VcsAuditWidget(QWidget):
         layout.addLayout(header)
 
         self.lbl_path = QLabel(str(self.vm.audit_path))
-        self.lbl_path.setStyleSheet("color: #64748B; font-size: 11px;")
+        self.lbl_path.setObjectName("HintLabel")
         self.lbl_path.setTextInteractionFlags(Qt.TextSelectableByMouse)
         layout.addWidget(self.lbl_path)
 
@@ -89,7 +89,6 @@ class VcsAuditWidget(QWidget):
         filters.addWidget(self.search_entry, stretch=1)
 
         self.chk_failures = QCheckBox(self.tr("Failures only"))
-        self.chk_failures.setStyleSheet("color: #94A3B8;")
         self.chk_failures.toggled.connect(self.refresh)
         filters.addWidget(self.chk_failures)
 
@@ -100,6 +99,7 @@ class VcsAuditWidget(QWidget):
         layout.addLayout(filters)
 
         self.table = QTableWidget(0, len(self.COLUMNS))
+        self.table.setObjectName("DataGrid")
         self.table.setHorizontalHeaderLabels([self.tr(column) for column in self.COLUMNS])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -108,32 +108,21 @@ class VcsAuditWidget(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self.table.horizontalHeader().setStretchLastSection(True)
-        self.table.setStyleSheet(
-            "QTableWidget { background-color: #0F172A; color: #F8FAFC; "
-            "border: 1px solid #334155; border-radius: 8px; "
-            "alternate-background-color: #111C2E; gridline-color: #1E293B; }"
-            "QHeaderView::section { background-color: #1E293B; color: #94A3B8; "
-            "border: none; padding: 6px; font-weight: bold; }"
-        )
         self.table.itemSelectionChanged.connect(self._on_selection)
         layout.addWidget(self.table, stretch=1)
 
         detail_label = QLabel(self.tr("Event details"))
-        detail_label.setStyleSheet("font-weight: bold; color: #E2E8F0;")
+        detail_label.setObjectName("SectionTitle")
         layout.addWidget(detail_label)
 
         self.detail = QPlainTextEdit()
         self.detail.setReadOnly(True)
-        self.detail.setObjectName("FormInput")
-        self.detail.setStyleSheet(
-            "QPlainTextEdit { font-family: monospace; background-color: #0F172A; "
-            "color: #E2E8F0; border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.detail.setObjectName("CodeView")
         self.detail.setFixedHeight(150)
         layout.addWidget(self.detail)
 
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet("color: #94A3B8;")
+        self.lbl_status.setObjectName("MutedLabel")
         layout.addWidget(self.lbl_status)
 
     # ------------------------------------------------------------------

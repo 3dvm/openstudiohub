@@ -34,7 +34,9 @@ class VcsHistoryDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(self.tr("VCS History"))
         self.setObjectName("ViewLoginBase")
-        self.setFixedSize(780, 720)
+        self.setMinimumSize(780, 720)
+        self.resize(780, 720)
+        self.setSizeGripEnabled(True)
         self.setModal(False)
 
         self.vm = viewmodel
@@ -52,7 +54,7 @@ class VcsHistoryDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self, task_label: str) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(24, 24, 24, 24)
         layout.setSpacing(12)
 
         title = QLabel(self.tr("File History"))
@@ -60,15 +62,12 @@ class VcsHistoryDialog(QDialog):
         layout.addWidget(title)
 
         subtitle = QLabel(task_label or self.file_name)
+        subtitle.setObjectName("MutedLabel")
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #94A3B8;")
         layout.addWidget(subtitle)
 
         self.revision_list = QListWidget()
-        self.revision_list.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; "
-            "border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.revision_list.setObjectName("DataList")
         self.revision_list.setFixedHeight(210)
         self.revision_list.currentItemChanged.connect(self._update_actions)
         layout.addWidget(self.revision_list)
@@ -102,22 +101,19 @@ class VcsHistoryDialog(QDialog):
         layout.addLayout(actions)
 
         lbl_diff = QLabel(self.tr("Diff"))
-        lbl_diff.setStyleSheet("font-weight: bold; color: #E2E8F0;")
+        lbl_diff.setObjectName("SectionTitle")
         layout.addWidget(lbl_diff)
 
         self.diff_view = QPlainTextEdit()
         self.diff_view.setReadOnly(True)
-        self.diff_view.setObjectName("FormInput")
-        self.diff_view.setStyleSheet(
-            "QPlainTextEdit { font-family: monospace; background-color: #0F172A; "
-            "color: #E2E8F0; border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.diff_view.setObjectName("CodeView")
         self.diff_view.setPlaceholderText(
             self.tr("Select a revision and press 'Show diff'.")
         )
         layout.addWidget(self.diff_view, stretch=1)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
@@ -134,7 +130,7 @@ class VcsHistoryDialog(QDialog):
     # Actions
     # ------------------------------------------------------------------
     def _refresh(self) -> None:
-        self.lbl_status.setStyleSheet("color: #94A3B8;")
+        self._set_status("", "neutral")
         self.lbl_status.setText(self.tr("Loading history..."))
         if not self.vm.request_vcs_history(self.card):
             self.lbl_status.setText(self.tr("Could not start the history request."))
@@ -158,14 +154,14 @@ class VcsHistoryDialog(QDialog):
         if revision is None:
             return
         self.diff_view.setPlainText(self.tr("Loading diff..."))
-        self.lbl_status.setStyleSheet("color: #94A3B8;")
+        self._set_status("", "neutral")
         self.lbl_status.setText(self.tr("Loading the diff for r{0}...").format(revision))
         if not self.vm.request_vcs_diff(self.card, revision):
             self.lbl_status.setText(self.tr("Could not start the diff request."))
 
     def _show_working_copy_diff(self) -> None:
         self.diff_view.setPlainText(self.tr("Loading diff..."))
-        self.lbl_status.setStyleSheet("color: #94A3B8;")
+        self._set_status("", "neutral")
         self.lbl_status.setText(self.tr("Loading the working copy diff..."))
         if not self.vm.request_vcs_diff(self.card, None):
             self.lbl_status.setText(self.tr("Could not start the diff request."))
@@ -184,7 +180,7 @@ class VcsHistoryDialog(QDialog):
         )
         if not destination:
             return
-        self.lbl_status.setStyleSheet("color: #94A3B8;")
+        self._set_status("", "neutral")
         self.lbl_status.setText(
             self.tr("Exporting revision {0}...").format(revision)
         )
@@ -207,7 +203,7 @@ class VcsHistoryDialog(QDialog):
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, rev)
             self.revision_list.addItem(item)
-        self.lbl_status.setStyleSheet("color: #94A3B8;")
+        self._set_status("", "neutral")
         if self.revision_list.count():
             self.revision_list.setCurrentRow(0)
             self.lbl_status.setText(
@@ -221,7 +217,7 @@ class VcsHistoryDialog(QDialog):
         if task_id != self.task_id:
             return
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+        self._set_status(self.lbl_status.text(), "error")
 
     def _on_diff_ready(self, task_id: str, revision: str, diff: str) -> None:
         if task_id != self.task_id:
@@ -231,17 +227,19 @@ class VcsHistoryDialog(QDialog):
             self.lbl_status.setText(self.tr("Diff loaded for r{0}.").format(revision))
         else:
             self.lbl_status.setText(self.tr("Working copy diff loaded."))
-        self.lbl_status.setStyleSheet("color: #10B981;")
+        self._set_status(self.lbl_status.text(), "success")
 
     def _on_export_finished(self, task_id: str, success: bool, message: str) -> None:
         if task_id != self.task_id:
             return
-        self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet(
-            "color: #10B981; font-weight: bold;"
-            if success
-            else "color: #EF4444; font-weight: bold;"
-        )
+        self._set_status(message, "success" if success else "error")
+
+    def _set_status(self, message: str, state: str = "neutral") -> None:
+        from src.interfaces.qt.ui_style import set_ui_state
+
+        if message:
+            self.lbl_status.setText(message)
+        set_ui_state(self.lbl_status, "" if state == "neutral" else state)
 
     # ------------------------------------------------------------------
     # Teardown

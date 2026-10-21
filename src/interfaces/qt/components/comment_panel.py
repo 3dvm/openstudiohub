@@ -39,9 +39,6 @@ class CommentPanel(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("CommentPanel")
-        self.setStyleSheet(
-            "QFrame#CommentPanel { background-color: #0F172A; border-left: 1px solid #334155; }"
-        )
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         self._task = None
@@ -62,19 +59,16 @@ class CommentPanel(QFrame):
         title_box.setSpacing(2)
 
         self.lbl_title = QLabel(self.tr("Comments"))
-        self.lbl_title.setStyleSheet("color: #F8FAFC; font-size: 14px; font-weight: bold;")
+        self.lbl_title.setObjectName("SectionTitle")
         self.lbl_subtitle = QLabel("")
-        self.lbl_subtitle.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        self.lbl_subtitle.setObjectName("MutedLabel")
         title_box.addWidget(self.lbl_title)
         title_box.addWidget(self.lbl_subtitle)
 
         btn_close = QPushButton("✕")
+        btn_close.setObjectName("GhostButton")
         btn_close.setFixedSize(26, 26)
         btn_close.setCursor(Qt.PointingHandCursor)
-        btn_close.setStyleSheet(
-            "QPushButton { background: transparent; color: #94A3B8; border: none; font-size: 14px; }"
-            "QPushButton:hover { color: #F8FAFC; }"
-        )
         btn_close.clicked.connect(self.close_requested.emit)
 
         header.addLayout(title_box, stretch=1)
@@ -82,14 +76,13 @@ class CommentPanel(QFrame):
         layout.addLayout(header)
 
         self.lbl_state = QLabel("")
-        self.lbl_state.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_state.setObjectName("MutedLabel")
         self.lbl_state.setWordWrap(True)
         layout.addWidget(self.lbl_state)
 
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setObjectName("InvisibleScrollArea")
-        self.scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
         self.list_widget = QWidget()
         self.list_layout = QVBoxLayout(self.list_widget)
@@ -102,23 +95,14 @@ class CommentPanel(QFrame):
         self.composer = QPlainTextEdit()
         self.composer.setPlaceholderText(self.tr("Write a comment… (Ctrl+Enter to send)"))
         self.composer.setFixedHeight(76)
-        self.composer.setStyleSheet(
-            "QPlainTextEdit { background-color: #1E293B; color: #F8FAFC; border: 1px solid #334155;"
-            " border-radius: 6px; padding: 6px; font-size: 12px; }"
-            "QPlainTextEdit:focus { border-color: #3B82F6; }"
-        )
+        self.composer.setObjectName("FormInput")
         self.composer.textChanged.connect(self._sync_send_button)
         layout.addWidget(self.composer)
 
         self.btn_send = QPushButton(self.tr("Send"))
         self.btn_send.setFixedHeight(32)
         self.btn_send.setCursor(Qt.PointingHandCursor)
-        self.btn_send.setStyleSheet(
-            "QPushButton { background-color: #3B82F6; color: white; font-weight: bold;"
-            " border-radius: 6px; border: none; }"
-            "QPushButton:hover { background-color: #2563EB; }"
-            "QPushButton:disabled { background-color: #334155; color: #94A3B8; }"
-        )
+        self.btn_send.setObjectName("PrimaryButton")
         self.btn_send.clicked.connect(self._on_send)
         layout.addWidget(self.btn_send)
 
@@ -217,9 +201,7 @@ class CommentPanel(QFrame):
 
     def _build_bubble(self, comment: dict) -> QWidget:
         wrapper = QFrame()
-        wrapper.setStyleSheet(
-            "QFrame { background-color: #1E293B; border: 1px solid #334155; border-radius: 8px; }"
-        )
+        wrapper.setObjectName("CommentBubble")
         indent = 18 if comment_parent_id(comment) else 0
         outer = QHBoxLayout(wrapper)
         outer.setContentsMargins(indent, 8, 8, 8)
@@ -229,17 +211,14 @@ class CommentPanel(QFrame):
 
         meta = QHBoxLayout()
         author = QLabel(str(comment.get("_author") or "Unknown"))
-        author.setStyleSheet("color: #F8FAFC; font-size: 11px; font-weight: bold; border: none;")
+        author.setObjectName("CommentAuthor")
         created = QLabel(str(comment.get("_created") or ""))
-        created.setStyleSheet("color: #64748B; font-size: 10px; border: none;")
+        created.setObjectName("CommentTimestamp")
         meta.addWidget(author)
         meta.addStretch()
         if comment.get("_status"):
             status = QLabel(str(comment["_status"]))
-            status.setStyleSheet(
-                "background-color: #0F172A; color: #93C5FD; border: 1px solid #334155;"
-                " border-radius: 6px; padding: 0 6px; font-size: 9px;"
-            )
+            status.setObjectName("StatusChip")
             meta.addWidget(status)
         meta.addWidget(created)
         bubble.addLayout(meta)
@@ -249,23 +228,20 @@ class CommentPanel(QFrame):
             body = QLabel(body_text)
             body.setWordWrap(True)
             body.setTextFormat(Qt.PlainText)
-            body.setStyleSheet("color: #CBD5E1; font-size: 12px; border: none; background: transparent;")
+            body.setObjectName("CommentBody")
             bubble.addWidget(body)
 
         attachments = comment.get("attachment_files") or []
         if attachments:
             note = QLabel(self.tr(f"📎 {len(attachments)} attachment(s)"))
-            note.setStyleSheet("color: #94A3B8; font-size: 10px; border: none;")
+            note.setObjectName("HintLabel")
             bubble.addWidget(note)
 
         checklist = normalize_checklist(comment.get("_checklist") or comment.get("checklist"))
         if checklist:
             checked_count = sum(1 for item in checklist if item["checked"])
             header = QLabel(self.tr(f"Checklist {checked_count}/{len(checklist)}"))
-            header.setStyleSheet(
-                "color: #93C5FD; font-size: 10px; font-weight: bold;"
-                " border: none; margin-top: 4px;"
-            )
+            header.setObjectName("ChecklistHeader")
             bubble.addWidget(header)
             for index, item in enumerate(checklist):
                 self._add_checklist_item(bubble, comment, index, item)
@@ -276,10 +252,6 @@ class CommentPanel(QFrame):
     def _add_checklist_item(self, layout, comment: dict, index: int, item: dict) -> None:
         text = str(item.get("text") or "").replace("&", "&&")
         checkbox = QCheckBox(text)
-        checkbox.setStyleSheet(
-            "QCheckBox { color: #CBD5E1; font-size: 11px; border: none; background: transparent; }"
-            "QCheckBox::indicator { width: 14px; height: 14px; }"
-        )
         checkbox.setChecked(bool(item.get("checked")))
         self._apply_checklist_strike(checkbox, bool(item.get("checked")))
         checkbox.setEnabled(self._checklist_enabled)

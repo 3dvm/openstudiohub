@@ -29,12 +29,22 @@ from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
 
 
 class BaseDashboardView(QWidget):
-    def __init__(self, parent, auth_service, config_factory, on_logout, status_sink: StatusSink | None = None, **kwargs) -> None:
+    def __init__(
+        self,
+        parent,
+        auth_service,
+        config_factory,
+        on_logout,
+        status_sink: StatusSink | None = None,
+        notifications_vm=None,
+        **kwargs,
+    ) -> None:
         super().__init__(parent, **kwargs)
 
         self.auth = auth_service
         self.config_factory = config_factory
         self.on_logout = on_logout
+        self.notifications_vm = notifications_vm
 
         self.setObjectName("ViewBase")
         self.web_context = None
@@ -62,7 +72,13 @@ class BaseDashboardView(QWidget):
         self.right_layout.setSpacing(0)
 
         # 3. TOP BAR
-        self.top_bar = TopBar(self.right_panel, self.auth, self.config_factory, self.on_logout)
+        self.top_bar = TopBar(
+            self.right_panel,
+            self.auth,
+            self.config_factory,
+            self.on_logout,
+            notifications_vm=self.notifications_vm,
+        )
         self.right_layout.addWidget(self.top_bar)
 
         # 4. CONTENT AREA (canvas for subclasses) + embedded web context
@@ -155,6 +171,9 @@ class BaseDashboardView(QWidget):
     # ------------------------------------------------------------------
     def add_sidebar_button(self, btn_id: str, text: str, emoji: str, icon_name: str, callback, active: bool = False) -> None:
         self.sidebar.add_button(btn_id, text, emoji, icon_name, callback, active)
+
+    def add_footer_button(self, btn_id: str, text: str, emoji: str, icon_name: str, callback, active: bool = False) -> None:
+        self.sidebar.add_footer_button(btn_id, text, emoji, icon_name, callback, active)
 
     def set_active_sidebar_button(self, btn_id: str) -> None:
         self.sidebar.set_active_button(btn_id)

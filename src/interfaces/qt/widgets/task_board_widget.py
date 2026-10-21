@@ -83,10 +83,7 @@ class TaskBoardWidget(QFrame):
         self.search = QLineEdit()
         self.search.setPlaceholderText(self.tr("Search entity or type…"))
         self.search.setFixedWidth(190)
-        self.search.setStyleSheet(
-            "QLineEdit { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155;"
-            " border-radius: 6px; padding: 4px 8px; }"
-        )
+        self.search.setObjectName("FormInput")
         self.search.textChanged.connect(lambda *_: self._render_current_view())
         header.addWidget(self.search)
 
@@ -107,7 +104,7 @@ class TaskBoardWidget(QFrame):
         header.addStretch()
 
         self.lbl_count = QLabel("0")
-        self.lbl_count.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_count.setObjectName("MutedLabel")
         header.addWidget(self.lbl_count)
 
         self.btn_view_table = QToolButton()
@@ -129,11 +126,7 @@ class TaskBoardWidget(QFrame):
         self._view_group.addButton(self.btn_view_table)
         self._view_group.addButton(self.btn_view_cards)
         for button in (self.btn_view_table, self.btn_view_cards):
-            button.setStyleSheet(
-                "QToolButton { background: transparent; border: 1px solid #334155;"
-                " border-radius: 6px; padding: 5px; }"
-                "QToolButton:checked { background-color: #1D4ED8; border-color: #3B82F6; }"
-            )
+            button.setObjectName("BoardToggleButton")
             header.addWidget(button)
 
         layout.addLayout(header)
@@ -155,12 +148,7 @@ class TaskBoardWidget(QFrame):
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setShowGrid(False)
         self.table.setSortingEnabled(False)
-        self.table.setStyleSheet(
-            "QTableWidget { background-color: transparent; color: #F8FAFC; border: none; }"
-            "QTableWidget::item { border-bottom: 1px solid #1E293B; }"
-            "QHeaderView::section { background-color: #0F172A; color: #94A3B8;"
-            " border: none; padding: 6px; font-weight: bold; }"
-        )
+        self.table.setObjectName("BoardTable")
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         for column, width in ((1, 120), (2, 120), (3, 220), (4, 100), (5, 90)):
             self.table.setColumnWidth(column, width)
@@ -182,10 +170,6 @@ class TaskBoardWidget(QFrame):
         self.comment_splitter = QSplitter(Qt.Horizontal)
         self.comment_splitter.setChildrenCollapsible(False)
         self.comment_splitter.setHandleWidth(6)
-        self.comment_splitter.setStyleSheet(
-            "QSplitter::handle { background-color: #1E293B; }"
-            "QSplitter::handle:hover { background-color: #3B82F6; }"
-        )
         self.comment_splitter.addWidget(self.stack)
         self.comment_splitter.addWidget(self.comment_panel)
         self.comment_splitter.setStretchFactor(0, 1)
@@ -339,12 +323,7 @@ class TaskBoardWidget(QFrame):
             kitsu = QToolButton()
             kitsu.setText(self.tr("Kitsu"))
             kitsu.setCursor(Qt.PointingHandCursor)
-            kitsu.setStyleSheet(
-                "QToolButton { background-color: #1E293B; color: #F97316;"
-                " border: 1px solid #334155; border-radius: 6px; padding: 2px 8px;"
-                " font-size: 10px; font-weight: bold; }"
-                "QToolButton:hover { border-color: #F97316; }"
-            )
+            kitsu.setObjectName("BoardKitsuButton")
             kitsu.clicked.connect(
                 lambda _=False, t=task: self._open_task_kitsu(t)
             )
@@ -368,7 +347,7 @@ class TaskBoardWidget(QFrame):
         thumb = QLabel()
         thumb.setFixedSize(self.THUMB_SIZE, self.THUMB_SIZE)
         thumb.setAlignment(Qt.AlignCenter)
-        thumb.setStyleSheet("background-color: #0F172A; border-radius: 6px; color: #64748B;")
+        thumb.setObjectName("ThumbnailPlaceholder")
         thumb.setText("—")
         entity_id = str(task.get("entity_id", "") or "")
         if entity_id:
@@ -377,13 +356,13 @@ class TaskBoardWidget(QFrame):
         row.addWidget(thumb)
 
         name = QLabel(task.get("entity_name") or task.get("name") or "—")
-        name.setStyleSheet("color: #F8FAFC; font-size: 12px; font-weight: bold;")
+        name.setObjectName("BoardName")
         row.addWidget(name, stretch=1)
         return container
 
     def _text_cell(self, text: str) -> QLabel:
         label = QLabel(str(text or "—"))
-        label.setStyleSheet("color: #CBD5E1; font-size: 12px; padding-left: 4px;")
+        label.setObjectName("BoardCell")
         return label
 
     def _status_cell(self, task: dict) -> QWidget:
@@ -413,16 +392,12 @@ class TaskBoardWidget(QFrame):
             button.setText(text)
             button.setToolTip(self.tr("Edit responsibles"))
             button.setCursor(Qt.PointingHandCursor)
-            button.setStyleSheet(
-                "QToolButton { background: transparent; color: #93C5FD; border: 1px solid #334155;"
-                " border-radius: 6px; padding: 3px 8px; font-size: 11px; }"
-                "QToolButton:hover { border-color: #3B82F6; }"
-            )
+            button.setObjectName("BoardActionButton")
             button.clicked.connect(lambda _=False, t=task: self._edit_assignees(t))
             layout.addWidget(button)
         else:
             label = QLabel(text)
-            label.setStyleSheet("color: #CBD5E1; font-size: 11px;")
+            label.setObjectName("BoardCell")
             layout.addWidget(label)
         layout.addStretch()
         return container

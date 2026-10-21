@@ -115,18 +115,8 @@ class ProjectListWidget(QFrame):
             self.btn_new_project.setFixedSize(220, 40)
             self.btn_new_project.setCursor(Qt.PointingHandCursor)
             self.btn_new_project.setPopupMode(QToolButton.InstantPopup)
-            self.btn_new_project.setStyleSheet(
-                "QToolButton { background-color: #3B82F6; color: white; font-weight: bold; "
-                "border-radius: 6px; padding: 0 15px; } "
-                "QToolButton:hover { background-color: #2563EB; } "
-                "QToolButton::menu-indicator { image: none; }"
-            )
+            self.btn_new_project.setObjectName("PrimaryToolButton")
             new_menu = QMenu(self.btn_new_project)
-            new_menu.setStyleSheet(
-                "QMenu { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; "
-                "border-radius: 6px; } QMenu::item { padding: 8px 25px; } "
-                "QMenu::item:selected { background-color: #3B82F6; }"
-            )
             new_menu.addAction(self.tr("New Project"), self._open_new_project)
             new_menu.addAction(self.tr("Import Project (.oshproject)"), self._open_import_project)
             self.btn_new_project.setMenu(new_menu)

@@ -40,13 +40,6 @@ class ActivityCard(QFrame):
         self.on_acknowledge_callback = on_acknowledge_callback
 
         self.setObjectName("FloatingCard")
-        self.setStyleSheet("""
-            QFrame#FloatingCard {
-                background-color: #2E3643;
-                border: 1px solid #141820;
-                border-radius: 8px;
-            }
-        """)
 
         self._build_ui()
 
@@ -75,13 +68,13 @@ class ActivityCard(QFrame):
         lbl_avatar = QLabel(author_name[0].upper())
         lbl_avatar.setFixedSize(28, 28)
         lbl_avatar.setAlignment(Qt.AlignCenter)
-        lbl_avatar.setStyleSheet("background-color: #3B82F6; color: white; border-radius: 14px; font-weight: bold;")
+        lbl_avatar.setObjectName("AvatarBadge")
         header_layout.addWidget(lbl_avatar)
 
         entity_name = self.data.get("entity", {}).get("name", "Unknown")
         task_name = self.data.get("task_type", {}).get("name", "Task")
         lbl_title = QLabel(f"<b>{author_name}</b> on {entity_name} - {task_name}")
-        lbl_title.setStyleSheet("color: #E2E8F0; font-size: 12px;")
+        lbl_title.setObjectName("CommentBody")
         lbl_title.setWordWrap(True)
         header_layout.addWidget(lbl_title, stretch=1)
 
@@ -92,7 +85,7 @@ class ActivityCard(QFrame):
             text = text[:97] + "..."
 
         lbl_text = QLabel(text)
-        lbl_text.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        lbl_text.setObjectName("MutedLabel")
         lbl_text.setWordWrap(True)
         main_layout.addWidget(lbl_text)
 
@@ -100,7 +93,7 @@ class ActivityCard(QFrame):
         footer_layout.setContentsMargins(0, 5, 0, 0)
 
         lbl_status_tag = QLabel("Status:")
-        lbl_status_tag.setStyleSheet("color: #64748B; font-size: 11px;")
+        lbl_status_tag.setObjectName("HintLabel")
         footer_layout.addWidget(lbl_status_tag)
 
         status_data = self.data.get("task_status", {})
@@ -123,21 +116,8 @@ class ActivityCard(QFrame):
         footer_layout.addStretch()
 
         self.btn_action = QPushButton("Open _Mark Read")
+        self.btn_action.setObjectName("PrimaryButton")
         self.btn_action.setCursor(Qt.PointingHandCursor)
-        self.btn_action.setStyleSheet("""
-            QPushButton {
-                background-color: #3B82F6;
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 4px 12px;
-                font-size: 11px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #2563EB;
-            }
-        """)
         self.btn_action.clicked.connect(self._run_action)
         footer_layout.addWidget(self.btn_action)
 

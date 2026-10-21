@@ -35,7 +35,7 @@ class AssigneeDialog(QDialog):
         layout.setSpacing(10)
 
         hint = QLabel(self.tr("Select one or more responsible people."))
-        hint.setStyleSheet("color: #94A3B8;")
+        hint.setObjectName("MutedLabel")
         layout.addWidget(hint)
 
         self.search = QLineEdit()
@@ -44,11 +44,7 @@ class AssigneeDialog(QDialog):
         layout.addWidget(self.search)
 
         self.list = QListWidget()
-        self.list.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155;"
-            " border-radius: 6px; }"
-            "QListWidget::item { padding: 6px; }"
-        )
+        self.list.setObjectName("DataList")
         for person in sorted(
             persons, key=lambda p: str(p.get("full_name") or p.get("email") or "").lower()
         ):

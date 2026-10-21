@@ -52,7 +52,7 @@ class CreationErrorDialog(QDialog):
 
         message = QLabel(outcome.message or self.tr("Unknown error."))
         message.setWordWrap(True)
-        message.setStyleSheet("color: #F8FAFC;")
+        message.setObjectName("BodyValue")
         message.setMinimumHeight(50)
         message.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         layout.addWidget(message)
@@ -66,7 +66,7 @@ class CreationErrorDialog(QDialog):
             hint_text = self.tr("No project data has been created yet.")
         hint = QLabel(hint_text)
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        hint.setObjectName("MutedLabel")
         layout.addWidget(hint)
 
         btn_row = QHBoxLayout()
@@ -84,11 +84,7 @@ class CreationErrorDialog(QDialog):
             btn_delete = QPushButton(self.tr("Delete created data"))
             btn_delete.setFixedHeight(38)
             btn_delete.setCursor(Qt.PointingHandCursor)
-            btn_delete.setStyleSheet(
-                "QPushButton { background-color: #7F1D1D; color: #FEE2E2; "
-                "border: 1px solid #B91C1C; border-radius: 6px; padding: 6px 14px; font-weight: bold; } "
-                "QPushButton:hover { background-color: #991B1B; }"
-            )
+            btn_delete.setObjectName("DangerButton")
             btn_delete.clicked.connect(lambda: self._choose(CreationErrorAction.ROLLBACK))
             btn_row.addWidget(btn_delete)
 

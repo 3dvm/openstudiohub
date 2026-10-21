@@ -51,9 +51,18 @@ class ViewArtist(BaseDashboardView):
         config_factory,
         on_logout,
         status_sink: StatusSink | None = None,
+        notifications_vm=None,
         **kwargs,
     ) -> None:
-        super().__init__(parent, auth_service, config_factory, on_logout, status_sink, **kwargs)
+        super().__init__(
+            parent,
+            auth_service,
+            config_factory,
+            on_logout,
+            status_sink,
+            notifications_vm=notifications_vm,
+            **kwargs,
+        )
 
         self.vm = viewmodel
         self._token = auth_service.access_token()
@@ -75,7 +84,7 @@ class ViewArtist(BaseDashboardView):
 
         self.add_sidebar_button("projects", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._switch_panel("projects"), active=True)
         self.add_sidebar_button("my_tasks", self.tr("My Tasks"), "📋", "list.svg", lambda: self._switch_panel("my_tasks"))
-        self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
+        self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_content()
         self.vm.tasks_loaded.connect(self._on_tasks_loaded)
@@ -211,10 +220,6 @@ class ViewArtist(BaseDashboardView):
         self.comment_splitter = QSplitter(Qt.Horizontal)
         self.comment_splitter.setChildrenCollapsible(False)
         self.comment_splitter.setHandleWidth(6)
-        self.comment_splitter.setStyleSheet(
-            "QSplitter::handle { background-color: #1E293B; }"
-            "QSplitter::handle:hover { background-color: #3B82F6; }"
-        )
         self.comment_splitter.addWidget(self.scroll_area)
         self.comment_splitter.addWidget(self.comment_panel)
         self.comment_splitter.setStretchFactor(0, 1)

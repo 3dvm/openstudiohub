@@ -69,7 +69,7 @@ class VaultIntegrityDialog(QDialog):
 
         subtitle = QLabel(self.report.summary())
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        subtitle.setObjectName("MutedLabel")
         self.content_layout.addWidget(subtitle)
 
         self._render_report()
@@ -110,20 +110,35 @@ class VaultIntegrityDialog(QDialog):
     def _add_section(self, title: str, color: str = "#F59E0B") -> None:
         label = QLabel(title)
         label.setWordWrap(True)
-        label.setStyleSheet(
-            f"color: {color}; font-weight: bold; font-size: 13px; margin-top: 12px;"
-        )
+        label.setObjectName("SectionTitle")
+        self._apply_label_state(label, color)
         self.content_layout.addWidget(label)
+
+    @staticmethod
+    def _apply_label_state(label: QLabel, color: str) -> None:
+        from src.interfaces.qt.ui_style import set_ui_state
+
+        color = (color or "").lower()
+        if color in ("#ef4444", "#fca5a5"):
+            state = "error"
+        elif color in ("#10b981", "#059669"):
+            state = "success"
+        elif color in ("#f59e0b", "#fb923c"):
+            state = "warning"
+        else:
+            state = ""
+        set_ui_state(label, state)
 
     def _add_row(self, text: str, buttons=None, color: str = "#E2E8F0") -> None:
         frame = QFrame()
-        frame.setStyleSheet("background-color: #1E293B; border-radius: 6px;")
+        frame.setObjectName("RowFrame")
         layout = QHBoxLayout(frame)
         layout.setContentsMargins(12, 8, 12, 8)
 
         label = QLabel(text)
         label.setWordWrap(True)
-        label.setStyleSheet(f"color: {color}; font-size: 12px;")
+        label.setObjectName("BodyValue")
+        self._apply_label_state(label, color)
         layout.addWidget(label, stretch=1)
 
         for text_btn, slot, object_name in buttons or []:
@@ -141,7 +156,7 @@ class VaultIntegrityDialog(QDialog):
 
         if not report.has_issues:
             ok = QLabel(self.tr("✓ The manifest matches the vault. Nothing to fix."))
-            ok.setStyleSheet("color: #10B981; font-weight: bold; font-size: 13px;")
+            ok.setObjectName("SuccessLabel")
             self.content_layout.addWidget(ok)
             return
 

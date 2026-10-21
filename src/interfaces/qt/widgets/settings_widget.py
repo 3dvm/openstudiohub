@@ -55,7 +55,7 @@ class SettingsWidget(QFrame):
         main_layout.setSpacing(0)
 
         self.tab_bar_frame = QFrame()
-        self.tab_bar_frame.setStyleSheet("background-color: #1F2531; border-bottom: 1px solid #141820;")
+        self.tab_bar_frame.setObjectName("SettingsTabBar")
         self.tab_bar_frame.setFixedHeight(35)
 
         self.tab_bar_layout = QHBoxLayout(self.tab_bar_frame)
@@ -137,7 +137,7 @@ class SettingsWidget(QFrame):
 
     def _on_field_modified(self) -> None:
         self.lbl_unsaved_warning.setText(self.tr("● Unsaved Changes"))
-        self.lbl_unsaved_warning.setStyleSheet("color: #F59E0B; font-weight: bold; font-size: 13px; margin-left: 15px;")
+        self.lbl_unsaved_warning.setObjectName("WarningLabel")
 
     def _load_current_data(self) -> None:
         state = self.vm.load_state()

@@ -59,7 +59,9 @@ class InitialSetupWizard(QDialog):
         self.setWindowTitle(self.tr("Initial Configuration"))
         self.setObjectName("ViewLoginBase")
         self.setModal(True)
-        self.setFixedSize(820, 640)
+        self.setMinimumSize(820, 640)
+        self.resize(820, 640)
+        self.setSizeGripEnabled(True)
 
         self._build_ui()
         self._connect_signals()
@@ -80,24 +82,24 @@ class InitialSetupWizard(QDialog):
 
         sidebar = QFrame()
         sidebar.setFixedWidth(220)
-        sidebar.setStyleSheet("QFrame { background-color: #1F2531; border-right: 1px solid #141820; }")
+        sidebar.setObjectName("SidebarFrame")
         side_layout = QVBoxLayout(sidebar)
-        side_layout.setContentsMargins(24, 28, 24, 28)
-        side_layout.setSpacing(14)
+        side_layout.setContentsMargins(24, 24, 24, 24)
+        side_layout.setSpacing(16)
 
         title = QLabel(self.tr("This Machine"))
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #F8FAFC;")
+        title.setObjectName("SectionTitle")
         side_layout.addWidget(title)
 
         subtitle = QLabel(self.tr("Set up the local configuration required to work with the studio."))
+        subtitle.setObjectName("MutedLabel")
         subtitle.setWordWrap(True)
-        subtitle.setStyleSheet("color: #94A3B8; font-size: 12px;")
         side_layout.addWidget(subtitle)
         side_layout.addSpacing(10)
 
         for index, title_text in enumerate(STEP_TITLES):
             label = QLabel(f"{index + 1}.  {title_text}")
-            label.setStyleSheet("color: #64748B; font-size: 13px; padding: 6px 0;")
+            label.setObjectName("StepTitlePending")
             self._step_labels.append(label)
             side_layout.addWidget(label)
 
@@ -106,7 +108,7 @@ class InitialSetupWizard(QDialog):
 
         content = QWidget()
         content_layout = QVBoxLayout(content)
-        content_layout.setContentsMargins(36, 28, 36, 24)
+        content_layout.setContentsMargins(24, 24, 24, 24)
         content_layout.setSpacing(16)
         root.addWidget(content, stretch=1)
 
@@ -119,8 +121,8 @@ class InitialSetupWizard(QDialog):
         content_layout.addWidget(self.stack, stretch=1)
 
         self.lbl_error = QLabel("")
+        self.lbl_error.setObjectName("ErrorLabel")
         self.lbl_error.setWordWrap(True)
-        self.lbl_error.setStyleSheet("color: #EF4444; font-weight: bold;")
         self.lbl_error.hide()
         content_layout.addWidget(self.lbl_error)
 
@@ -155,7 +157,7 @@ class InitialSetupWizard(QDialog):
 
         lbl_desc = QLabel(description)
         lbl_desc.setWordWrap(True)
-        lbl_desc.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        lbl_desc.setObjectName("MutedLabel")
         layout.addWidget(lbl_desc)
         return page, layout
 
@@ -176,11 +178,8 @@ class InitialSetupWizard(QDialog):
                 "  •  The local path of the studio projects folder."
             )
         )
+        items.setObjectName("TipBox")
         items.setWordWrap(True)
-        items.setStyleSheet(
-            "background-color: #0F172A; border: 1px solid #334155; border-radius: 8px; "
-            "padding: 14px; color: #E2E8F0;"
-        )
         layout.addWidget(items)
         layout.addStretch()
         return page
@@ -205,11 +204,8 @@ class InitialSetupWizard(QDialog):
         layout.addLayout(row)
 
         self.lbl_seed_summary = QLabel("")
+        self.lbl_seed_summary.setObjectName("TipBox")
         self.lbl_seed_summary.setWordWrap(True)
-        self.lbl_seed_summary.setStyleSheet(
-            "background-color: #0F172A; border: 1px solid #334155; border-radius: 8px; "
-            "padding: 14px; color: #E2E8F0;"
-        )
         self.lbl_seed_summary.hide()
         layout.addWidget(self.lbl_seed_summary)
         layout.addStretch()
@@ -225,16 +221,13 @@ class InitialSetupWizard(QDialog):
         )
 
         self.lbl_svn_status = QLabel(self.tr("Checking the local Subversion client..."))
+        self.lbl_svn_status.setObjectName("TipBox")
         self.lbl_svn_status.setWordWrap(True)
-        self.lbl_svn_status.setStyleSheet(
-            "background-color: #0F172A; border: 1px solid #334155; border-radius: 8px; "
-            "padding: 14px; color: #E2E8F0;"
-        )
         layout.addWidget(self.lbl_svn_status)
 
         self.lbl_svn_manual = QLabel("")
+        self.lbl_svn_manual.setObjectName("WarningLabel")
         self.lbl_svn_manual.setWordWrap(True)
-        self.lbl_svn_manual.setStyleSheet("color: #F59E0B; font-size: 12px;")
         self.lbl_svn_manual.hide()
         layout.addWidget(self.lbl_svn_manual)
 
@@ -279,8 +272,8 @@ class InitialSetupWizard(QDialog):
         layout.addLayout(row)
 
         self.lbl_vault = QLabel("")
+        self.lbl_vault.setObjectName("HintLabel")
         self.lbl_vault.setWordWrap(True)
-        self.lbl_vault.setStyleSheet("color: #94A3B8; font-size: 12px;")
         layout.addWidget(self.lbl_vault)
         layout.addStretch()
         return page
@@ -292,11 +285,8 @@ class InitialSetupWizard(QDialog):
         )
 
         self.lbl_summary = QLabel("")
+        self.lbl_summary.setObjectName("TipBox")
         self.lbl_summary.setWordWrap(True)
-        self.lbl_summary.setStyleSheet(
-            "background-color: #0F172A; border: 1px solid #334155; border-radius: 8px; "
-            "padding: 16px; color: #E2E8F0; line-height: 1.5;"
-        )
         layout.addWidget(self.lbl_summary)
         layout.addStretch()
         return page
@@ -496,12 +486,15 @@ class InitialSetupWizard(QDialog):
         self.stack.setCurrentIndex(index)
         for position, label in enumerate(self._step_labels):
             if position == index:
-                style = "color: #F8FAFC; font-size: 13px; font-weight: bold; padding: 6px 0;"
+                label.setObjectName("StepTitleActive")
             elif position < index:
-                style = "color: #10B981; font-size: 13px; padding: 6px 0;"
+                label.setObjectName("StepTitleCompleted")
             else:
-                style = "color: #64748B; font-size: 13px; padding: 6px 0;"
-            label.setStyleSheet(style)
+                label.setObjectName("StepTitlePending")
+            style = label.style()
+            if style is not None:
+                style.unpolish(label)
+                style.polish(label)
 
         self.btn_back.setEnabled(index > 0)
         self.btn_next.setText(self.tr("Finish") if index == len(STEP_TITLES) - 1 else self.tr("Next"))

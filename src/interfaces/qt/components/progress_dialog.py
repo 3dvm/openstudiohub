@@ -30,8 +30,8 @@ class SpawningProgressDialog(QDialog):
 
         self.log_output = QTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setObjectName("FormInput")
-        self.log_output.setStyleSheet("font-family: monospace; font-size: 12px; color: #94A3B8; background-color: #0F172A;")
+        self.log_output.setObjectName("TerminalView")
+        self.log_output.setObjectName("TerminalView")
         layout.addWidget(self.log_output)
 
         self.btn_layout = QHBoxLayout()
@@ -64,10 +64,10 @@ class SpawningProgressDialog(QDialog):
     def finalize(self, success: bool, main_msg: str, action_text: str = "", action_callback=None) -> None:
         """Transform the modal at completion to audit the log."""
         self.lbl_status.setText(main_msg)
-        self.lbl_status.setStyleSheet("color: #10B981;" if success else "color: #EF4444;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "success" if success else "error")
 
         self.btn_close.setText(self.tr("Close Window"))
-        self.btn_close.setStyleSheet("background-color: #334155;")
 
         if success and action_callback and action_text:
             self.btn_action.setText(action_text)
@@ -79,7 +79,9 @@ class SpawningProgressDialog(QDialog):
                 self.progress.setValue(100)
         else:
             self.progress.setValue(100)
-            self.progress.setStyleSheet("QProgressBar::chunk { background-color: #EF4444; }")
+            self.progress.setObjectName("ErrorProgress")
+            self.progress.style().unpolish(self.progress)
+            self.progress.style().polish(self.progress)
             self.progress.setFormat(self.tr("Failed"))
             if main_msg:
                 self.append_log(f"❌ {main_msg}")

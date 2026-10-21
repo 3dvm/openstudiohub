@@ -92,7 +92,7 @@ class ProjectImportDialog(QDialog):
             )
         )
         notice.setWordWrap(True)
-        notice.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        notice.setObjectName("MutedLabel")
         layout.addWidget(notice)
 
         file_layout = QHBoxLayout()
@@ -117,12 +117,12 @@ class ProjectImportDialog(QDialog):
 
         self.lbl_summary = QLabel(self.tr("Choose an archive and press Inspect."))
         self.lbl_summary.setWordWrap(True)
-        self.lbl_summary.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_summary.setObjectName("MutedLabel")
         layout.addWidget(self.lbl_summary)
 
         self.lbl_conflict = QLabel("")
         self.lbl_conflict.setWordWrap(True)
-        self.lbl_conflict.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 12px;")
+        self.lbl_conflict.setObjectName("ErrorLabel")
         self.lbl_conflict.hide()
         layout.addWidget(self.lbl_conflict)
 
@@ -139,7 +139,7 @@ class ProjectImportDialog(QDialog):
 
         self.lbl_repo = QLabel(self.tr("Repository: not checked yet."))
         self.lbl_repo.setWordWrap(True)
-        self.lbl_repo.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_repo.setObjectName("StatusLabel")
         layout.addWidget(self.lbl_repo)
 
         self.chk_repo_rename = QCheckBox(self.tr("Rename repository folder"))
@@ -148,10 +148,11 @@ class ProjectImportDialog(QDialog):
         layout.addWidget(self.chk_repo_rename)
 
         lbl_topo = QLabel(self.tr("Topography mapping (source → target):"))
-        lbl_topo.setStyleSheet("font-weight: bold; margin-top: 6px;")
+        lbl_topo.setObjectName("SectionTitle")
         layout.addWidget(lbl_topo)
 
         self.table_topo = QTableWidget(0, 3)
+        self.table_topo.setObjectName("DataGrid")
         self.table_topo.setHorizontalHeaderLabels(
             [self.tr("Folder"), self.tr("Source"), self.tr("Target")]
         )
@@ -165,10 +166,11 @@ class ProjectImportDialog(QDialog):
         layout.addWidget(self.table_topo)
 
         lbl_people = QLabel(self.tr("Person mapping (email match required):"))
-        lbl_people.setStyleSheet("font-weight: bold; margin-top: 6px;")
+        lbl_people.setObjectName("SectionTitle")
         layout.addWidget(lbl_people)
 
         self.table = QTableWidget(0, 4)
+        self.table.setObjectName("DataGrid")
         self.table.setHorizontalHeaderLabels(
             [self.tr("Source person"), self.tr("Email"), self.tr("Target person"), ""]
         )
@@ -182,7 +184,7 @@ class ProjectImportDialog(QDialog):
         layout.addWidget(self.table)
 
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_status.setObjectName("StatusLabel")
         layout.addWidget(self.lbl_status)
 
         self.progress = QProgressBar()
@@ -194,9 +196,7 @@ class ProjectImportDialog(QDialog):
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
         self.log_output.setObjectName("FormInput")
-        self.log_output.setStyleSheet(
-            "font-family: monospace; font-size: 11px; color: #94A3B8; background-color: #0F172A;"
-        )
+        self.log_output.setObjectName("TerminalView")
         self.log_output.hide()
         layout.addWidget(self.log_output, stretch=1)
 
@@ -289,7 +289,7 @@ class ProjectImportDialog(QDialog):
         if self._plan is None:
             return
         self.lbl_repo.setText(self.tr("Repository: checking..."))
-        self.lbl_repo.setStyleSheet("color: #94A3B8; font-size: 12px;")
+        self.lbl_repo.setObjectName("StatusLabel")
         self.lbl_repo.setToolTip("")
         if not self._running:
             self.log_output.clear()
@@ -333,13 +333,13 @@ class ProjectImportDialog(QDialog):
 
         if self._repo_state == "ok":
             self.lbl_repo.setText(self.tr(f"Repository '{repo_name}' is ready ('{target}')."))
-            self.lbl_repo.setStyleSheet("color: #10B981; font-size: 12px;")
+            self._repo_state_style("success")
             self.chk_repo_rename.hide()
         elif self._repo_state == "rename_needed":
             self.lbl_repo.setText(
                 self.tr(f"Repository '{repo_name}' contains '{source}'; rename it to '{target}'?")
             )
-            self.lbl_repo.setStyleSheet("color: #F59E0B; font-weight: bold; font-size: 12px;")
+            self._repo_state_style("warning")
             self.chk_repo_rename.setText(self.tr(f"Rename repository folder '{source}' → '{target}'"))
             self.chk_repo_rename.setChecked(True)
             self.chk_repo_rename.show()
@@ -350,7 +350,7 @@ class ProjectImportDialog(QDialog):
             if hint:
                 message += self.tr(f"  [{hint}]")
             self.lbl_repo.setText(message)
-            self.lbl_repo.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 12px;")
+            self._repo_state_style("error")
             self.chk_repo_rename.hide()
         else:
             reason = str(diagnostics.get("reason") or "")
@@ -358,10 +358,15 @@ class ProjectImportDialog(QDialog):
             if hint:
                 message += self.tr(f"  [{hint}]")
             self.lbl_repo.setText(message)
-            self.lbl_repo.setStyleSheet("color: #F59E0B; font-size: 12px;")
+            self._repo_state_style("warning")
             self.chk_repo_rename.hide()
         self._present_repo_diagnostics(status)
         self._refresh_import_enabled()
+
+    def _repo_state_style(self, state: str) -> None:
+        from src.interfaces.qt.ui_style import set_ui_state
+
+        set_ui_state(self.lbl_repo, state)
 
     def _rebuild_topography(self) -> None:
         self.table_topo.setRowCount(0)
@@ -566,7 +571,8 @@ class ProjectImportDialog(QDialog):
     # ------------------------------------------------------------------
     def set_phase(self, message: str) -> None:
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet("color: #F59E0B; font-size: 12px;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "warning")
 
     def set_progress(self, percent: int) -> None:
         self.progress.setValue(max(0, min(100, int(percent))))
@@ -584,12 +590,14 @@ class ProjectImportDialog(QDialog):
         if getattr(report, "success", False):
             self.progress.setValue(100)
             self.lbl_status.setText(report.message)
-            self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold; font-size: 12px;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "success")
             if getattr(report, "needs_checkout", False):
                 self.btn_checkout.show()
         else:
             self.lbl_status.setText(report.message)
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold; font-size: 12px;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "error")
             if getattr(report, "rollback_available", False) and getattr(report, "project_id", ""):
                 self.btn_rollback.show()
         self.append_log(report.message)

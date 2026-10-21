@@ -44,7 +44,9 @@ class VcsPublishDialog(QDialog):
     def __init__(self, parent, viewmodel, card, changes: list, task_label: str = "") -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Publish Task Files to VCS"))
-        self.setFixedSize(720, 680)
+        self.setMinimumSize(720, 680)
+        self.resize(720, 680)
+        self.setSizeGripEnabled(True)
         self.setModal(True)
         self.setObjectName("ViewLoginBase")
 
@@ -78,8 +80,8 @@ class VcsPublishDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self, task_label: str) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(28, 24, 28, 24)
-        layout.setSpacing(10)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
 
         title = QLabel(self.tr("Uncommitted Changes Detected"))
         title.setObjectName("CardTitle")
@@ -87,31 +89,28 @@ class VcsPublishDialog(QDialog):
 
         subtitle = task_label or self.tr("Select the files that should be published to the VCS.")
         info = QLabel(subtitle)
-        info.setStyleSheet("color: #94A3B8;")
+        info.setObjectName("MutedLabel")
         info.setWordWrap(True)
         layout.addWidget(info)
 
         self.lbl_tracked = QLabel(self.tr("Versioned changes"))
-        self.lbl_tracked.setStyleSheet("font-weight: bold; color: #E2E8F0;")
+        self.lbl_tracked.setObjectName("SectionTitle")
         layout.addWidget(self.lbl_tracked)
 
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.list_widget.setObjectName("DataList")
         self.list_widget.setMaximumHeight(150)
         self.list_widget.itemChanged.connect(self._on_selection_changed)
         layout.addWidget(self.list_widget)
 
         self.lbl_conflicts = QLabel(self.tr("Conflicts (resolve before publishing)"))
-        self.lbl_conflicts.setStyleSheet("font-weight: bold; color: #EF4444;")
+        self.lbl_conflicts.setObjectName("WarningLabel")
         self.lbl_conflicts.hide()
         layout.addWidget(self.lbl_conflicts)
 
         self.conflict_list = QListWidget()
-        self.conflict_list.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; border: 1px solid #7F1D1D; border-radius: 8px; }"
-        )
+        self.conflict_list.setObjectName("DataList")
+        self.conflict_list.setProperty("severity", "error")
         self.conflict_list.setMaximumHeight(90)
         self.conflict_list.currentItemChanged.connect(self._on_conflict_selection_changed)
         self.conflict_list.hide()
@@ -133,29 +132,24 @@ class VcsPublishDialog(QDialog):
         self.lbl_untracked = QLabel(
             self.tr("Untracked files (not added unless you select them)")
         )
-        self.lbl_untracked.setStyleSheet("font-weight: bold; color: #F59E0B;")
+        self.lbl_untracked.setObjectName("WarningLabel")
         self.untracked_container.addWidget(self.lbl_untracked)
 
         self.untracked_list = QListWidget()
-        self.untracked_list.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.untracked_list.setObjectName("DataList")
         self.untracked_list.setMaximumHeight(120)
         self.untracked_list.itemChanged.connect(self._on_selection_changed)
         self.untracked_container.addWidget(self.untracked_list)
         layout.addLayout(self.untracked_container)
 
         self.lbl_checklist = QLabel("")
+        self.lbl_checklist.setObjectName("TipBox")
         self.lbl_checklist.setWordWrap(True)
-        self.lbl_checklist.setStyleSheet(
-            "background-color: #0F172A; border: 1px solid #334155; border-radius: 8px; "
-            "padding: 10px; color: #10B981;"
-        )
         self.lbl_checklist.hide()
         layout.addWidget(self.lbl_checklist)
 
         lbl_message = QLabel(self.tr("Commit message"))
-        lbl_message.setStyleSheet("font-weight: bold; color: #E2E8F0;")
+        lbl_message.setObjectName("SectionTitle")
         layout.addWidget(lbl_message)
 
         self.entry_message = QPlainTextEdit()
@@ -170,11 +164,12 @@ class VcsPublishDialog(QDialog):
                 "New files are added to version control only when selected."
             )
         )
-        hint.setStyleSheet("color: #64748B; font-size: 11px;")
+        hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
         layout.addWidget(hint)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setWordWrap(True)
         layout.addWidget(self.lbl_status)
 
@@ -375,10 +370,10 @@ class VcsPublishDialog(QDialog):
         self.entry_message.setEnabled(not busy)
 
     def _show_status(self, message: str, error: bool = False) -> None:
+        from src.interfaces.qt.ui_style import set_ui_state
+
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet(
-            "color: #EF4444; font-weight: bold;" if error else "color: #10B981; font-weight: bold;"
-        )
+        set_ui_state(self.lbl_status, "error" if error else "success")
 
     def _publish(self) -> None:
         if self._busy:

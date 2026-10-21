@@ -62,10 +62,6 @@ class PmTaskCard(QFrame):
 
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 340)
-        self.setStyleSheet(
-            "QFrame#FloatingCard { background-color: #1E293B; border-radius: 12px;"
-            " border: 1px solid #334155; }"
-        )
         self._build_ui()
         self._render_comment_badge()
 
@@ -81,7 +77,7 @@ class PmTaskCard(QFrame):
         entity = self.task.get("entity_name") or self.task.get("name") or "Task"
         task_type = self.task.get("task_type_name") or "Task"
         title = QLabel(f"{entity} - {task_type}")
-        title.setStyleSheet("color: #F8FAFC; font-size: 13px; font-weight: bold;")
+        title.setObjectName("BoardName")
         header.addWidget(title, stretch=1)
 
         status_name, status_color = resolve_task_status(self.task)
@@ -97,13 +93,10 @@ class PmTaskCard(QFrame):
 
         self.thumb_stack = QStackedWidget()
         self.thumb_stack.setFixedHeight(140)
-        self.thumb_stack.setStyleSheet(
-            "QStackedWidget { background-color: #0F172A; border-radius: 8px;"
-            " border: 1px solid #1E293B; }"
-        )
+        self.thumb_stack.setObjectName("ThumbnailFrame")
         self.placeholder = QLabel(self.tr("NO PREVIEW"))
         self.placeholder.setAlignment(Qt.AlignCenter)
-        self.placeholder.setStyleSheet("color: #64748B; font-size: 10px; font-weight: bold;")
+        self.placeholder.setObjectName("PlaceholderText")
         self.thumb_label = QLabel()
         self.thumb_label.setAlignment(Qt.AlignCenter)
         self.thumb_stack.addWidget(self.placeholder)
@@ -125,21 +118,17 @@ class PmTaskCard(QFrame):
         layout.addWidget(self.thumb_container)
 
         project = QLabel(self.task.get("project_name") or "")
-        project.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        project.setObjectName("MutedLabel")
         layout.addWidget(project)
 
         assignees_row = QHBoxLayout()
         self.lbl_assignees = QLabel("")
-        self.lbl_assignees.setStyleSheet("color: #CBD5E1; font-size: 11px;")
+        self.lbl_assignees.setObjectName("BoardCell")
         assignees_row.addWidget(self.lbl_assignees, stretch=1)
         self.btn_assignees = QToolButton()
         self.btn_assignees.setText(self.tr("Edit"))
         self.btn_assignees.setCursor(Qt.PointingHandCursor)
-        self.btn_assignees.setStyleSheet(
-            "QToolButton { background: transparent; color: #93C5FD; border: 1px solid #334155;"
-            " border-radius: 6px; padding: 2px 8px; font-size: 10px; }"
-            "QToolButton:hover { border-color: #3B82F6; }"
-        )
+        self.btn_assignees.setObjectName("BoardActionButton")
         self.btn_assignees.clicked.connect(self.assignees_requested.emit)
         self.btn_assignees.setVisible(self._can_assign)
         assignees_row.addWidget(self.btn_assignees)
@@ -147,12 +136,7 @@ class PmTaskCard(QFrame):
         self.btn_kitsu = QToolButton()
         self.btn_kitsu.setText(self.tr("Kitsu"))
         self.btn_kitsu.setCursor(Qt.PointingHandCursor)
-        self.btn_kitsu.setStyleSheet(
-            "QToolButton { background-color: #1E293B; color: #F97316;"
-            " border: 1px solid #334155; border-radius: 6px; padding: 2px 8px;"
-            " font-size: 10px; font-weight: bold; }"
-            "QToolButton:hover { border-color: #F97316; }"
-        )
+        self.btn_kitsu.setObjectName("BoardKitsuButton")
         self.btn_kitsu.clicked.connect(self.kitsu_requested.emit)
         assignees_row.addWidget(self.btn_kitsu)
         layout.addLayout(assignees_row)
