@@ -162,6 +162,25 @@ and keeps three backups. The TD **VCS Audit** panel shows the most recent events
 supports text filters and a **Failures only** toggle, displays full event
 details and can open the log folder.
 
+## In-app notifications
+
+The bell in the top bar opens the notification center. The first version is fed
+by the VCS audit trail:
+
+* failed commits, updates, locks and other client operations become unread
+  notifications;
+* TD users also receive repository-administration failures;
+* artists and PMs only receive client/project failures;
+* opening the bell, marking one item read or marking everything read updates
+  the unread badge;
+* read state and the notification baseline are stored per user under
+  `<state_dir>/notifications_<user>.json`, so historical failures do not flood
+  the list on first launch.
+
+Kitsu comment/assignment activity can be added later through the existing
+`ActivityCard` component once `ProductionService.get_recent_activity()` is
+implemented.
+
 ## Troubleshooting
 
 * **SVN not found or older than 1.14** — install Subversion manually and run the

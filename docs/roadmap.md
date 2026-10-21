@@ -12,10 +12,29 @@ To maintain complete transparency with our community and partners, we have mappe
 
 ---
 
-## Current Status: v0.6.5 - Production Visualization
-We have successfully established the foundational sandboxing, dynamic context injection, and strict version control integration (SVN). With v0.6.5, we introduced **Watchtower integration**, allowing production managers to seamlessly review artist playblasts in an ephemeral server.
+## Current Status: v0.7.5 - Production SVN Client, Locks and UI Unification
+
+The Hub now ships a production-focused Subversion client workflow on top of the
+DDD/MVVM architecture: startup setup wizard, SVN 1.14 gate, TLS controls, typed
+errors, lock recovery, `needs-lock` policy, conflict resolution, update cleanup,
+history/diff/export, audit trail and an in-app notification center.
+
+The shared UI has also been unified around the global QSS theme, including the
+sidebar footer, top bar, cards, dialogs, settings panels and data views.
 
 ---
+
+## v0.7.5 - Production SVN Client, Locks and UI Unification - Done
+- **SVN client workflow:** startup configuration wizard, SVN 1.14 verification,
+  password handling over stdin, TLS pinning and typed command failures.
+- **Locks:** stale-lock recovery, TD lock administration, `svn:needs-lock`
+  policy for `.blend` files and pre-commit hooks.
+- **Working copy safety:** conflict resolution, obstruction cleanup with
+  timestamped backups, local ignores and safe revision export.
+- **History and audit:** revision log, diffs, working-copy diffs, JSONL audit
+  trail and the TD VCS Audit viewer.
+- **Notifications and UI:** top-bar notification center, unified QSS theme,
+  Settings footer, responsive VCS dialogs and 633 passing tests.
 
 ## v0.7.0 - Core Architecture Refactor & Stability (Feature Freeze) — ✅ DONE
 *Taking a step back to leap forward.* Before we introduce advanced AI features and render farm orchestration, we are dedicating an entire milestone to technical excellence.
