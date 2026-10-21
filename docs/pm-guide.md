@@ -68,6 +68,8 @@ The header includes a project selector, a search box (entity or task type), a st
 * **Table/List view** — one row per task with a 56 px thumbnail, entity, task type, status, responsibles and comment count. Best for scanning and assigning many tasks.
 * **Cards view** — a visual grid with a medium thumbnail, status badge, responsible list and comment badge.
 
+The **Entity** column/card title uses the real shot, asset, sequence, edit or episode name resolved from the project, while the **Type** column shows the task type (Modeling, Animation, ...). It never displays the raw Kitsu UUID; if a name cannot be resolved, it shows `—`.
+
 ### Comments and checklists
 The comment badge (`💬 N`) shows the **total** number of comments and turns orange when there is activity you have not seen. Click it to open the right-side comments drawer for that task, read the thread and reply. Posting a comment keeps the task's current status; this version does not include a status selector in the composer.
 
