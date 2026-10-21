@@ -99,15 +99,25 @@ class ConfigFactory:
             json.dump(self._config, f, indent=4, ensure_ascii=False)
         self._load_config()
 
-    def save_configuration(self, datos_dict: dict, from_seed: bool = False) -> bool:
+    def save_configuration(
+        self,
+        datos_dict: dict,
+        from_seed: bool = False,
+        *,
+        sanitize: bool = True,
+    ) -> bool:
         """
         Public API: Receives a structured payload, injects semantic validations,
         and atomically writes data to disk.
+
+        ``sanitize`` is only disabled by :meth:`apply_initial_setup`, which adds
+        machine-local fields after sanitizing the seed and still needs one
+        atomic write.
         """
         if not datos_dict:
             return False
 
-        if from_seed:
+        if from_seed and sanitize:
             # Machine-specific paths (absolute vault, SSH keys) never come from a seed.
             datos_dict = self._seed_service.sanitize_payload(datos_dict)
 
@@ -140,6 +150,8 @@ class ConfigFactory:
             # Multi-OS Mapping
             if "local_workspace_root" in vcs_data:
                 self._config["vcs_engine"]["local_workspace_root"] = vcs_data["local_workspace_root"]
+            if "svn_cli_path" in vcs_data:
+                self._config["vcs_engine"]["svn_cli_path"] = vcs_data["svn_cli_path"]
 
             if kitsu_url:
                 self._config["kitsu_production"]["api_url"] = kitsu_url
@@ -216,6 +228,93 @@ class ConfigFactory:
         except Exception as e:
             print(f"[CONFIG FACTORY ERROR] Failed to persist workspace root: {e}")
             return False
+
+    def has_local_workspace_root(self) -> bool:
+        """True when this machine has an explicit projects folder configured."""
+        roots = self._config.get("vcs_engine", {}).get("local_workspace_root", {})
+        if not isinstance(roots, dict):
+            return bool(str(roots or "").strip())
+        return bool(str(roots.get(self._get_current_os()) or "").strip())
+
+    def get_svn_cli_path(self) -> str:
+        """Return the machine-local path of the SVN executable, if configured."""
+        paths = self._config.get("vcs_engine", {}).get("svn_cli_path", {})
+        if isinstance(paths, dict):
+            return str(paths.get(self._get_current_os()) or "").strip()
+        return str(paths or "").strip()
+
+    def set_svn_cli_path(self, path: str) -> bool:
+        """Persist the SVN executable path for the CURRENT OS only."""
+        try:
+            os_key = self._get_current_os()
+            vcs = self._config.setdefault("vcs_engine", {})
+            paths = vcs.setdefault("svn_cli_path", {})
+            if not isinstance(paths, dict):
+                paths = {}
+                vcs["svn_cli_path"] = paths
+            paths[os_key] = str(path or "").strip()
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to persist SVN path: {e}")
+            return False
+
+    def apply_local_paths(self, projects_dir: Path, svn_cli_path: str = "") -> bool:
+        """Persist the machine-local paths without re-importing a seed."""
+        try:
+            os_key = self._get_current_os()
+            vcs = self._config.setdefault("vcs_engine", {})
+            roots = vcs.setdefault("local_workspace_root", {})
+            if not isinstance(roots, dict):
+                roots = {}
+                vcs["local_workspace_root"] = roots
+            roots[os_key] = str(projects_dir)
+            if svn_cli_path:
+                paths = vcs.setdefault("svn_cli_path", {})
+                if not isinstance(paths, dict):
+                    paths = {}
+                    vcs["svn_cli_path"] = paths
+                paths[os_key] = str(svn_cli_path)
+            self._persist()
+            return True
+        except Exception as e:
+            print(f"[CONFIG FACTORY ERROR] Failed to persist local setup paths: {e}")
+            return False
+
+    def read_seed_payload(self, seed_path: Path) -> tuple[bool, dict | None, str]:
+        """Decode a seed for preview without persisting it."""
+        return self._seed_service.read_payload(seed_path, require_kitsu=True)
+
+    def apply_initial_setup(
+        self,
+        seed_path: Path,
+        projects_dir: Path,
+        svn_cli_path: str = "",
+    ) -> tuple[bool, str]:
+        """Apply seed, projects folder and SVN path in one atomic write."""
+        ok, payload, error = self.read_seed_payload(seed_path)
+        if not ok or payload is None:
+            return False, error or "The Studio Seed could not be read."
+
+        sanitized = self._seed_service.sanitize_payload(payload)
+        os_key = self._get_current_os()
+        vcs = sanitized.setdefault("vcs_engine", {})
+        roots = vcs.setdefault("local_workspace_root", {})
+        if not isinstance(roots, dict):
+            roots = {}
+            vcs["local_workspace_root"] = roots
+        roots[os_key] = str(projects_dir)
+
+        if svn_cli_path:
+            paths = vcs.setdefault("svn_cli_path", {})
+            if not isinstance(paths, dict):
+                paths = {}
+                vcs["svn_cli_path"] = paths
+            paths[os_key] = str(svn_cli_path)
+
+        if not self.save_configuration(sanitized, from_seed=True, sanitize=False):
+            return False, "The initial configuration could not be saved."
+        return True, "Initial configuration applied successfully."
 
     # ---------------------------------------------------------
     # VOLATILE IDENTITY (SSO & B2B Branding)

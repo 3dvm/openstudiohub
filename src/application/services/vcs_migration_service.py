@@ -553,6 +553,44 @@ class VCSMigrationService:
             f"{source_youngest} revision(s) verified."
         ))
 
+    def list_locks(self, project_name: str, project_root: Path | None = None) -> Tuple[bool, list, str]:
+        """List repository locks for a project."""
+        server = self._source_server(Path(project_root)) if project_root else self._server()
+        if server is None:
+            return False, [], "No VCS server is configured for this project."
+        if server.adapter != "svn":
+            return False, [], "Lock listing is only available for SVN repositories."
+        try:
+            return self._admin(server).list_locks(normalize_repo_name(project_name))
+        except Exception as error:  # noqa: BLE001
+            return False, [], f"Failed to list locks: {error}"
+
+    def break_lock(
+        self,
+        project_name: str,
+        project_root: Path | None,
+        path: str,
+    ) -> Tuple[bool, str]:
+        """Remove a repository lock as an administrator (TD only)."""
+        server = self._source_server(Path(project_root)) if project_root else self._server()
+        if server is None:
+            return False, "No VCS server is configured for this project."
+        if server.adapter != "svn":
+            return False, "Lock administration is only available for SVN repositories."
+        try:
+            return self._admin(server).break_lock(normalize_repo_name(project_name), path)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Failed to remove the lock: {error}"
+
+    def apply_policy(self, project_name: str, project_root: Path | None = None) -> Tuple[bool, str]:
+        """Install or refresh the SVN lock policy for a project repository."""
+        server = self._source_server(Path(project_root)) if project_root else self._server()
+        if server is None:
+            return False, "No VCS server is configured for this project."
+        if server.adapter != "svn":
+            return False, "The VCS lock policy is only available for SVN repositories."
+        return self._admin(server).ensure_policy(normalize_repo_name(project_name))
+
     def delete_repository(self, server_id: str, project_name: str) -> Tuple[bool, str]:
         """Destroy a project repository on a specific server."""
         server = self._server(server_id)

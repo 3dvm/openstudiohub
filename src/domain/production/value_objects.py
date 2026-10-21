@@ -59,11 +59,18 @@ class FileChange:
 
     relative_path: str
     status: str
+    tree_conflicted: bool = False
+    property_conflicted: bool = False
 
     @property
     def is_unversioned(self) -> bool:
         """True when the file is new and must be added before being committed."""
         return self.status == UNVERSIONED_STATUS_CODE
+
+    @property
+    def is_conflicted(self) -> bool:
+        """True when the entry has a content, property or tree conflict."""
+        return self.status == "C" or self.tree_conflicted or self.property_conflicted
 
     @property
     def is_changed(self) -> bool:

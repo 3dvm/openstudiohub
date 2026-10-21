@@ -142,6 +142,28 @@ class VCSRouter:
         )
         return adapter.destroy_server_repository(project_name, vfs_svn)
 
+    @classmethod
+    def ensure_policy(
+        cls,
+        vcs_type: str,
+        repo_url: str,
+        project_name: str,
+        server_profile: Optional[VCSServerProfile] = None,
+        ssh_passphrase_provider: Optional[PassphraseProvider] = None,
+    ):
+        """Install or refresh the server-side VCS policy for a project."""
+        vcs_type = (vcs_type or "").strip().lower()
+        if vcs_type in ("", "none"):
+            return True, "VCS disabled (NAS only)."
+        adapter = cls._build_adapter(
+            vcs_type,
+            repo_url,
+            Path("."),
+            server_profile,
+            ssh_passphrase_provider,
+        )
+        return adapter.ensure_server_policy(project_name)
+
     def check_health(self, username: str = None, password: str = None, timeout: float = 5.0):
         """Pre-flight probe for the configured VCS server."""
         return self.probe_health(

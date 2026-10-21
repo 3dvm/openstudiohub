@@ -22,10 +22,12 @@ from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewM
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
 from src.interfaces.qt.viewmodels.task_board_viewmodel import TaskBoardViewModel
+from src.interfaces.qt.viewmodels.vcs_audit_viewmodel import VcsAuditViewModel
 from src.interfaces.qt.widgets.infrastructure_widget import InfrastructureWidget
 from src.interfaces.qt.widgets.project_list_widget import ProjectListWidget
 from src.interfaces.qt.widgets.settings_widget import SettingsWidget
 from src.interfaces.qt.widgets.task_board_widget import TaskBoardWidget
+from src.interfaces.qt.widgets.vcs_audit_widget import VcsAuditWidget
 
 
 class ViewTD(BaseDashboardView):
@@ -62,12 +64,14 @@ class ViewTD(BaseDashboardView):
         self.task_board_vm = task_board_vm or TaskBoardViewModel(
             production_service, auth_service, status_sink=status_sink
         )
+        self.vcs_audit_vm = VcsAuditViewModel(status_sink=status_sink)
 
         self.setObjectName("ViewTDBase")
 
         self.add_sidebar_button("proyectos", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._switch_panel("proyectos"), active=True)
         self.add_sidebar_button("tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("tasks"))
         self.add_sidebar_button("infra", self.tr("Infrastructure"), "⚙️", "server.svg", lambda: self._switch_panel("infra"))
+        self.add_sidebar_button("audit", self.tr("VCS Audit"), "", "list.svg", lambda: self._switch_panel("audit"))
         self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_td_content()
@@ -101,6 +105,12 @@ class ViewTD(BaseDashboardView):
         )
         self.stacked_content.addWidget(self.vista_infra)
 
+        self.vcs_audit_widget = VcsAuditWidget(
+            parent=self.stacked_content,
+            viewmodel=self.vcs_audit_vm,
+        )
+        self.stacked_content.addWidget(self.vcs_audit_widget)
+
         self.vista_configuraciones = SettingsWidget(
             parent=self.stacked_content,
             viewmodel=self.settings_vm,
@@ -124,5 +134,7 @@ class ViewTD(BaseDashboardView):
     def _switch_panel(self, panel_id: str) -> None:
         self.show_dashboard_content()
         self.set_active_sidebar_button(panel_id)
-        indices = {"proyectos": 0, "tasks": 1, "infra": 2, "settings": 3}
+        indices = {"proyectos": 0, "tasks": 1, "infra": 2, "audit": 3, "settings": 4}
+        if panel_id == "audit":
+            self.vcs_audit_widget.refresh()
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))

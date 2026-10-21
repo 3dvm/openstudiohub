@@ -37,6 +37,8 @@ Each server entry has:
 
 For `remote_ssh` you provide: the SSH host/port/user, the private key (and optional OpenSSH certificate), an optional `known_hosts` file, the **Docker container name** (mandatory), the in-container repository root (svnserve `-r`, e.g. `/var/opt/svn`), and the in-container path to the studio-wide `passwd` file. Leave the passwd path blank to default to `<repo_root>/passwd`.
 
+For HTTPS repository URLs the same entry accepts an optional **TLS CA File**, a **Trust system CA certificates** toggle and an explicit **Allowed cert failures** list. The Hub never trusts arbitrary certificates by default; if a configured CA file is missing, VCS operations fail closed.
+
 **Credentials are per server.** The Session Credentials tab (and the just-in-time prompt before a VCS action) pick the target server from a dropdown and store the VCS username/password and, for remote servers, the SSH key passphrase in RAM for the session only. Nothing is written to disk.
 
 ### Troubleshooting remote SSH
@@ -54,6 +56,8 @@ A `Permission denied (publickey)` message means the server rejected the offered 
 
 New projects pick their server in the creation dialog; the binding is recorded as `vcs_server_id` in the project's `project_init.json`, so a studio can run some projects on the local sandbox and others on a VPS at the same time.
 
+Each new repository also receives `svn:auto-props` for `*.blend = svn:needs-lock=yes`, inheritable ignore rules for caches and backups, and a `pre-commit` hook that rejects `.blend` files without the lock property. Existing repositories can be refreshed from the project card with **Apply VCS Lock Policy…** (TD only).
+
 Each repository created on the remote server gets a `conf/svnserve.conf` that points at the global passwd by **absolute path**, e.g.:
 
 ```
@@ -65,6 +69,8 @@ realm = OpenStudio
 ```
 
 The global passwd file is never modified by the Hub; provision it once on the server (bind-mounted into the container next to the repositories).
+
+TD users can inspect repository locks with **Manage VCS Locks…**, and review the redacted VCS audit trail from the **VCS Audit** panel or `~/.openstudio/state/vcs_audit.jsonl`.
 
 ### Migrating an Existing Project
 Migration is **per project**, works **between any two servers**, and preserves history. From a project card (TD role), choose **Migrate VCS to Remote** and pick the target server:

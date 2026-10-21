@@ -45,12 +45,21 @@ class StudioSeedService:
             legacy = infra.get("vcs_server")
             if isinstance(legacy, dict):
                 StudioSeedService._scrub_ssh(legacy.get("remote"))
+                legacy.pop("ca_file", None)
 
-        servers = clean.get("vcs_engine", {}).get("servers")
-        if isinstance(servers, list):
-            for server in servers:
-                if isinstance(server, dict):
-                    StudioSeedService._scrub_ssh((server.get("profile") or {}).get("remote"))
+        vcs = clean.get("vcs_engine")
+        if isinstance(vcs, dict):
+            # The local SVN executable path is machine-specific and must never
+            # travel in a seed.
+            vcs.pop("svn_cli_path", None)
+            servers = vcs.get("servers")
+            if isinstance(servers, list):
+                for server in servers:
+                    if isinstance(server, dict):
+                        profile = server.get("profile")
+                        if isinstance(profile, dict):
+                            profile.pop("ca_file", None)
+                            StudioSeedService._scrub_ssh(profile.get("remote"))
 
         return clean
 
@@ -81,18 +90,48 @@ class StudioSeedService:
             print(f"[SEED ENGINE ERROR] {msg}")
             return False, msg
 
-    def import_seed(self, seed_path: Path) -> bool:
+    def read_payload(
+        self,
+        seed_path: Path,
+        *,
+        require_kitsu: bool = False,
+    ) -> tuple[bool, dict | None, str]:
+        """Decode and validate a seed without persisting it."""
         try:
             if not seed_path.exists():
-                return False
+                return False, None, "The selected Studio Seed file does not exist."
             with open(seed_path, "r", encoding="utf-8") as handle:
                 encoded = handle.read()
 
             compressed = base64.b64decode(encoded)
             payload = json.loads(zlib.decompress(compressed).decode("utf-8"))
-            return self.config_factory.save_configuration(
-                self.sanitize_payload(payload), from_seed=True
-            )
         except Exception as error:  # noqa: BLE001
-            print(f"[SEED ENGINE ERROR] Integrity failure during seed import: {error}")
+            print(f"[SEED ENGINE ERROR] Integrity failure during seed read: {error}")
+            return False, None, "The Studio Seed is corrupted or unreadable."
+
+        error = self.validate_payload(payload, require_kitsu=require_kitsu)
+        if error:
+            return False, None, error
+        return True, payload, ""
+
+    @staticmethod
+    def validate_payload(payload: dict, *, require_kitsu: bool = False) -> str:
+        """Return an error message when ``payload`` cannot be applied."""
+        if not isinstance(payload, dict):
+            return "The Studio Seed does not contain a valid configuration."
+        if require_kitsu:
+            kitsu_url = str((payload.get("kitsu_production") or {}).get("api_url") or "").strip()
+            if not kitsu_url:
+                return "The Studio Seed is missing the Kitsu server URL."
+        vcs = payload.get("vcs_engine")
+        if vcs is not None and not isinstance(vcs, dict):
+            return "The Studio Seed contains an invalid VCS configuration."
+        return ""
+
+    def import_seed(self, seed_path: Path) -> bool:
+        ok, payload, _error = self.read_payload(seed_path)
+        if not ok or payload is None:
             return False
+        return self.config_factory.save_configuration(
+            self.sanitize_payload(payload), from_seed=True
+        )

@@ -225,6 +225,11 @@ class InfrastructureWidget(QFrame):
         self.entry_repo_root = self._styled_input("/var/opt/svn")
         self.entry_password_db = self._styled_input("/var/opt/svn/passwd")
         self.entry_realm = self._styled_input("OpenStudio")
+        self.entry_ca_file = self._styled_input("/path/to/studio-ca.crt")
+        self.chk_trust_default_ca = QCheckBox(self.tr("Trust system CA certificates"))
+        self.chk_trust_default_ca.setChecked(True)
+        self.chk_trust_default_ca.setStyleSheet("color: #94A3B8; border: none;")
+        self.entry_trust_failures = self._styled_input("unknown-ca,cn-mismatch")
 
         form.addRow(self._styled_label(self.tr("Name:")), self.entry_server_name)
         form.addRow(self._styled_label(self.tr("Adapter:")), self.combo_adapter)
@@ -244,6 +249,12 @@ class InfrastructureWidget(QFrame):
         form.addRow(self._styled_label(self.tr("Remote Repo Root:")), self.entry_repo_root)
         form.addRow(self._styled_label(self.tr("Global passwd (in-container):")), self.entry_password_db)
         form.addRow(self._styled_label(self.tr("Realm:")), self.entry_realm)
+        form.addRow(self._styled_label(self.tr("TLS CA File:")), self._with_browse(self.entry_ca_file))
+        form.addRow("", self.chk_trust_default_ca)
+        form.addRow(
+            self._styled_label(self.tr("Allowed cert failures:")),
+            self.entry_trust_failures,
+        )
         c_layout.addLayout(form)
 
         self.entry_remote_host.textChanged.connect(self._sync_svn_url_from_host)
@@ -358,6 +369,9 @@ class InfrastructureWidget(QFrame):
         self.entry_repo_root.setText(remote.get("repo_root", "/var/opt/svn"))
         self.entry_password_db.setText(remote.get("password_db", ""))
         self.entry_realm.setText(remote.get("realm", "OpenStudio"))
+        self.entry_ca_file.setText(profile.get("ca_file", ""))
+        self.chk_trust_default_ca.setChecked(bool(profile.get("trust_default_ca", True)))
+        self.entry_trust_failures.setText(profile.get("trust_server_cert_failures", ""))
         self._loading_server = False
 
     def _clear_server_fields(self) -> None:
@@ -382,8 +396,10 @@ class InfrastructureWidget(QFrame):
         self.entry_local_root.setText("/home/svn")
         for field in (self.entry_remote_host, self.entry_ssh_user, self.entry_ssh_key,
                       self.entry_ssh_cert, self.entry_known_hosts, self.entry_container,
-                      self.entry_container_user, self.entry_password_db):
+                      self.entry_container_user, self.entry_password_db,
+                      self.entry_ca_file, self.entry_trust_failures):
             field.clear()
+        self.chk_trust_default_ca.setChecked(True)
         self.entry_ssh_port.setText("22")
         self.entry_repo_root.setText("/var/opt/svn")
         self.entry_realm.setText("OpenStudio")
@@ -432,6 +448,9 @@ class InfrastructureWidget(QFrame):
                 "mode": self.combo_server_mode.currentText(),
                 "local_container": self.entry_local_container.text().strip() or "openstudio_local_svn",
                 "local_repo_root": self.entry_local_root.text().strip() or "/home/svn",
+                "ca_file": self.entry_ca_file.text().strip(),
+                "trust_default_ca": self.chk_trust_default_ca.isChecked(),
+                "trust_server_cert_failures": self.entry_trust_failures.text().strip(),
                 "remote": {
                     "host": self.entry_remote_host.text().strip(),
                     "ssh_port": port,

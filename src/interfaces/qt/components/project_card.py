@@ -126,6 +126,8 @@ class ProjectCard(QFrame):
         on_export: Optional[Callable] = None,
         on_publish: Optional[Callable] = None,
         on_reset: Optional[Callable] = None,
+        on_apply_policy: Optional[Callable] = None,
+        on_manage_locks: Optional[Callable] = None,
         on_configure: Optional[Callable] = None,
         on_open_tasks: Optional[Callable] = None,
         tasks_only: bool = False,
@@ -151,6 +153,8 @@ class ProjectCard(QFrame):
         self.on_export = on_export
         self.on_publish = on_publish
         self.on_reset = on_reset
+        self.on_apply_policy = on_apply_policy
+        self.on_manage_locks = on_manage_locks
         self.on_configure = on_configure
 
         self.status = dict(status) if status else {}
@@ -225,6 +229,10 @@ class ProjectCard(QFrame):
             action_publish.triggered.connect(self._on_publish_requested)
             action_reset = self.options_menu.addAction(self.tr("♻️ Reset VCS Working Copy…"))
             action_reset.triggered.connect(self._on_reset_requested)
+            action_policy = self.options_menu.addAction(self.tr("Apply VCS Lock Policy…"))
+            action_policy.triggered.connect(self._on_apply_policy_requested)
+            action_locks = self.options_menu.addAction(self.tr("Manage VCS Locks…"))
+            action_locks.triggered.connect(self._on_manage_locks_requested)
             action_migrate = self.options_menu.addAction(self.tr("🚚 Migrate VCS…"))
             action_migrate.triggered.connect(self._on_migrate_requested)
             self.options_menu.addSeparator()
@@ -527,6 +535,16 @@ class ProjectCard(QFrame):
         if not self.on_reset:
             return
         self.on_reset(self.project_name, self.project_data.get("id", ""))
+
+    def _on_apply_policy_requested(self) -> None:
+        if not self.on_apply_policy:
+            return
+        self.on_apply_policy(self.project_name, self.project_data.get("id", ""))
+
+    def _on_manage_locks_requested(self) -> None:
+        if not self.on_manage_locks:
+            return
+        self.on_manage_locks(self.project_name, self.project_data.get("id", ""))
 
     def _on_configure_requested(self) -> None:
         if not self.on_configure:

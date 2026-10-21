@@ -15,11 +15,10 @@ from pathlib import Path
 
 from _version import __version__
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
-    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -30,7 +29,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.interfaces.qt.viewmodels.initial_setup_viewmodel import InitialSetupViewModel
 from src.interfaces.qt.viewmodels.login_viewmodel import LoginViewModel
+from src.interfaces.qt.views.initial_setup_wizard import InitialSetupWizard
 
 
 class HeroImageWidget(QWidget):
@@ -109,6 +110,7 @@ class ViewLogin(QWidget):
         super().__init__(parent)
 
         self.vm = viewmodel
+        self._setup_prompted = False
         self.setObjectName("ViewLoginBase")
 
         self._build_ui()
@@ -256,12 +258,12 @@ class ViewLogin(QWidget):
         self.btn_login.clicked.connect(self._on_login_clicked)
         form_layout.addWidget(self.btn_login)
 
-        self.btn_import_seed = QPushButton(self.tr("Import Studio Seed (.seed)"))
-        self.btn_import_seed.setObjectName("SecondaryButton")
-        self.btn_import_seed.setFixedHeight(40)
-        self.btn_import_seed.setCursor(Qt.PointingHandCursor)
-        self.btn_import_seed.clicked.connect(self._import_seed)
-        form_layout.addWidget(self.btn_import_seed)
+        self.btn_initial_setup = QPushButton(self.tr("Initial Configuration"))
+        self.btn_initial_setup.setObjectName("SecondaryButton")
+        self.btn_initial_setup.setFixedHeight(40)
+        self.btn_initial_setup.setCursor(Qt.PointingHandCursor)
+        self.btn_initial_setup.clicked.connect(self._open_initial_setup)
+        form_layout.addWidget(self.btn_initial_setup)
 
         links_layout = QHBoxLayout()
         links_layout.setContentsMargins(0, 15, 0, 0)
@@ -316,6 +318,7 @@ class ViewLogin(QWidget):
     def _connect_signals(self) -> None:
         self.vm.error_message.connect(self._show_error)
         self.vm.config_state_changed.connect(self._on_config_state_changed)
+        self.vm.setup_state_changed.connect(self._on_setup_state_changed)
         self.vm.host_set.connect(self.entry_host.setText)
         self.vm.busy_changed.connect(self._on_busy_changed)
         self.vm.status_message.connect(self._on_status_message)
@@ -324,14 +327,18 @@ class ViewLogin(QWidget):
         if has_config:
             self.entry_host.setReadOnly(True)
             self.entry_host.setStyleSheet("background-color: #0F172A; color: #64748B; border: 1px solid #1E293B;")
-            self.btn_import_seed.hide()
             self.settings_icon.show()
         else:
             self.entry_host.clear()
             self.entry_host.setReadOnly(False)
             self.entry_host.setStyleSheet("")
-            self.btn_import_seed.show()
             self.settings_icon.hide()
+
+    def _on_setup_state_changed(self, required: bool) -> None:
+        self.btn_initial_setup.setVisible(bool(required))
+        if required and not self._setup_prompted:
+            self._setup_prompted = True
+            QTimer.singleShot(0, self._open_initial_setup)
 
     def _on_busy_changed(self, busy: bool) -> None:
         self.btn_login.setEnabled(not busy)
@@ -366,24 +373,22 @@ class ViewLogin(QWidget):
 
         self.vm.login(email, password, host)
 
-    def _import_seed(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self, self.tr("Select Studio Seed File"), "", self.tr("Seed Files (*.seed);;All Files (*)")
+    def _open_initial_setup(self) -> None:
+        setup_vm = InitialSetupViewModel(
+            self.vm.initial_setup_service,
+            self.vm.config_factory,
         )
-        if not file_path:
-            return
+        dialog = InitialSetupWizard(self, setup_vm, on_finished=self._on_setup_finished)
+        self._setup_vm = setup_vm
+        self._setup_dialog = dialog
+        dialog.exec()
+        self._setup_dialog = None
+        self._setup_vm = None
 
-        # Future installation wizard: a proto-installer that lets each machine
-        # pick its own local projects folder before provisioning the seed.
-        projects_dir = QFileDialog.getExistingDirectory(
-            self,
-            self.tr("Select your local projects folder"),
-            str(Path.home()),
-        )
-        if not projects_dir:
-            return
-
-        self.vm.import_seed(Path(file_path), Path(projects_dir))
+    def _on_setup_finished(self, success: bool) -> None:
+        if success:
+            self._setup_prompted = True
+            self.vm.load_config_state()
 
     def _open_settings_modal(self, event) -> None:
         dialog = LoginSettingsDialog(self, self.vm.clear_local_config)

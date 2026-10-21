@@ -10,6 +10,8 @@ Renders the assigned-task grid and the project filter. All data and actions
 are delegated to ``ArtistViewModel``.
 """
 
+from pathlib import Path
+
 from PySide6.QtCore import QEasingCurve, Qt, QVariantAnimation
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
@@ -35,6 +37,8 @@ from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
+from src.interfaces.qt.views.vcs_history_dialog import VcsHistoryDialog
+from src.interfaces.qt.views.vcs_update_dialog import VcsUpdateDialog
 from src.interfaces.qt.views.vcs_publish_dialog import VcsPublishDialog
 
 
@@ -58,6 +62,7 @@ class ViewArtist(BaseDashboardView):
         self._task_widgets = []
         self._task_cards_by_id = {}
         self._vcs_dialogs = []
+        self._vcs_history_dialogs = []
         self._cards = []
         self._current_cols = 0
 
@@ -81,6 +86,7 @@ class ViewArtist(BaseDashboardView):
         self.vm.vcs_changes_ready.connect(self._on_vcs_changes_ready)
         self.vm.vcs_publish_finished.connect(self._on_vcs_publish_finished)
         self.vm.vcs_update_finished.connect(self._on_vcs_update_finished)
+        self.vm.vcs_update_review_required.connect(self._on_update_review_required)
         self.vm.task_locks_ready.connect(self._on_task_locks_ready)
         self.vm.task_statuses_loaded.connect(self._on_task_statuses_loaded)
         self._connect_comments()
@@ -481,8 +487,20 @@ class ViewArtist(BaseDashboardView):
                 unread_count=card.unread_count,
                 on_comments_callback=lambda c=card: self._open_comments(c),
                 on_kitsu_callback=self._open_task_kitsu,
+                on_history_callback=(
+                    (lambda c=card: self._open_vcs_history(c))
+                    if card.task_file_path
+                    else None
+                ),
             )
             task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
+            task_card.set_can_break_lock(self.vm.can_break_foreign_locks())
+            task_card.release_lock_requested.connect(
+                lambda c=card: self.vm.release_task_lock(c)
+            )
+            task_card.break_lock_requested.connect(
+                lambda c=card: self.vm.break_task_lock(c)
+            )
             self._task_widgets.append(task_card)
             self._task_cards_by_id[str(card.task_data.get("id", ""))] = task_card
 
@@ -529,6 +547,17 @@ class ViewArtist(BaseDashboardView):
         if self.vm.update_vcs(card.project_id, card.project_root):
             self.btn_update_vcs.setEnabled(False)
 
+    def _on_update_review_required(self, project_id: str, report) -> None:
+        card = next(
+            (candidate for candidate in self._cards if str(candidate.project_id) == str(project_id)),
+            None,
+        )
+        if card is None or not card.project_root:
+            return
+        dialog = VcsUpdateDialog(self, self.vm, project_id, card.project_root, report)
+        dialog.exec()
+        self._sync_update_vcs_button()
+
     def _on_vcs_update_finished(self, _project_id: str, _success: bool, _message: str) -> None:
         self._sync_update_vcs_button()
 
@@ -564,6 +593,29 @@ class ViewArtist(BaseDashboardView):
         self._vcs_dialogs.append(dialog)
         dialog.finished.connect(lambda _result, d=dialog: self._release_vcs_dialog(d))
         dialog.show()
+
+    def _open_vcs_history(self, card) -> None:
+        task_id = str(card.task_data.get("id", ""))
+        for dialog in self._vcs_history_dialogs:
+            if getattr(dialog, "task_id", None) == task_id:
+                dialog.raise_()
+                dialog.activateWindow()
+                return
+        label = (
+            f"{card.project_name} • {card.task_data.get('entity_name', '')} "
+            f"- {Path(card.task_file_path).name if card.task_file_path else ''}"
+        )
+        dialog = VcsHistoryDialog(self, self.vm, card, task_label=label)
+        self._vcs_history_dialogs.append(dialog)
+        dialog.finished.connect(
+            lambda _result, d=dialog: self._release_vcs_history_dialog(d)
+        )
+        dialog.show()
+
+    def _release_vcs_history_dialog(self, dialog) -> None:
+        if dialog in self._vcs_history_dialogs:
+            self._vcs_history_dialogs.remove(dialog)
+        dialog.deleteLater()
 
     def _release_vcs_dialog(self, dialog) -> None:
         if dialog in self._vcs_dialogs:

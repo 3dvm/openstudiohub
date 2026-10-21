@@ -159,6 +159,8 @@ class ProjectListWidget(QFrame):
         self.vm.migration_phase.connect(self._on_migration_phase)
         self.vm.migration_finished.connect(self._on_migration_finished)
         self.vm.cleanup_finished.connect(lambda name, ok, msg: QMessageBox.information(self, self.tr("VCS Cleanup"), msg))
+        self.vm.policy_finished.connect(self._on_policy_finished)
+        self.vm.vcs_locks_ready.connect(self._on_vcs_locks_ready)
         self.vm.export_uncommitted_found.connect(self._on_export_uncommitted_found)
         self.vm.publish_changes_ready.connect(self._on_publish_changes_ready)
         self.vm.publish_up_to_date.connect(self._on_publish_up_to_date)
@@ -193,6 +195,49 @@ class ProjectListWidget(QFrame):
             ),
         )
         dialog.exec()
+
+    def _request_manage_locks(self, project_name: str) -> None:
+        self.vm.list_vcs_locks(project_name)
+
+    def _on_vcs_locks_ready(
+        self, project_name: str, ok: bool, locks: list, message: str
+    ) -> None:
+        if not ok:
+            QMessageBox.warning(self, self.tr("VCS Locks"), message)
+            return
+        if not locks:
+            QMessageBox.information(
+                self,
+                self.tr("VCS Locks"),
+                self.tr(f"'{project_name}' has no repository locks."),
+            )
+            return
+        from src.interfaces.qt.views.vcs_locks_dialog import VcsLocksDialog
+
+        dialog = VcsLocksDialog(self, self.vm, project_name, locks)
+        dialog.exec()
+
+    def _request_apply_policy(self, project_name: str) -> None:
+        """Confirm and install the server-side SVN lock policy for a project."""
+        answer = QMessageBox.question(
+            self,
+            self.tr("Apply VCS Lock Policy"),
+            self.tr(
+                f"Apply the SVN lock policy to '{project_name}'?\n\n"
+                "This installs the pre-commit hook and auto-props that require "
+                "svn:needs-lock on .blend files and reject cache/backup files.\n\n"
+                "Existing .blend files may still need svn:needs-lock set manually."
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self.vm.apply_vcs_policy(project_name)
+
+    def _on_policy_finished(self, project_name: str, success: bool, message: str) -> None:
+        if success:
+            QMessageBox.information(self, self.tr("VCS Lock Policy"), message)
+        else:
+            QMessageBox.warning(self, self.tr("VCS Lock Policy"), message)
 
     def _request_reset_working_copy(self, project_name: str) -> None:
         """Confirm and reset a project's VCS working copy (destructive)."""
@@ -509,6 +554,8 @@ class ProjectListWidget(QFrame):
                 on_export=lambda name, pid=project_id: self._request_export(name, pid),
                 on_publish=lambda name, pid=project_id: self.vm.request_project_publish(name),
                 on_reset=lambda name, pid=project_id: self._request_reset_working_copy(name),
+                on_apply_policy=lambda name, pid=project_id: self._request_apply_policy(name),
+                on_manage_locks=lambda name, pid=project_id: self._request_manage_locks(name),
                 on_configure=self._request_config,
                 on_open_tasks=(
                     (lambda pid=project_id: self.on_open_tasks_callback(pid))

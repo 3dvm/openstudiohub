@@ -24,12 +24,18 @@ administered over OpenSSH.
 import shutil
 import socket
 import subprocess
+from dataclasses import replace
 from typing import Callable, List, Dict, Optional, Tuple
 from urllib.parse import urlsplit
 
 from pathlib import Path
 from .abstract_vcs import AbstractVCS
 from .repository_admin import build_repository_admin, normalize_repo_name
+from .svn_client import detect_svn_client
+from .svn_errors import VcsError, classify_svn_error
+from .svn_runner import SvnCommandRunner
+from .vcs_audit import VcsAuditLogger
+from .svn_xml import SvnStatusEntry, parse_log_xml, parse_status_xml
 from src.domain.workspace.vcs_server_profile import LOCAL_DOCKER, VCSServerProfile
 from src.infrastructure.dev_defaults import DEV_SVN_USER, DEV_SVN_PASSWORD
 
@@ -53,6 +59,15 @@ class SVNAdapter(AbstractVCS):
         super().__init__(repo_url, workspace_dir, server_profile)
         self._ssh_passphrase_provider = ssh_passphrase_provider
         self._admin = None
+        self._local_ignores: List[str] = []
+        self._svn_path = shutil.which("svn") or "svn"
+        self._audit = VcsAuditLogger()
+        self._runner = SvnCommandRunner(
+            self._svn_path,
+            audit=self._audit,
+            project=self._project_label(),
+            server=self._server_host(),
+        )
 
     # ------------------------------------------------------------------
     # Server-admin strategy
@@ -66,8 +81,48 @@ class SVNAdapter(AbstractVCS):
             )
         return self._admin
 
+    def _project_label(self) -> str:
+        try:
+            return Path(self.workspace_dir).resolve().parent.name
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _server_host(self) -> str:
+        try:
+            return urlsplit(self.repo_url).hostname or ""
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _audit_admin(
+        self,
+        operation: str,
+        project_name: str,
+        ok: bool,
+        message: str,
+        *,
+        paths: Tuple[str, ...] = (),
+    ) -> None:
+        self._audit.log(
+            operation,
+            project=project_name,
+            server=self._server_host(),
+            paths=paths,
+            ok=ok,
+            message="" if ok else message,
+        )
+
+    def set_local_ignores(self, patterns: List[str]) -> None:
+        """Apply project-local ignore patterns to every svn invocation."""
+        self._local_ignores = [str(pattern).strip() for pattern in patterns or [] if str(pattern).strip()]
+
     def check_cli(self) -> Tuple[bool, str]:
-        required = ["svn"]
+        svn_status = detect_svn_client()
+        if not svn_status.found:
+            return False, svn_status.message
+        if not svn_status.meets_minimum:
+            return False, svn_status.message
+
+        required: List[str] = []
         if self.server_profile.is_remote:
             required.extend(["ssh", "scp"])
         missing = [tool for tool in required if shutil.which(tool) is None]
@@ -76,8 +131,8 @@ class SVNAdapter(AbstractVCS):
         return True, "VCS command-line tools available."
 
     def _build_auth_args(self, username: Optional[str], password: Optional[str]) -> List[str]:
-        """Builds authentication arguments without caching them on disk."""
-        args = ["--non-interactive", "--trust-server-cert"]
+        """Build authentication arguments without caching them on disk."""
+        args = ["--non-interactive", *self._tls_args()]
 
         # Local developer sandbox: inject the bootstrap credentials automatically.
         if self.server_profile.mode == LOCAL_DOCKER and "localhost" in self.repo_url:
@@ -89,41 +144,77 @@ class SVNAdapter(AbstractVCS):
             args.extend(["--username", username, "--password", password, "--no-auth-cache"])
         return args
 
-    def _run_subprocess(self, cmd: List[str], cwd: Optional[Path] = None) -> str:
-        """Secure wrapper to execute subprocesses and capture errors."""
-        cwd_path = str(cwd) if cwd else None
+    def _tls_args(self) -> List[str]:
+        """Return TLS options for HTTPS URLs, failing closed on bad CA paths."""
+        scheme = (urlsplit(self.repo_url).scheme or "").lower()
+        if scheme not in ("https", "http"):
+            return []
 
-        # === DEBUG MODE: Security mask to avoid printing the password in the console ===
-        safe_cmd = []
-        skip_next = False
-        for token in cmd:
-            if skip_next:
-                safe_cmd.append("********")
-                skip_next = False
-            elif token == "--password":
-                safe_cmd.append(token)
-                skip_next = True
-            else:
-                safe_cmd.append(token)
-
-        print(f"\n[SVN DEBUG] Executing (CWD: {cwd_path or 'Current'}):")
-        print(f" -> {' '.join(safe_cmd)}")
-        # ==============================================================================
-
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=cwd_path,
-                check=True,
-                capture_output=True,
-                text=True
+        profile = self.server_profile
+        args: List[str] = []
+        ca_file = str(getattr(profile, "ca_file", "") or "").strip()
+        if ca_file:
+            ca_path = Path(ca_file).expanduser()
+            if not ca_path.exists():
+                raise VcsError(f"The configured TLS CA file does not exist: {ca_path}")
+            args.extend(
+                [
+                    "--config-option",
+                    f"servers:global:ssl-authority-files={ca_path}",
+                ]
             )
-            return result.stdout
-        except subprocess.CalledProcessError as e:
-            # Captures the real stderr from SVN (e.g., Incorrect Password) to pass it to the UI/Console
-            error_msg = e.stderr.strip() if e.stderr else str(e)
-            print(f"[SVN FATAL ERROR] Code {e.returncode}: {error_msg}\n")
-            raise RuntimeError(f"SVN Failure: {error_msg}")
+        if not bool(getattr(profile, "trust_default_ca", True)):
+            args.extend(["--config-option", "servers:global:ssl-trust-default-ca=no"])
+        failures = str(
+            getattr(profile, "trust_server_cert_failures", "") or ""
+        ).strip()
+        if failures:
+            args.extend(["--trust-server-cert-failures", failures])
+        return args
+
+    def _run_subprocess(
+        self,
+        cmd: List[str],
+        cwd: Optional[Path] = None,
+        return_stderr: bool = False,
+    ) -> str | Tuple[str, str]:
+        """Run svn through the shared runner with timeout and typed errors."""
+        args = list(cmd)
+        if args and args[0] in ("svn", self._svn_path):
+            args = args[1:]
+        if self._local_ignores:
+            args.extend(
+                [
+                    "--config-option",
+                    "config:miscellany:global-ignores=" + " ".join(self._local_ignores),
+                ]
+            )
+        args, stdin_text = self._password_from_stdin(args)
+        result = self._runner.run(
+            args,
+            cwd=cwd,
+            stdin_text=stdin_text,
+            check=True,
+            non_interactive=False,
+        )
+        if return_stderr:
+            return result.stdout, result.stderr
+        return result.stdout
+
+    @staticmethod
+    def _password_from_stdin(args: List[str]) -> Tuple[List[str], Optional[str]]:
+        """Move ``--password VALUE`` to ``--password-from-stdin``."""
+        if "--password" not in args:
+            return args, None
+        index = args.index("--password")
+        password = args[index + 1] if index + 1 < len(args) else ""
+        del args[index : index + 2]
+        args.append("--password-from-stdin")
+        return args, password + "\n"
+
+    def cancel(self) -> None:
+        """Cancel the running SVN process, if any."""
+        self._runner.cancel()
 
     def full_pull(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
         # If the folder already exists and is an SVN repo, perform an update
@@ -151,16 +242,16 @@ class SVNAdapter(AbstractVCS):
             output = self._run_subprocess(["svn", "status"], cwd=self.workspace_dir)
         except Exception:  # noqa: BLE001 - status is best-effort diagnostics
             return
-        conflicts = [
+        problems = [
             line for line in output.splitlines()
-            if len(line) > 6 and "C" in line[:7]
+            if len(line) > 6 and any(marker in line[:7] for marker in ("C", "~", "B"))
         ]
-        if conflicts:
-            detail = "\n".join(conflicts[:10])
+        if problems:
+            detail = "\n".join(problems[:10])
             raise RuntimeError(
-                "The VCS working copy has conflicts after the update (often caused "
-                "by local folders shadowing incoming versioned folders). Use "
-                "'Reset VCS Working Copy' for this project and retry.\n" + detail
+                "The VCS working copy has unresolved conflicts or obstructed paths "
+                "after the update. Resolve them (or ignore/move the untracked files) "
+                "and retry. As a last resort, use 'Reset VCS Working Copy'.\n" + detail
             )
 
     def sparse_pull(self, paths: List[str], username: Optional[str] = None, password: Optional[str] = None) -> bool:
@@ -190,11 +281,26 @@ class SVNAdapter(AbstractVCS):
     def lock(self, path: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
         cmd = ["svn", "lock", path]
         cmd.extend(self._build_auth_args(username, password))
-        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        _stdout, stderr = self._run_subprocess(
+            cmd, cwd=self.workspace_dir, return_stderr=True
+        )
+        # Some SVN versions report an already-held lock as a warning with a
+        # zero exit code. Surface it as a typed error so the caller can offer
+        # the stale-lock recovery action.
+        if "W160035" in stderr or "E160039" in stderr:
+            raise classify_svn_error(stderr, 1, cmd)
         return True
 
-    def unlock(self, path: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+    def unlock(
+        self,
+        path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        force: bool = False,
+    ) -> bool:
         cmd = ["svn", "unlock", path]
+        if force:
+            cmd.append("--force")
         cmd.extend(self._build_auth_args(username, password))
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
@@ -224,6 +330,14 @@ class SVNAdapter(AbstractVCS):
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 
+    def resolve(self, path: str, accept: str = "working") -> bool:
+        """Resolve a conflict, keeping the working copy or choosing one side."""
+        allowed = {"working", "base", "mine-full", "theirs-full"}
+        strategy = accept if accept in allowed else "working"
+        cmd = ["svn", "resolve", f"--accept={strategy}", path]
+        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        return True
+
     def relocate(self, new_url: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
         """Repoint this working copy at ``new_url`` (repository UUID must match)."""
         cmd = ["svn", "relocate", new_url]
@@ -244,6 +358,80 @@ class SVNAdapter(AbstractVCS):
                 file_path = line[8:].strip()
                 status_dict[file_path] = state
         return status_dict
+
+    def get_status_entries(self, path: Optional[str] = None) -> List[SvnStatusEntry]:
+        """Return structured ``svn status --xml`` entries for the workspace."""
+        cmd = ["svn", "status", "--xml"]
+        if path:
+            cmd.append(path)
+        output = self._run_subprocess(cmd, cwd=self.workspace_dir)
+        entries = parse_status_xml(output)
+        return [
+            replace(entry, path=self._relative_status_path(entry.path))
+            for entry in entries
+        ]
+
+    def _relative_status_path(self, path: str) -> str:
+        try:
+            return (
+                Path(path)
+                .resolve()
+                .relative_to(Path(self.workspace_dir).resolve())
+                .as_posix()
+            )
+        except Exception:  # noqa: BLE001 - keep the raw path for diagnostics
+            return str(path).replace("\\", "/")
+
+    def get_log(
+        self,
+        path: Optional[str] = None,
+        limit: int = 20,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[dict]:
+        """Return the most recent revisions that changed ``path``."""
+        cmd = ["svn", "log", "--xml", "-l", str(max(1, int(limit)))]
+        if path:
+            cmd.append(path)
+        cmd.extend(self._build_auth_args(username, password))
+        output = self._run_subprocess(cmd, cwd=self.workspace_dir)
+        return parse_log_xml(output)
+
+    def get_diff(
+        self,
+        path: str,
+        revision: Optional[int] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> str:
+        """Return a textual diff for the working copy or a single revision."""
+        cmd = ["svn", "diff"]
+        if revision is not None:
+            cmd.extend(["-c", str(revision)])
+        cmd.append(path)
+        cmd.extend(self._build_auth_args(username, password))
+        return self._run_subprocess(cmd, cwd=self.workspace_dir)
+
+    def export_revision(
+        self,
+        path: str,
+        revision: int,
+        destination: Path,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> bool:
+        """Export one revision without modifying the working copy."""
+        destination = Path(destination)
+        args = ["cat", "-r", str(revision), path]
+        args.extend(self._build_auth_args(username, password))
+        args, stdin_text = self._password_from_stdin(args)
+        self._runner.run_to_file(
+            args,
+            destination,
+            cwd=self.workspace_dir,
+            stdin_text=stdin_text,
+        )
+        return True
 
     def set_needs_lock(self, path: str) -> bool:
         """
@@ -362,20 +550,85 @@ class SVNAdapter(AbstractVCS):
         """Rollback of the server-side repository (local Docker or remote SSH)."""
         repo_name = self._normalized_repo_name(project_name)
         try:
-            return self.admin.destroy(repo_name, vfs_svn)
+            ok, message = self.admin.destroy(repo_name, vfs_svn)
         except ValueError as error:
+            self._audit_admin("repository.destroy", repo_name, False, str(error))
             return False, str(error)
         except RuntimeError as error:
-            return False, f"Failed to remove VCS repository: {error}"
+            message = f"Failed to remove VCS repository: {error}"
+            self._audit_admin("repository.destroy", repo_name, False, message)
+            return False, message
+        self._audit_admin("repository.destroy", repo_name, ok, message)
+        return ok, message
+
+    def ensure_server_policy(self, project_name: str) -> Tuple[bool, str]:
+        """Install or refresh the server-side lock policy for this project."""
+        repo_name = self._normalized_repo_name(project_name)
+        try:
+            ok, message = self.admin.ensure_policy(repo_name)
+        except ValueError as error:
+            self._audit_admin("repository.policy", repo_name, False, str(error))
+            return False, str(error)
+        except RuntimeError as error:
+            message = f"Failed to apply the VCS policy: {error}"
+            self._audit_admin("repository.policy", repo_name, False, message)
+            return False, message
+        self._audit_admin("repository.policy", repo_name, ok, message)
+        return ok, message
+
+    def list_server_locks(self, project_name: str) -> Tuple[bool, list, str]:
+        """List repository locks for a project."""
+        repo_name = self._normalized_repo_name(project_name)
+        try:
+            ok, locks, message = self.admin.list_locks(repo_name)
+        except ValueError as error:
+            self._audit_admin("locks.list", repo_name, False, str(error))
+            return False, [], str(error)
+        except RuntimeError as error:
+            message = f"Failed to list locks: {error}"
+            self._audit_admin("locks.list", repo_name, False, message)
+            return False, [], message
+        self._audit_admin(
+            "locks.list",
+            repo_name,
+            ok,
+            message,
+            paths=tuple(str(lock.get("path", "")) for lock in locks or ()),
+        )
+        return ok, locks, message
+
+    def break_server_lock(self, project_name: str, path: str) -> Tuple[bool, str]:
+        """Remove a lock with server-side administrator privileges."""
+        repo_name = self._normalized_repo_name(project_name)
+        try:
+            ok, message = self.admin.break_lock(repo_name, path)
+        except ValueError as error:
+            self._audit_admin("locks.break", repo_name, False, str(error), paths=(path,))
+            return False, str(error)
+        except RuntimeError as error:
+            message = f"Failed to remove the lock: {error}"
+            self._audit_admin("locks.break", repo_name, False, message, paths=(path,))
+            return False, message
+        self._audit_admin("locks.break", repo_name, ok, message, paths=(path,))
+        return ok, message
 
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
         """Create the project repository on the configured server (Docker or VPS)."""
         repo_name = self._normalized_repo_name(project_name)
         try:
-            return self.admin.create(repo_name, vfs_svn)
+            ok = self.admin.create(repo_name, vfs_svn)
         except ValueError as error:
+            self._audit_admin("repository.create", repo_name, False, str(error))
             print(f"[SVNAdapter] Invalid repository name: {error}")
             return False
         except RuntimeError as error:
+            self._audit_admin("repository.create", repo_name, False, str(error))
             print(f"[SVNAdapter] Remote repository creation failed: {error}")
             return False
+        self._audit_admin(
+            "repository.create",
+            repo_name,
+            bool(ok),
+            "" if ok else "Repository creation failed.",
+        )
+        return ok

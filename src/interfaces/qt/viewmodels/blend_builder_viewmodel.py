@@ -446,7 +446,12 @@ class BlendBuilderViewModel(BaseViewModel):
             self.project_publish_up_to_date.emit()
         self._publish_scan_notify_clean = True
 
-    def publish_vcs_changes(self, _card, selected_changes: list) -> bool:
+    def publish_vcs_changes(
+        self,
+        _card,
+        selected_changes: list,
+        message: str = "",
+    ) -> bool:
         """Commit the selected project files (used by the publish checklist)."""
         if not selected_changes:
             self.report_status("No files selected for publishing.", "yellow")
@@ -478,8 +483,11 @@ class BlendBuilderViewModel(BaseViewModel):
             username=vcs_user or "",
             password=vcs_pwd or "",
             message=(
-                f"OpenStudioHub: publish {len(selected_paths)} spawned file(s) "
-                f"for {self.current_project_name}."
+                (message or "").strip()
+                or (
+                    f"OpenStudioHub: publish {len(selected_paths)} spawned file(s) "
+                    f"for {self.current_project_name}."
+                )
             ),
         )
         worker.finished_publish.connect(self._on_project_publish_finished)

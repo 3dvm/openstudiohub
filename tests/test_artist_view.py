@@ -65,6 +65,7 @@ class FakeViewModel(QObject):
     vcs_changes_ready = Signal(str, list)
     vcs_publish_finished = Signal(str, bool, str)
     vcs_update_finished = Signal(str, bool, str)
+    vcs_update_review_required = Signal(str, object)
     task_locks_ready = Signal(dict)
     task_statuses_loaded = Signal(str, list)
 
@@ -106,8 +107,20 @@ class FakeViewModel(QObject):
     def check_vcs_changes(self, _card):
         pass
 
-    def publish_vcs_changes(self, _card, _changes):
+    def publish_vcs_changes(self, _card, _changes, message=""):
         return True
+
+    def can_break_foreign_locks(self):
+        return False
+
+    def completed_checklist_items(self, _task_id):
+        return []
+
+    def release_task_lock(self, _card):
+        pass
+
+    def break_task_lock(self, _card):
+        pass
 
     def is_vcs_update_running(self):
         return self._update_running
@@ -115,6 +128,12 @@ class FakeViewModel(QObject):
     def update_vcs(self, project_id, project_root):
         self.update_calls.append((project_id, project_root))
         return True
+
+    def move_vcs_path_aside(self, project_root, relative_path):
+        return True, "Moved aside."
+
+    def ignore_vcs_path(self, project_root, relative_path):
+        return True, "Ignored."
 
     def comment_panel_width(self):
         return 360

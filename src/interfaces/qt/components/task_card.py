@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
     QSizePolicy,
     QStackedWidget,
@@ -104,6 +105,9 @@ def resolve_task_status(task_data: dict) -> tuple[str, str]:
 
 
 class TaskCard(QFrame):
+    release_lock_requested = Signal()
+    break_lock_requested = Signal()
+
     def __init__(
         self,
         parent,
@@ -122,6 +126,7 @@ class TaskCard(QFrame):
         unread_count: int = 0,
         on_comments_callback=None,
         on_kitsu_callback=None,
+        on_history_callback=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -142,8 +147,12 @@ class TaskCard(QFrame):
         self.unread_count = max(0, int(unread_count or 0))
         self.on_comments_callback = on_comments_callback
         self.on_kitsu_callback = on_kitsu_callback
+        self.on_history_callback = on_history_callback
+        self.allow_break_lock = False
 
         self.setObjectName("FloatingCard")
+        self.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.customContextMenuRequested.connect(self._show_context_menu)
         self.setFixedSize(320, 280)
 
         self._build_ui()
@@ -365,6 +374,8 @@ class TaskCard(QFrame):
 
         An empty ``owner`` means the file is unlocked, so the badge is hidden.
         """
+        self.lock_owner = owner
+        self.lock_is_mine = bool(is_mine)
         if not owner:
             self.lock_badge.hide()
             return
@@ -389,6 +400,37 @@ class TaskCard(QFrame):
         """)
         self.lock_badge.show()
         self.lock_badge.raise_()
+
+    def set_can_break_lock(self, allowed: bool) -> None:
+        """Allow a TD to break a lock owned by another user."""
+        self.allow_break_lock = bool(allowed)
+
+    def _show_context_menu(self, position) -> None:
+        menu = QMenu(self)
+        actions = 0
+        if self.on_history_callback is not None:
+            action_history = menu.addAction(self.tr("View VCS History…"))
+            action_history.triggered.connect(
+                lambda _checked=False: self.on_history_callback()
+            )
+            actions += 1
+
+        owner = getattr(self, "lock_owner", "")
+        if owner:
+            if actions:
+                menu.addSeparator()
+            if getattr(self, "lock_is_mine", False):
+                action = menu.addAction(self.tr("Release my lock"))
+                action.triggered.connect(self.release_lock_requested.emit)
+                actions += 1
+            elif self.allow_break_lock:
+                action = menu.addAction(self.tr("Break foreign lock"))
+                action.triggered.connect(self.break_lock_requested.emit)
+                actions += 1
+
+        if actions == 0:
+            return
+        menu.exec(self.mapToGlobal(position))
 
     # ------------------------------------------------------------------
     # Comment badge

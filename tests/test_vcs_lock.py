@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 from src.infrastructure.vcs import svn_adapter
 from src.infrastructure.vcs.svn_adapter import SVNAdapter
+from src.infrastructure.vcs.svn_runner import SvnResult
 
 
 def _adapter() -> SVNAdapter:
@@ -12,9 +13,9 @@ def _adapter() -> SVNAdapter:
 
 
 def _fake_run(output: str, calls: list):
-    def fake_run(cmd, **kwargs):
-        calls.append(cmd)
-        return SimpleNamespace(stdout=output)
+    def fake_run(_runner, args, **kwargs):
+        calls.append(["svn", *args])
+        return SvnResult(ok=True, returncode=0, stdout=output, stderr="")
 
     return fake_run
 
@@ -27,7 +28,7 @@ def test_get_lock_info_parses_owner_and_token(monkeypatch):
         "Lock Created: 2026-01-01",
     ])
     calls = []
-    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run(output, calls))
+    monkeypatch.setattr(svn_adapter.SvnCommandRunner, "run", _fake_run(output, calls))
 
     info = _adapter().get_lock_info("pro/assets/monkey/monkey-model.blend")
 
@@ -38,14 +39,14 @@ def test_get_lock_info_parses_owner_and_token(monkeypatch):
 
 def test_get_lock_info_returns_none_when_unlocked(monkeypatch):
     calls = []
-    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run("Path: pro/a.blend\n", calls))
+    monkeypatch.setattr(svn_adapter.SvnCommandRunner, "run", _fake_run("Path: pro/a.blend\n", calls))
 
     assert _adapter().get_lock_info("pro/a.blend") is None
 
 
 def test_set_needs_lock_is_recursive(monkeypatch):
     calls = []
-    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run("", calls))
+    monkeypatch.setattr(svn_adapter.SvnCommandRunner, "run", _fake_run("", calls))
 
     assert _adapter().set_needs_lock("pro") is True
     assert calls[0] == ["svn", "propset", "svn:needs-lock", "yes", "-R", "pro"]
@@ -53,7 +54,15 @@ def test_set_needs_lock_is_recursive(monkeypatch):
 
 def test_relocate_targets_new_url(monkeypatch):
     calls = []
-    monkeypatch.setattr(svn_adapter.subprocess, "run", _fake_run("", calls))
+    monkeypatch.setattr(svn_adapter.SvnCommandRunner, "run", _fake_run("", calls))
 
     assert _adapter().relocate("svn://vps/neon/svn") is True
     assert calls[0][:3] == ["svn", "relocate", "svn://vps/neon/svn"]
+
+
+def test_resolve_uses_accept_strategy(monkeypatch):
+    calls = []
+    monkeypatch.setattr(svn_adapter.SvnCommandRunner, "run", _fake_run("", calls))
+
+    assert _adapter().resolve("pro/a.blend", "theirs-full") is True
+    assert calls[0] == ["svn", "resolve", "--accept=theirs-full", "pro/a.blend"]

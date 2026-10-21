@@ -184,6 +184,7 @@ class UpdateVcsWorker(ManagedWorker):
     """Pulls the latest VCS revision into the project workspace off the UI thread."""
 
     finished_update = Signal(str, bool, str)  # (project_id, success, message)
+    finished_update_report = Signal(str, object)  # (project_id, VcsUpdateReport)
 
     def __init__(
         self,
@@ -202,14 +203,47 @@ class UpdateVcsWorker(ManagedWorker):
 
     def run(self) -> None:
         try:
-            success, message = self.sync_service.update_working_copy(
+            report = self.sync_service.update_working_copy_detailed(
                 project_root=self.project_root,
                 username=self.username,
                 password=self.password,
             )
-            self.finished_update.emit(self.project_id, success, message)
+            self.finished_update.emit(self.project_id, report.ok, report.message)
+            self.finished_update_report.emit(self.project_id, report)
         except Exception as error:  # noqa: BLE001
             self.finished_update.emit(self.project_id, False, str(error))
+
+
+class ResolveVcsConflictWorker(ManagedWorker):
+    """Resolve one VCS conflict off the UI thread."""
+
+    finished_resolve = Signal(str, bool, str)  # (task_id, success, message)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        task_id: str,
+        project_root: Path,
+        relative_path: str,
+        strategy: str,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.task_id = str(task_id)
+        self.project_root = project_root
+        self.relative_path = relative_path
+        self.strategy = strategy
+
+    def run(self) -> None:
+        try:
+            success, message = self.sync_service.resolve_conflict(
+                project_root=self.project_root,
+                relative_path=self.relative_path,
+                strategy=self.strategy,
+            )
+            self.finished_resolve.emit(self.task_id, success, message)
+        except Exception as error:  # noqa: BLE001
+            self.finished_resolve.emit(self.task_id, False, str(error))
 
 
 class PublishVcsChangesWorker(ManagedWorker):

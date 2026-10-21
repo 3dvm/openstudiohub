@@ -182,3 +182,92 @@ def test_update_finished_skips_rescan_on_failure(tmp_path, qapp):
     vm._on_vcs_update_finished("p1", False, "SVN Failure: out of date")
 
     assert scanned == []
+
+
+def test_completed_checklist_items_filters_and_deduplicates(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    vm._comments_by_task = {
+        "t1": [
+            {
+                "checklist": [
+                    {"text": "Model approved", "checked": True},
+                    {"text": "Pending item", "checked": False},
+                ]
+            },
+            {"checklist": [{"text": "Model approved", "checked": True}]},
+        ]
+    }
+
+    assert vm.completed_checklist_items("t1") == ["Model approved"]
+
+
+def test_can_break_foreign_locks_requires_td_role(tmp_path, qapp):
+    from src.domain.identity.value_objects import Role
+
+    class Auth:
+        def __init__(self, role):
+            self.role = role
+
+        def current_role(self):
+            return self.role
+
+    vm = _vm(tmp_path)
+    vm.auth_service = Auth(Role.ARTIST)
+    assert vm.can_break_foreign_locks() is False
+    vm.auth_service = Auth(Role.TD)
+    assert vm.can_break_foreign_locks() is True
+
+
+def test_conflict_resolution_emits_and_rescans(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    card = _card(tmp_path)
+    vm._cards = [card]
+    received = []
+    rescanned = []
+    vm.vcs_conflict_resolved.connect(lambda *args: received.append(args))
+    vm.check_vcs_changes = lambda candidate: rescanned.append(candidate)
+
+    vm._on_vcs_conflict_resolved("t1", True, "Conflict resolved.")
+
+    assert received == [("t1", True, "Conflict resolved.")]
+    assert rescanned == [card]
+
+
+def test_history_ready_emits_revisions(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    received = []
+    vm.vcs_history_ready.connect(lambda task_id, revisions: received.append((task_id, revisions)))
+
+    vm._on_vcs_history_ready("t1", [{"revision": "7"}])
+
+    assert received == [("t1", [{"revision": "7"}])]
+
+
+def test_update_report_opens_review_when_issues_remain(tmp_path, qapp):
+    from src.application.services.task_file_sync_service import VcsUpdateReport
+    from src.domain.production.value_objects import FileChange
+
+    vm = _vm(tmp_path)
+    received = []
+    vm.vcs_update_review_required.connect(
+        lambda project_id, report: received.append((project_id, report))
+    )
+    report = VcsUpdateReport(False, "needs attention", (FileChange("a.blend", "~"),))
+
+    vm._on_vcs_update_report("p1", report)
+
+    assert received == [("p1", report)]
+
+
+def test_update_report_without_issues_does_not_open_review(tmp_path, qapp):
+    from src.application.services.task_file_sync_service import VcsUpdateReport
+
+    vm = _vm(tmp_path)
+    received = []
+    vm.vcs_update_review_required.connect(
+        lambda project_id, report: received.append((project_id, report))
+    )
+
+    vm._on_vcs_update_report("p1", VcsUpdateReport(True, "clean"))
+
+    assert received == []

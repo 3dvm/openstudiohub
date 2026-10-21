@@ -5,7 +5,7 @@ OpenStudioHub simplifies your daily routine into two main actions: clicking **Wo
 ## 0. Choose your Project and Stay Up to Date
 Your dashboard opens on **My Projects**, which lists only the productions where you have assigned tasks. Click a project card to open its **My Tasks** board.
 
-Before you start a task, select the project in the **My Tasks** toolbar and click **Update from VCS**.
+Before you start a task, select the project in the **My Tasks** toolbar and click **Update from VCS**. If the update finds conflicts or obstructing files, the Hub opens a review dialog where you can move them aside or ignore them locally, then retry.
 
 * **What happens?** The Hub pulls the latest revisions from the version control server into the project workspace, so you always work on top of your teammates' latest commits.
 * **Availability:** The button is enabled only when a specific project that uses version control is selected. Projects stored on the NAS only are not affected.
@@ -28,6 +28,12 @@ While you work, the Hub operates silently in the background:
 * **Idle Tracking:** An idle tracker pauses your time logging if you step away from your workstation for more than 5 minutes, ensuring your timesheets are perfectly accurate.
 
 ## 3. Submitting your Work (The "Push / Publish" Button)
+
+When you launch a task, the Hub locks the linked file. The lock is released only after a successful publish. If the session leaves changes unpublished, the card keeps the lock and reminds you to publish; if there are no changes, the lock is released automatically.
+
+The publish window lists versioned changes and conflicts first. Untracked files are kept in a separate section and are **not published unless you select them**. The commit message is editable and already includes the checklist items you completed in the task comments. Conflicts must be resolved with **Keep mine**, **Take theirs** or **Mark resolved** before publishing.
+
+Use the task card context menu to open **View VCS History…** for the revision log, diffs and a safe export of an older revision.
 When your task is ready for review, hit **Publish**. Before the file is uploaded, the **Gatekeeper** audits your scene.
 
 * **Silent Cleanup:** It automatically purges orphan data and ignores temporary collections (like `__TEMP__`).

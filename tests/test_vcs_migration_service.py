@@ -333,3 +333,50 @@ def test_probe_repository_topography_disabled_server():
     ok, message = service.probe_repository_topography(disabled, "Neon")
     assert ok is True
     assert "disabled" in message.lower()
+
+
+def test_apply_policy_delegates_to_the_project_server(monkeypatch, tmp_path):
+    config = FakeConfig([_local_server()], "local", "local")
+    service = VCSMigrationService(config)
+    calls = []
+
+    class Admin:
+        def ensure_policy(self, repo_name):
+            calls.append(repo_name)
+            return True, "policy applied"
+
+    monkeypatch.setattr(mod, "build_repository_admin", lambda profile, provider=None: Admin())
+
+    ok, message = service.apply_policy("Neon", tmp_path)
+
+    assert ok is True
+    assert message == "policy applied"
+    assert calls == ["neon"]
+
+
+def test_lock_administration_delegates_to_the_project_server(monkeypatch, tmp_path):
+    config = FakeConfig([_local_server()], "local", "local")
+    service = VCSMigrationService(config)
+    calls = []
+
+    class Admin:
+        def list_locks(self, repo_name):
+            calls.append(("list", repo_name))
+            return True, [{"path": "/svn/pro/a.blend", "owner": "ana"}], ""
+
+        def break_lock(self, repo_name, path):
+            calls.append(("break", repo_name, path))
+            return True, "removed"
+
+    monkeypatch.setattr(mod, "build_repository_admin", lambda profile, provider=None: Admin())
+
+    ok, locks, _ = service.list_locks("Neon", tmp_path)
+    assert ok is True
+    assert locks[0]["owner"] == "ana"
+    ok, message = service.break_lock("Neon", tmp_path, "/svn/pro/a.blend")
+    assert ok is True
+    assert message == "removed"
+    assert calls == [
+        ("list", "neon"),
+        ("break", "neon", "/svn/pro/a.blend"),
+    ]

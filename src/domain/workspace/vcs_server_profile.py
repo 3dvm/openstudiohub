@@ -107,6 +107,12 @@ class RemoteSSHConfig:
         return f"{self.repo_root.rstrip('/')}/passwd"
 
 
+def _as_bool(value) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() not in ("", "0", "false", "no", "off")
+    return bool(value)
+
+
 @dataclass(frozen=True)
 class VCSServerProfile:
     """Selected VCS server mode plus its admin coordinates."""
@@ -115,6 +121,11 @@ class VCSServerProfile:
     remote: RemoteSSHConfig = field(default_factory=RemoteSSHConfig)
     local_container: str = "openstudio_local_svn"
     local_repo_root: str = "/home/svn"
+    # TLS settings for HTTPS-based SVN URLs. The svn:// and svn+ssh://
+    # transports do not use them.
+    ca_file: str = ""
+    trust_default_ca: bool = True
+    trust_server_cert_failures: str = ""
 
     @property
     def is_remote(self) -> bool:
@@ -132,6 +143,11 @@ class VCSServerProfile:
             local_container=(data.get("local_container") or "openstudio_local_svn").strip()
             or "openstudio_local_svn",
             local_repo_root=(data.get("local_repo_root") or "/home/svn").strip() or "/home/svn",
+            ca_file=(data.get("ca_file") or "").strip(),
+            trust_default_ca=_as_bool(data.get("trust_default_ca", True)),
+            trust_server_cert_failures=(
+                data.get("trust_server_cert_failures") or ""
+            ).strip(),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -140,4 +156,7 @@ class VCSServerProfile:
             "remote": self.remote.to_dict(),
             "local_container": self.local_container,
             "local_repo_root": self.local_repo_root,
+            "ca_file": self.ca_file,
+            "trust_default_ca": self.trust_default_ca,
+            "trust_server_cert_failures": self.trust_server_cert_failures,
         }

@@ -11,8 +11,12 @@ from src.domain.workspace.vcs_server_profile import (
 )
 from src.infrastructure.vcs import ssh_runner
 from src.infrastructure.vcs.repository_admin import (
+    AUTO_PROPS,
+    PRE_COMMIT_HOOK,
+    LocalDockerRepositoryAdmin,
     RemoteSSHRepositoryAdmin,
     normalize_repo_name,
+    parse_locks,
     validate_repo_name,
 )
 from src.infrastructure.vcs.ssh_runner import SshRunner
@@ -138,3 +142,146 @@ def test_remote_destroy_reports_absent_repo(monkeypatch):
 
     assert ok is True
     assert "absent" in message.lower()
+
+
+def test_repository_policy_marks_blend_files_as_needs_lock():
+    assert "*.blend = svn:needs-lock=yes" in AUTO_PROPS
+    assert "svn:needs-lock" in PRE_COMMIT_HOOK
+    assert "*.blend1" in PRE_COMMIT_HOOK
+    assert "*.cache" in PRE_COMMIT_HOOK
+
+
+def test_local_create_applies_policy_and_installs_hook(monkeypatch):
+    calls = []
+    inputs = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        inputs.append(kwargs.get("input"))
+        if args[:3] == ["docker", "exec", "openstudio_local_svn"] and args[3:5] == ["test", "-d"]:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"")
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("src.infrastructure.vcs.repository_admin.subprocess.run", fake_run)
+
+    admin = LocalDockerRepositoryAdmin()
+    assert admin.create("Neon", "svn") is True
+
+    flat = " ".join(" ".join(str(part) for part in call) for call in calls)
+    assert "svnmucc" in flat
+    assert "svn:auto-props" in flat
+    assert "svn:global-ignores" in flat
+    assert "hooks/pre-commit" in flat
+    assert any(part and b"needs-lock" in part for part in inputs)
+
+
+def test_local_ensure_policy_refreshes_hooks_and_auto_props(monkeypatch):
+    calls = []
+    inputs = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        inputs.append(kwargs.get("input"))
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr("src.infrastructure.vcs.repository_admin.subprocess.run", fake_run)
+
+    admin = LocalDockerRepositoryAdmin()
+    ok, message = admin.ensure_policy("Neon")
+
+    assert ok is True
+    assert "policy" in message.lower()
+    flat = " ".join(" ".join(str(part) for part in call) for call in calls)
+    assert "svnmucc" in flat
+    assert "hooks/pre-commit" in flat
+    assert any(part and b"needs-lock" in part for part in inputs)
+
+
+def test_remote_ensure_policy_refreshes_hooks_and_auto_props(monkeypatch):
+    calls = []
+    inputs = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        inputs.append(kwargs.get("input"))
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    monkeypatch.setattr(ssh_runner.subprocess, "run", fake_run)
+
+    admin = RemoteSSHRepositoryAdmin(_remote_profile(), SshRunner(_remote_profile().remote))
+    ok, message = admin.ensure_policy("Neon")
+
+    assert ok is True
+    assert "policy" in message.lower()
+    flat = _flat(calls)
+    assert "svnmucc" in flat
+    assert "pre-commit" in flat
+    assert any(part and b"needs-lock" in part for part in inputs)
+
+
+LOCKS_OUTPUT = """Path: /svn/pro/a.blend
+UUID Token: opaquelocktoken:abc
+Owner: ana
+Created: 2026-01-01 10:00:00 +0000 (Thu, 01 Jan 2026)
+Expires:
+Comment (1 line):
+editing
+
+Path: /svn/pro/b.blend
+UUID Token: opaquelocktoken:def
+Owner: bo
+Created: 2026-01-01 11:00:00 +0000 (Thu, 01 Jan 2026)
+Expires:
+"""
+
+
+def test_parse_locks_reads_owner_and_comment():
+    locks = parse_locks(LOCKS_OUTPUT)
+
+    assert len(locks) == 2
+    assert locks[0]["path"] == "/svn/pro/a.blend"
+    assert locks[0]["owner"] == "ana"
+    assert locks[0]["comment"] == "editing"
+    assert locks[1]["owner"] == "bo"
+
+
+def test_local_list_and_break_locks(monkeypatch):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        if "lslocks" in args:
+            return SimpleNamespace(returncode=0, stdout=LOCKS_OUTPUT, stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.infrastructure.vcs.repository_admin.subprocess.run", fake_run)
+    admin = LocalDockerRepositoryAdmin()
+
+    ok, locks, _ = admin.list_locks("Neon")
+    assert ok is True
+    assert len(locks) == 2
+
+    ok, message = admin.break_lock("Neon", "/svn/pro/a.blend")
+    assert ok is True
+    assert "removed" in message.lower()
+    assert any("rmlocks" in args for args in calls)
+
+
+def test_remote_list_and_break_locks(monkeypatch):
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=LOCKS_OUTPUT.encode(), stderr=b"")
+
+    monkeypatch.setattr(ssh_runner.subprocess, "run", fake_run)
+    admin = RemoteSSHRepositoryAdmin(_remote_profile(), SshRunner(_remote_profile().remote))
+
+    ok, locks, _ = admin.list_locks("Neon")
+    assert ok is True
+    assert len(locks) == 2
+
+    ok, message = admin.break_lock("Neon", "/svn/pro/a.blend")
+    assert ok is True
+    assert "removed" in message.lower()
+    assert any("rmlocks" in str(part) for part in calls)

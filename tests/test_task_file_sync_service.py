@@ -27,6 +27,10 @@ class FakeAdapter:
         self.commit_calls = []
         self.lock_calls = []
         self.unlock_calls = []
+        self.lock_error = None
+        self.entries = None
+        self.resolve_calls = []
+        self.resolve_error = None
         self.full_pull_calls = []
         self.pull_error = None
         self.lock_info = None
@@ -39,6 +43,15 @@ class FakeAdapter:
 
     def get_status(self, path=None):
         return dict(self._status)
+
+    def get_status_entries(self):
+        return self.entries
+
+    def resolve(self, path, accept="working"):
+        self.resolve_calls.append((path, accept))
+        if self.resolve_error is not None:
+            raise self.resolve_error
+        return True
 
     def add(self, paths):
         self.add_calls.append(list(paths))
@@ -53,10 +66,12 @@ class FakeAdapter:
 
     def lock(self, path, username=None, password=None):
         self.lock_calls.append((path, username, password))
+        if self.lock_error is not None:
+            raise self.lock_error
         return True
 
-    def unlock(self, path, username=None, password=None):
-        self.unlock_calls.append((path, username, password))
+    def unlock(self, path, username=None, password=None, force=False):
+        self.unlock_calls.append((path, username, password, force))
         return True
 
 
@@ -187,7 +202,7 @@ def test_unlock_task_file_releases_lock(tmp_path):
     ok, _ = service.unlock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
 
     assert ok is True
-    assert adapter.unlock_calls == [("pro/a.blend", "artist", "secret")]
+    assert adapter.unlock_calls == [("pro/a.blend", "artist", "secret", False)]
 
 
 def test_get_task_file_lock_returns_owner(tmp_path):
@@ -247,3 +262,138 @@ def test_update_working_copy_surfaces_adapter_error(tmp_path):
 
     assert ok is False
     assert "out of date" in message
+
+
+def test_lock_task_file_accepts_stale_lock_from_same_user(tmp_path):
+    from src.infrastructure.vcs.svn_errors import SvnAlreadyLockedError
+
+    service, adapter = _service(tmp_path, {})
+    adapter.lock_error = SvnAlreadyLockedError(
+        "already locked", owner="artist", path="pro/a.blend"
+    )
+
+    ok, message = service.lock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
+
+    assert ok is True
+    assert "Already locked" in message
+
+
+def test_lock_task_file_blocks_foreign_stale_lock(tmp_path):
+    from src.infrastructure.vcs.svn_errors import SvnAlreadyLockedError
+
+    service, adapter = _service(tmp_path, {})
+    adapter.lock_error = SvnAlreadyLockedError(
+        "already locked", owner="other@studio.com", path="pro/a.blend"
+    )
+
+    ok, message = service.lock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
+
+    assert ok is False
+    assert "other@studio.com" in message
+
+
+def test_lock_task_file_is_fail_closed_when_adapter_cannot_be_built(tmp_path, monkeypatch):
+    service, _adapter = _service(tmp_path, {})
+
+    def boom(_project_root):
+        raise RuntimeError("bad configuration")
+
+    monkeypatch.setattr(service, "_build_adapter", boom)
+
+    ok, message = service.lock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
+
+    assert ok is False
+    assert "Could not initialize" in message
+
+
+def test_scan_uses_structured_status_for_conflicts(tmp_path):
+    from src.infrastructure.vcs.svn_xml import SvnStatusEntry
+
+    service, adapter = _service(tmp_path, {})
+    adapter.entries = [
+        SvnStatusEntry(
+            path="pro/a.blend",
+            item="modified",
+            props="conflicted",
+            tree_conflicted=False,
+        ),
+        SvnStatusEntry(
+            path="pro/b.blend",
+            item="modified",
+            props="none",
+            tree_conflicted=True,
+        ),
+    ]
+
+    changes = service.scan_local_changes(tmp_path / "project")
+
+    assert len(changes) == 2
+    assert changes[0].status == "C"
+    assert changes[0].property_conflicted is True
+    assert changes[0].is_conflicted is True
+    assert changes[1].tree_conflicted is True
+    assert changes[1].is_conflicted is True
+
+
+def test_resolve_conflict_delegates_to_adapter(tmp_path):
+    service, adapter = _service(tmp_path, {})
+
+    ok, message = service.resolve_conflict(
+        tmp_path / "project", "pro/a.blend", "theirs-full"
+    )
+
+    assert ok is True
+    assert "resolved" in message.lower()
+    assert adapter.resolve_calls == [("pro/a.blend", "theirs-full")]
+
+
+def test_resolve_conflict_surfaces_adapter_error(tmp_path):
+    service, adapter = _service(tmp_path, {})
+    adapter.resolve_error = RuntimeError("not conflicted")
+
+    ok, message = service.resolve_conflict(tmp_path / "project", "pro/a.blend")
+
+    assert ok is False
+    assert "not conflicted" in message
+
+
+def test_update_working_copy_detailed_reports_obstructions(tmp_path):
+    from src.infrastructure.vcs.svn_xml import SvnStatusEntry
+
+    service, adapter = _service(tmp_path, {})
+    adapter.entries = [
+        SvnStatusEntry(path="pro/a.blend", item="obstructed"),
+        SvnStatusEntry(path="pro/b.blend", item="modified", props="conflicted"),
+    ]
+
+    report = service.update_working_copy_detailed(tmp_path / "p", "artist", "secret")
+
+    assert report.ok is False
+    assert len(report.issues) == 2
+    assert {issue.status for issue in report.issues} == {"~", "C"}
+
+
+def test_move_path_aside_moves_file_and_adds_local_ignore(tmp_path):
+    service, _adapter = _service(tmp_path, {})
+    workspace = service.workspace_root(tmp_path / "p")
+    source = workspace / "pro" / "cache.tmp"
+    source.parent.mkdir(parents=True)
+    source.write_text("cache", encoding="utf-8")
+
+    ok, message = service.move_path_aside(tmp_path / "p", "pro/cache.tmp")
+
+    assert ok is True
+    assert "moved" in message.lower()
+    assert source.exists() is False
+    assert list(workspace.glob(".openstudio_aside/*/pro/cache.tmp"))
+    assert ".openstudio_aside" in service.load_local_ignores(tmp_path / "p")
+
+
+def test_local_ignore_roundtrip(tmp_path):
+    service, _adapter = _service(tmp_path, {})
+
+    ok, _ = service.add_local_ignore(tmp_path / "p", "pro/cache.tmp")
+    ok2, _ = service.add_local_ignore(tmp_path / "p", "pro/cache.tmp")
+
+    assert ok is True and ok2 is True
+    assert service.load_local_ignores(tmp_path / "p") == ["cache.tmp"]

@@ -57,8 +57,19 @@ class AbstractVCS(ABC):
         pass
 
     @abstractmethod
-    def unlock(self, path: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        """Libera un archivo bloqueado en el servidor."""
+    def unlock(
+        self,
+        path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        force: bool = False,
+    ) -> bool:
+        """Release a file lock, optionally forcing a stale/foreign lock."""
+        pass
+
+    @abstractmethod
+    def resolve(self, path: str, accept: str = "working") -> bool:
+        """Resolve a conflicted path with the requested acceptance strategy."""
         pass
 
     @abstractmethod
@@ -84,6 +95,40 @@ class AbstractVCS(ABC):
         workspace); si es ``None`` se sondea todo el workspace. El diccionario
         resultante mapea la ruta relativa al código de estado del motor VCS.
         """
+        pass
+
+    @abstractmethod
+    def get_log(
+        self,
+        path: Optional[str] = None,
+        limit: int = 20,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[dict]:
+        """Return the most recent revisions that changed ``path``."""
+        pass
+
+    @abstractmethod
+    def get_diff(
+        self,
+        path: str,
+        revision: Optional[int] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> str:
+        """Return a textual diff for ``path`` (working copy or one revision)."""
+        pass
+
+    @abstractmethod
+    def export_revision(
+        self,
+        path: str,
+        revision: int,
+        destination: Path,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> bool:
+        """Export ``path`` at ``revision`` to ``destination`` without touching the WC."""
         pass
 
     @abstractmethod
@@ -140,6 +185,21 @@ class AbstractVCS(ABC):
         Elimina el repositorio del servidor cuando sea posible (rollback).
         Devuelve ``(ok, mensaje)``; para servidores remotos puede no estar soportado.
         """
+        pass
+
+    @abstractmethod
+    def ensure_server_policy(self, project_name: str) -> Tuple[bool, str]:
+        """Install or refresh server-side repository policy (hooks, auto-props)."""
+        pass
+
+    @abstractmethod
+    def list_server_locks(self, project_name: str) -> Tuple[bool, list, str]:
+        """List repository locks for a project."""
+        pass
+
+    @abstractmethod
+    def break_server_lock(self, project_name: str, path: str) -> Tuple[bool, str]:
+        """Remove a repository lock as an administrator."""
         pass
 
     @abstractmethod

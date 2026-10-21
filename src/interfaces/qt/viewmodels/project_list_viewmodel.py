@@ -59,6 +59,9 @@ from src.interfaces.qt.workers.project_list_workers import (
     ResetWorkingCopyWorker,
 )
 from src.interfaces.qt.workers.vcs_migration_workers import (
+    ApplyVcsPolicyWorker,
+    BreakVcsLockWorker,
+    ListVcsLocksWorker,
     VCSLocalCleanupWorker,
     VCSMigrationWorker,
 )
@@ -77,6 +80,9 @@ class ProjectListViewModel(BaseViewModel):
     migration_log = Signal(str)
     migration_phase = Signal(str)
     cleanup_finished = Signal(str, bool, str)
+    policy_finished = Signal(str, bool, str)  # (project_name, success, message)
+    vcs_locks_ready = Signal(str, bool, list, str)  # (project_name, ok, locks, message)
+    vcs_lock_broken = Signal(str, str, bool, str)  # (project_name, path, ok, message)
 
     # Kitsu project export
     export_estimate_ready = Signal(dict)
@@ -746,6 +752,75 @@ class ProjectListViewModel(BaseViewModel):
         self.report_status(message, "green" if success else "yellow")
         self.cleanup_finished.emit(project_name, success, message)
 
+    def apply_vcs_policy(self, project_name: str) -> None:
+        """Install or refresh the SVN lock policy on the project repository."""
+        if self.workers.is_running("vcs_policy"):
+            self.report_status("A VCS policy update is already running...", "red")
+            return
+        project_dir = self.nas_manager.resolve_project_dir(project_name)
+        worker = ApplyVcsPolicyWorker(
+            self.migration_service,
+            project_name,
+            project_root=project_dir,
+        )
+        worker.finished_policy.connect(self._on_policy_finished)
+        self.workers.start("vcs_policy", worker, critical=True)
+        self.report_status(
+            f"Applying the VCS lock policy to '{project_name}'...", "yellow"
+        )
+
+    def _on_policy_finished(self, project_name: str, success: bool, message: str) -> None:
+        self.report_status(message, "green" if success else "red")
+        self.policy_finished.emit(project_name, success, message)
+
+    def list_vcs_locks(self, project_name: str) -> None:
+        """Fetch the repository locks for a project."""
+        if self.workers.is_running("vcs_locks"):
+            self.report_status("A lock listing is already running...", "yellow")
+            return
+        project_dir = self.nas_manager.resolve_project_dir(project_name)
+        worker = ListVcsLocksWorker(
+            self.migration_service,
+            project_name,
+            project_root=project_dir,
+        )
+        worker.locks_ready.connect(self._on_vcs_locks_ready)
+        self.workers.start("vcs_locks", worker)
+        self.report_status(f"Loading VCS locks for '{project_name}'...", "yellow")
+
+    def _on_vcs_locks_ready(
+        self, project_name: str, ok: bool, locks: list, message: str
+    ) -> None:
+        if ok:
+            self.report_status(
+                f"{len(locks)} lock(s) found in '{project_name}'.", "green"
+            )
+        else:
+            self.report_status(message, "red")
+        self.vcs_locks_ready.emit(project_name, ok, list(locks), message)
+
+    def break_vcs_lock(self, project_name: str, path: str) -> None:
+        """Remove a repository lock as a TD administrator."""
+        if self.workers.is_running("vcs_break_lock"):
+            self.report_status("A lock removal is already running...", "yellow")
+            return
+        project_dir = self.nas_manager.resolve_project_dir(project_name)
+        worker = BreakVcsLockWorker(
+            self.migration_service,
+            project_name,
+            project_dir,
+            path,
+        )
+        worker.finished_break.connect(self._on_vcs_lock_broken)
+        self.workers.start("vcs_break_lock", worker, critical=True)
+        self.report_status(f"Removing the lock on '{path}'...", "yellow")
+
+    def _on_vcs_lock_broken(
+        self, project_name: str, path: str, ok: bool, message: str
+    ) -> None:
+        self.report_status(message, "green" if ok else "red")
+        self.vcs_lock_broken.emit(project_name, path, ok, message)
+
     def delete_project(self, project_name: str, project_id: str) -> None:
         from src.infrastructure.vcs.vcs_router import VCSRouter
 
@@ -911,7 +986,12 @@ class ProjectListViewModel(BaseViewModel):
         else:
             self.publish_up_to_date.emit(project_name)
 
-    def publish_vcs_changes(self, card, selected_changes: list) -> bool:
+    def publish_vcs_changes(
+        self,
+        card,
+        selected_changes: list,
+        message: str = "",
+    ) -> bool:
         """Commit the selected project files (used by the publish checklist)."""
         if not selected_changes:
             self.report_status("No files selected for publishing.", "yellow")
@@ -942,7 +1022,10 @@ class ProjectListViewModel(BaseViewModel):
             unversioned_paths=unversioned_paths,
             username=vcs_user,
             password=vcs_pwd,
-            message=f"OpenStudioHub: publish {len(selected_paths)} file(s) for {project_name}.",
+            message=(
+                (message or "").strip()
+                or f"OpenStudioHub: publish {len(selected_paths)} file(s) for {project_name}."
+            ),
         )
         worker.finished_publish.connect(self._on_publish_finished)
         self.workers.start("publish", worker, critical=True)
