@@ -301,6 +301,7 @@ class OpenStudioHub(QMainWindow):
             repair_vm=self.ctx.repair_viewmodel,
             auth_service=self.ctx.auth_service,
             config_factory=self.ctx.config_factory,
+            production_service=self.ctx.production_service,
             on_logout=self.ejecutar_logout,
             status_sink=self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,

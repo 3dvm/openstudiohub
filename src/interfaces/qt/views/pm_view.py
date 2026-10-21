@@ -35,7 +35,8 @@ class ViewPM(BaseDashboardView):
         repair_vm: ProjectRepairViewModel,
         auth_service,
         config_factory,
-        on_logout,
+        production_service=None,
+        on_logout=None,
         status_sink: StatusSink | None = None,
         credential_vault=None,
         task_board_vm=None,
@@ -48,9 +49,13 @@ class ViewPM(BaseDashboardView):
         self.audit_vm = audit_vm
         self.repair_vm = repair_vm
         self.credential_vault = credential_vault
-        self.production_service = production_service
+        # The production service is required by the task board; fall back to
+        # the one owned by the project list ViewModel for older callers.
+        self.production_service = production_service or getattr(
+            project_list_vm, "production_service", None
+        )
         self.task_board_vm = task_board_vm or TaskBoardViewModel(
-            production_service, auth_service, status_sink=status_sink
+            self.production_service, auth_service, status_sink=status_sink
         )
 
         self.setObjectName("ViewPMBase")
