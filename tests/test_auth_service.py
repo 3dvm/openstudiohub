@@ -48,6 +48,9 @@ class FakeKitsu:
     def get_access_token(self):
         return self.tokens.get("access_token", "")
 
+    def get_refresh_token(self):
+        return self.tokens.get("refresh_token", "")
+
 
 class InMemorySessionRepository(SessionRepository):
     def __init__(self):
@@ -85,6 +88,20 @@ def test_login_success():
     assert repo.session.tokens["access_token"] == "tok-123"
     assert svc.access_token() == "tok-123"
     assert isinstance(events[0], UserAuthenticated)
+
+
+def test_refresh_token_from_session_and_gazu():
+    svc, kitsu, repo, _events = make_service()
+    repo.save(
+        Session(
+            host="http://h/api",
+            tokens={"access_token": "saved", "refresh_token": "refresh-saved"},
+        )
+    )
+    assert svc.refresh_token() == "refresh-saved"
+
+    kitsu.set_tokens({"access_token": "live", "refresh_token": "refresh-live"})
+    assert svc.refresh_token() == "refresh-live"
 
 
 def test_login_invalid_credentials():

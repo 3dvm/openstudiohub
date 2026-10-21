@@ -44,9 +44,16 @@ from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderVie
 
 
 class BlendBuilderWidget(QFrame):
-    def __init__(self, parent, viewmodel: BlendBuilderViewModel, **kwargs) -> None:
+    def __init__(
+        self,
+        parent,
+        viewmodel: BlendBuilderViewModel,
+        on_open_kitsu_callback=None,
+        **kwargs,
+    ) -> None:
         super().__init__(parent, **kwargs)
         self.vm = viewmodel
+        self.on_open_kitsu_callback = on_open_kitsu_callback
 
         self.project_map = {}
         self.edit_action_mode = "SPAWN"
@@ -486,10 +493,16 @@ class BlendBuilderWidget(QFrame):
         if box.clickedButton() is open_btn:
             self._open_kitsu_assets()
 
+    def _open_kitsu(self, url: str) -> None:
+        if self.on_open_kitsu_callback is not None:
+            self.on_open_kitsu_callback(url)
+        else:
+            QDesktopServices.openUrl(QUrl(url))
+
     def _open_kitsu_assets(self) -> None:
         if not self.vm.current_project_id:
             return
-        QDesktopServices.openUrl(QUrl(self.vm.kitsu_assets_url()))
+        self._open_kitsu(self.vm.kitsu_assets_url())
 
     def change_step(self, step_number: int) -> None:
         if not self.vm.current_project_id:
@@ -911,7 +924,7 @@ class BlendBuilderWidget(QFrame):
             if getattr(self, "edit_action_mode", "SPAWN") == "ASSIGN":
                 kitsu_url = self.vm.config_factory.get_kitsu_api_url().replace("/api", "")
                 url = f"{kitsu_url}/productions/{self.vm.current_project_id}/edits"
-                QDesktopServices.openUrl(QUrl(url))
+                self._open_kitsu(url)
                 self.vm.report_status(self.tr("Opened Kitsu for assignment."), "white")
                 return
 
@@ -940,7 +953,7 @@ class BlendBuilderWidget(QFrame):
     def _open_kitsu_shots(self) -> None:
         kitsu_url = self.vm.config_factory.get_kitsu_api_url().replace("/api", "")
         url = f"{kitsu_url}/productions/{self.vm.current_project_id}/shots"
-        QDesktopServices.openUrl(QUrl(url))
+        self._open_kitsu(url)
         self.progress_modal.accept()
 
     def _trigger_batch_creation(self, step_id: int) -> None:

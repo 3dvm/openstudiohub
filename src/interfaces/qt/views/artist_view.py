@@ -10,8 +10,6 @@ Renders the assigned-task grid and the project filter. All data and actions
 are delegated to ``ArtistViewModel``.
 """
 
-import webbrowser
-
 from PySide6.QtCore import QEasingCurve, Qt, QVariantAnimation
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
@@ -29,6 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.application.services.auth_service import AuthService
+from src.domain.production.kitsu_links import kitsu_base_url, task_kitsu_url
 from src.interfaces.qt.components.comment_panel import CommentPanel
 from src.interfaces.qt.components.project_card import ProjectCard
 from src.interfaces.qt.components.task_card import TaskCard, resolve_task_status
@@ -332,11 +331,14 @@ class ViewArtist(BaseDashboardView):
         self.vm.load_task_statuses(project_id)
 
     def _open_kitsu(self, project_id: str, sub_path: str = "") -> None:
-        base = str(self._host or "").rstrip("/")
-        if base.endswith("/api"):
-            base = base[: -len("/api")]
+        base = kitsu_base_url(self._host or "")
         if base:
-            webbrowser.open(f"{base}/productions/{project_id}{sub_path or ''}")
+            self.open_kitsu_in_hub(f"{base}/productions/{project_id}{sub_path or ''}")
+
+    def _open_task_kitsu(self, task_data: dict) -> None:
+        url = task_kitsu_url(self.config_factory.get_kitsu_api_url(), task_data)
+        if url:
+            self.open_kitsu_in_hub(url)
 
     def _clear_project_grid(self) -> None:
         self._project_widgets.clear()
@@ -372,6 +374,7 @@ class ViewArtist(BaseDashboardView):
                 row += 1
 
     def _switch_panel(self, panel_id: str) -> None:
+        self.show_dashboard_content()
         self.set_active_sidebar_button(panel_id)
         indices = {"projects": 0, "my_tasks": 1, "settings": 2}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
@@ -477,6 +480,7 @@ class ViewArtist(BaseDashboardView):
                 comment_count=card.comment_count,
                 unread_count=card.unread_count,
                 on_comments_callback=lambda c=card: self._open_comments(c),
+                on_kitsu_callback=self._open_task_kitsu,
             )
             task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
             self._task_widgets.append(task_card)

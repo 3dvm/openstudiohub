@@ -12,6 +12,7 @@ Switches between the project list and the batch entity builder.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QStackedWidget, QVBoxLayout
 
+from src.domain.production.kitsu_links import task_kitsu_url
 from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
@@ -80,12 +81,17 @@ class ViewPM(BaseDashboardView):
         )
         self.stacked_content.addWidget(self.project_list)
 
-        self.task_board = TaskBoardWidget(self.stacked_content, self.task_board_vm)
+        self.task_board = TaskBoardWidget(
+            self.stacked_content,
+            self.task_board_vm,
+            on_open_kitsu_callback=self._open_task_kitsu,
+        )
         self.stacked_content.addWidget(self.task_board)
 
         self.blend_builder = BlendBuilderWidget(
             parent=self.stacked_content,
             viewmodel=self.blend_builder_vm,
+            on_open_kitsu_callback=self.open_kitsu_in_hub,
         )
         self.stacked_content.addWidget(self.blend_builder)
 
@@ -155,7 +161,13 @@ class ViewPM(BaseDashboardView):
         self._switch_panel("btn_tasks")
         self.task_board.select_project(project_id)
 
+    def _open_task_kitsu(self, task_data: dict) -> None:
+        url = task_kitsu_url(self.config_factory.get_kitsu_api_url(), task_data)
+        if url:
+            self.open_kitsu_in_hub(url)
+
     def _switch_panel(self, panel_id: str) -> None:
+        self.show_dashboard_content()
         self.set_active_sidebar_button(panel_id)
         indices = {"btn_projects": 0, "btn_tasks": 1, "btn_batch": 2, "settings": 3}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))

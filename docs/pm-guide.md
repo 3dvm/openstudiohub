@@ -83,3 +83,6 @@ In **Table/List** view, the **Responsibles** column is an editable button for PM
 3. Press **Apply**. The Hub assigns the new people and removes the unchecked ones in Kitsu.
 
 Only users with the **manager (PM)** role can edit responsibles. TDs can open the same task board and see the responsible list, but the field is read-only. Artists see their own assignments and cannot reassign tasks.
+
+### Opening tasks in Kitsu
+The **Kitsu** column in the table and the **Kitsu** button on task cards open the task inside the Hub, using the current session. The link is built from the task's entity type (`sequences`, `shots`, `assets`, `edits`), so a sequence task opens its sequence task page. The embedded browser keeps the Hub sidebar/top bar visible; **Return to Hub** closes it. Kitsu and Watchtower navigation stays embedded, while links to other domains open in the system browser.

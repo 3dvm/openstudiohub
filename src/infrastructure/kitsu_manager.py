@@ -385,6 +385,12 @@ class KitsuManager:
             return gazu.client.tokens.get("access_token", "")
         return ""
 
+    def get_refresh_token(self) -> str:
+        """Extrae el refresh token vigente desde el estado global de Gazu."""
+        if hasattr(gazu.client, "tokens") and isinstance(gazu.client.tokens, dict):
+            return gazu.client.tokens.get("refresh_token", "")
+        return ""
+
     def has_session_tokens(self) -> bool:
         """True si Gazu tiene un diccionario de tokens cargado en RAM."""
         return hasattr(gazu.client, "tokens") and isinstance(gazu.client.tokens, dict)

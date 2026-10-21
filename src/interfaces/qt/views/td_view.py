@@ -13,6 +13,7 @@ from PySide6.QtWidgets import QStackedWidget
 
 from src.application.services.project_audit_service import ProjectAuditService
 from src.application.services.vault_service import VaultService
+from src.domain.production.kitsu_links import task_kitsu_url
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
 from src.interfaces.qt.viewmodels.infrastructure_viewmodel import InfrastructureViewModel
@@ -87,7 +88,11 @@ class ViewTD(BaseDashboardView):
         )
         self.stacked_content.addWidget(self.projects_view)
 
-        self.task_board = TaskBoardWidget(self.stacked_content, self.task_board_vm)
+        self.task_board = TaskBoardWidget(
+            self.stacked_content,
+            self.task_board_vm,
+            on_open_kitsu_callback=self._open_task_kitsu,
+        )
         self.stacked_content.addWidget(self.task_board)
 
         self.vista_infra = InfrastructureWidget(
@@ -111,7 +116,13 @@ class ViewTD(BaseDashboardView):
         self._switch_panel("tasks")
         self.task_board.select_project(project_id)
 
+    def _open_task_kitsu(self, task_data: dict) -> None:
+        url = task_kitsu_url(self.config_factory.get_kitsu_api_url(), task_data)
+        if url:
+            self.open_kitsu_in_hub(url)
+
     def _switch_panel(self, panel_id: str) -> None:
+        self.show_dashboard_content()
         self.set_active_sidebar_button(panel_id)
         indices = {"proyectos": 0, "tasks": 1, "infra": 2, "settings": 3}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))

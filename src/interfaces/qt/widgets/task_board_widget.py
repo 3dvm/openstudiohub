@@ -41,14 +41,16 @@ from src.interfaces.qt.workers.task_board_workers import FetchThumbnailsWorker
 class TaskBoardWidget(QFrame):
     THUMB_SIZE = 56
 
-    def __init__(self, parent, viewmodel) -> None:
+    def __init__(self, parent, viewmodel, on_open_kitsu_callback=None) -> None:
         super().__init__(parent)
         self.vm = viewmodel
+        self.on_open_kitsu_callback = on_open_kitsu_callback
         self._pending_project_id = ""
         self._thumbnails: dict = {}
         self._thumb_labels: dict = {}
         self._thumb_cards: dict = {}
         self._comment_buttons: dict = {}
+        self._kitsu_buttons: dict = {}
         self._card_widgets: dict = {}
         self._current_cols = 0
         self._comment_task = None
@@ -137,7 +139,7 @@ class TaskBoardWidget(QFrame):
         layout.addLayout(header)
 
         self.stack = QStackedWidget()
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
             [
                 self.tr("Entity"),
@@ -145,6 +147,7 @@ class TaskBoardWidget(QFrame):
                 self.tr("Status"),
                 self.tr("Responsibles"),
                 self.tr("Comments"),
+                self.tr("Kitsu"),
             ]
         )
         self.table.verticalHeader().setVisible(False)
@@ -159,7 +162,7 @@ class TaskBoardWidget(QFrame):
             " border: none; padding: 6px; font-weight: bold; }"
         )
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        for column, width in ((1, 120), (2, 120), (3, 220), (4, 100)):
+        for column, width in ((1, 120), (2, 120), (3, 220), (4, 100), (5, 90)):
             self.table.setColumnWidth(column, width)
         self.stack.addWidget(self.table)
 
@@ -296,6 +299,7 @@ class TaskBoardWidget(QFrame):
     # ------------------------------------------------------------------
     def _render_current_view(self) -> None:
         self._comment_buttons.clear()
+        self._kitsu_buttons.clear()
         self._card_widgets.clear()
         self._thumb_labels.clear()
         self._thumb_cards.clear()
@@ -331,6 +335,29 @@ class TaskBoardWidget(QFrame):
             cell_layout.setContentsMargins(0, 0, 0, 0)
             cell_layout.addWidget(button)
             self.table.setCellWidget(row, 4, container)
+
+            kitsu = QToolButton()
+            kitsu.setText(self.tr("Kitsu"))
+            kitsu.setCursor(Qt.PointingHandCursor)
+            kitsu.setStyleSheet(
+                "QToolButton { background-color: #1E293B; color: #F97316;"
+                " border: 1px solid #334155; border-radius: 6px; padding: 2px 8px;"
+                " font-size: 10px; font-weight: bold; }"
+                "QToolButton:hover { border-color: #F97316; }"
+            )
+            kitsu.clicked.connect(
+                lambda _=False, t=task: self._open_task_kitsu(t)
+            )
+            self._kitsu_buttons[task_id] = kitsu
+            kitsu_container = QWidget()
+            kitsu_layout = QHBoxLayout(kitsu_container)
+            kitsu_layout.setContentsMargins(0, 0, 0, 0)
+            kitsu_layout.addWidget(kitsu)
+            self.table.setCellWidget(row, 5, kitsu_container)
+
+    def _open_task_kitsu(self, task: dict) -> None:
+        if self.on_open_kitsu_callback is not None:
+            self.on_open_kitsu_callback(task)
 
     def _entity_cell(self, task: dict) -> QWidget:
         container = QWidget()
@@ -434,6 +461,7 @@ class TaskBoardWidget(QFrame):
             )
             card.comments_requested.connect(lambda t=task: self._open_comments(t))
             card.assignees_requested.connect(lambda t=task: self._edit_assignees(t))
+            card.kitsu_requested.connect(lambda t=task: self._open_task_kitsu(t))
             self._card_widgets[str(task.get("id", ""))] = card
             if entity_id:
                 self._thumb_cards.setdefault(entity_id, []).append(card)

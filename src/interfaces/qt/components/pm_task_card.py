@@ -44,6 +44,7 @@ def _comment_icon(color: str) -> QIcon:
 class PmTaskCard(QFrame):
     comments_requested = Signal()
     assignees_requested = Signal()
+    kitsu_requested = Signal()
 
     def __init__(
         self,
@@ -60,7 +61,7 @@ class PmTaskCard(QFrame):
         self._unread_count = int(task.get("_unread_count", 0) or 0)
 
         self.setObjectName("FloatingCard")
-        self.setFixedSize(320, 310)
+        self.setFixedSize(320, 340)
         self.setStyleSheet(
             "QFrame#FloatingCard { background-color: #1E293B; border-radius: 12px;"
             " border: 1px solid #334155; }"
@@ -142,6 +143,18 @@ class PmTaskCard(QFrame):
         self.btn_assignees.clicked.connect(self.assignees_requested.emit)
         self.btn_assignees.setVisible(self._can_assign)
         assignees_row.addWidget(self.btn_assignees)
+
+        self.btn_kitsu = QToolButton()
+        self.btn_kitsu.setText(self.tr("Kitsu"))
+        self.btn_kitsu.setCursor(Qt.PointingHandCursor)
+        self.btn_kitsu.setStyleSheet(
+            "QToolButton { background-color: #1E293B; color: #F97316;"
+            " border: 1px solid #334155; border-radius: 6px; padding: 2px 8px;"
+            " font-size: 10px; font-weight: bold; }"
+            "QToolButton:hover { border-color: #F97316; }"
+        )
+        self.btn_kitsu.clicked.connect(self.kitsu_requested.emit)
+        assignees_row.addWidget(self.btn_kitsu)
         layout.addLayout(assignees_row)
 
         self._render_assignees()

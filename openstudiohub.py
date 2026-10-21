@@ -13,12 +13,10 @@ between the Login view and the role-based dashboards.
 from pathlib import Path
 import os
 import sys
-import urllib.parse
 
 from _version import __version__
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
+from PySide6.QtGui import QCloseEvent, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -35,7 +33,6 @@ from src.infrastructure.qt_worker import active_critical_workers, wait_for_all
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
 from src.interfaces.qt.components.vcs_credentials_dialog import VcsCredentialsDialog
 from src.interfaces.qt.composition import AppContext
-from src.interfaces.qt.shell.web_context_view import WebContextView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
 from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderViewModel
 from src.interfaces.qt.viewmodels.infrastructure_viewmodel import InfrastructureViewModel
@@ -199,11 +196,6 @@ class OpenStudioHub(QMainWindow):
 
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.current_view)
-
-        self.web_context = WebContextView(self)
-        self.web_context.back_requested.connect(self.close_kitsu)
-        self.view_stack.addWidget(self.web_context)
-
         self.setCentralWidget(self.view_stack)
 
     def _retire_previous_dashboard(self) -> None:
@@ -390,18 +382,10 @@ class OpenStudioHub(QMainWindow):
         if not target_url:
             target_url = f"{kitsu_url}/news-feed"
 
-        if False:  # SSO still needs a fix first for embeded opening
-            parsed_url = urllib.parse.urlparse(kitsu_url)
-            allowed_hosts = [parsed_url.hostname, "localhost", "127.0.0.1"]
-
-            token = self.ctx.auth_service.access_token()
-            self.web_context.load_context(target_url, "Kitsu", allowed_hosts, sso_token=token)
-            self.view_stack.setCurrentWidget(self.web_context)
-        else:
-            QDesktopServices.openUrl(QUrl(target_url))
+        self.current_view.open_kitsu_in_hub(target_url)
 
     def close_kitsu(self) -> None:
-        self.view_stack.setCurrentWidget(self.current_view)
+        self.current_view.show_dashboard_content()
         print("[OpenStudioHub] Returned from Kitsu.")
 
     def open_watchtower(self, project_root_path: Path, project_id: str = "") -> None:
@@ -432,8 +416,7 @@ class OpenStudioHub(QMainWindow):
         self.wt_launcher.launch()
 
     def _on_watchtower_ready(self, url: str) -> None:
-        self.web_context.load_context(url, "Watchtower", ["localhost", "127.0.0.1"])
-        self.view_stack.setCurrentWidget(self.web_context)
+        self.current_view.open_watchtower_in_hub(url)
 
     # ------------------------------------------------------------------
     # Logout
@@ -454,6 +437,9 @@ class OpenStudioHub(QMainWindow):
             )
             return
 
+        current_view = getattr(self, "current_view", None)
+        if current_view is not None and hasattr(current_view, "clear_web_auth"):
+            current_view.clear_web_auth()
         self.ctx.auth_service.logout()
         self.ctx.credential_vault.clear()
         self.show_login()

@@ -116,9 +116,9 @@ def _tasks():
     ]
 
 
-def _board(qapp):
+def _board(qapp, on_kitsu=None):
     vm = FakeVM()
-    widget = TaskBoardWidget(None, vm)
+    widget = TaskBoardWidget(None, vm, on_open_kitsu_callback=on_kitsu)
     tasks = _tasks()
     vm.tasks = tasks
     vm.projects_loaded.emit([{"id": "p1", "name": "Neon"}])
@@ -168,3 +168,12 @@ def test_checklist_enablement_follows_busy_signal(qapp):
 
     vm.comments.checklist_updating.emit(True)
     assert widget.comment_panel._checklist_boxes[0].isEnabled() is False
+
+
+def test_kitsu_button_forwards_the_task(qapp):
+    calls = []
+    widget, _vm = _board(qapp, on_kitsu=lambda task: calls.append(task))
+
+    widget._kitsu_buttons["t1"].click()
+
+    assert calls[0]["id"] == "t1"

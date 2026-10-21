@@ -119,6 +119,14 @@ class AuthService:
             return session.tokens.get("access_token", "")
         return ""
 
+    def refresh_token(self) -> str:
+        if self.kitsu.has_session_tokens():
+            return self.kitsu.get_refresh_token()
+        session = self.session_repository.load()
+        if session is not None:
+            return session.tokens.get("refresh_token", "")
+        return ""
+
     @staticmethod
     def _classify_login_error(error: Exception) -> str:
         if isinstance(error, AuthFailedException):

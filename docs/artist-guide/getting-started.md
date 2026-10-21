@@ -16,6 +16,13 @@ Once logged in, you will see your main dashboard (`ViewArtist`).
 * **Comments:** The comment badge (`💬 N`) shows the total number of comments and turns orange when there are new ones. Click it to open the resizable right-side comments drawer, read the thread, reply and tick checklist items. See [Managing Feedback & Notes](feedback-and-notes.md).
 * **Dynamic Syncing:** If your supervisor assigns you a new task or writes a comment while the Hub is open, click the "↻ Refresh" button to fetch the latest assignments and comment badges.
 
-## 3. Your Workspace
+## 3. Kitsu & Watchtower Inside the Hub
+Kitsu and Watchtower open inside the Hub's content area: the sidebar and top bar stay visible, and the **Return to Hub** button closes the web context.
+
+* The embedded Kitsu view reuses your current session, so you do not have to log in again.
+* The **Kitsu** button on a task card opens that task's page using its real entity type (a sequence task goes to the sequence, not to shots).
+* Navigation inside Kitsu/Watchtower stays in the Hub. Links to other websites open in your normal browser.
+
+## 4. Your Workspace
 You don't need to configure Blender, install add-ons, or map network drives. The Hub downloads the studio-approved Blender version and sets up a standard, isolated workspace for you automatically.
 

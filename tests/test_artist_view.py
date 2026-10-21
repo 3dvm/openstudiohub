@@ -330,6 +330,13 @@ def test_checklist_enablement_follows_busy_signal(qapp):
     assert view.comment_panel._checklist_boxes[0].isEnabled() is False
 
 
+def test_web_context_is_lazy_and_keeps_the_shell(qapp):
+    view, _vm = _view()
+
+    assert view.content_stack.count() == 2
+    assert view.web_context is None
+
+
 def test_comment_drawer_uses_splitter(qapp):
     view, vm = _view()
     view._on_tasks_loaded([_card("p1", "Neon")])

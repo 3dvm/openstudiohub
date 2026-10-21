@@ -10,7 +10,6 @@ It renders the CTA priority matrix and loads the thumbnail asynchronously.
 All business actions are delegated through the injected callbacks.
 """
 
-import webbrowser
 from pathlib import Path
 
 import requests
@@ -122,6 +121,7 @@ class TaskCard(QFrame):
         comment_count: int = 0,
         unread_count: int = 0,
         on_comments_callback=None,
+        on_kitsu_callback=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -141,6 +141,7 @@ class TaskCard(QFrame):
         self.comment_count = max(0, int(comment_count or 0))
         self.unread_count = max(0, int(unread_count or 0))
         self.on_comments_callback = on_comments_callback
+        self.on_kitsu_callback = on_kitsu_callback
 
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 280)
@@ -283,9 +284,8 @@ class TaskCard(QFrame):
         btn_layout.setContentsMargins(0, 0, 0, 0)
         btn_layout.setSpacing(12)
 
-        task_url = self.task_data.get("task_url")
-        if task_url:
-            self.kitsu_btn = QPushButton(self.tr("Kitsu ↗"))
+        if self.on_kitsu_callback is not None and self.task_data.get("id") and self.task_data.get("project_id"):
+            self.kitsu_btn = QPushButton(self.tr("Kitsu"))
             self.kitsu_btn.setObjectName("LinkButton")
             self.kitsu_btn.setFixedSize(80, 36)
             self.kitsu_btn.setCursor(Qt.PointingHandCursor)
@@ -293,7 +293,9 @@ class TaskCard(QFrame):
                 QPushButton#LinkButton { background-color: #1E293B; color: #94A3B8; border: 1px solid #334155; border-radius: 6px; font-size: 12px; }
                 QPushButton#LinkButton:hover { background-color: #334155; color: #F8FAFC; }
             """)
-            self.kitsu_btn.clicked.connect(lambda checked=False, u=task_url: webbrowser.open(u))
+            self.kitsu_btn.clicked.connect(
+                lambda checked=False: self.on_kitsu_callback(self.task_data)
+            )
             btn_layout.addWidget(self.kitsu_btn)
 
         if not self.project_root:

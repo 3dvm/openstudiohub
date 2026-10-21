@@ -74,3 +74,15 @@ Migration is **per project**, works **between any two servers**, and preserves h
 3. The existing working copy is repointed with `svn relocate`, so uncommitted local changes are kept.
 4. The per-project `vcs_server_id` and `vcs_base_url` are recorded in `project_init.json`.
 5. You are then asked whether to delete the old repository or leave it orphaned.
+
+## Kitsu Server (remote or local)
+
+Set the Kitsu API URL in `settings.json` under `kitsu_production.api_url`, for example `https://kitsu.studio.com/api`. The embedded Kitsu view is built for **remote servers over HTTPS**:
+
+* The Hub strips `/api` to obtain the web root and loads Kitsu inside the dashboard content area (sidebar/top bar stay visible).
+* The current login is reused: the Hub sets the Kitsu JWT access/refresh cookies on a dedicated off-the-record `QWebEngineProfile` and adds an `Authorization: Bearer` fallback for `/api/` requests. No reverse-proxy change is required.
+* Token and cookie data stay in RAM; the profile is destroyed with the session. Logout clears the embedded cookies.
+* Task links are built from the task's entity type, so sequences open under `/sequences`, shots under `/shots`, and so on.
+* Navigation to other domains opens in the system browser.
+
+If the embedded view shows the Kitsu login page, the Hub session token has expired: log in inside the embedded view or log out and back into the Hub.

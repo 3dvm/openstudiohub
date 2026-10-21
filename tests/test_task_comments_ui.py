@@ -7,10 +7,15 @@ from src.interfaces.qt.components.project_card import ProjectCard
 from src.interfaces.qt.components.task_card import TaskCard
 
 
-def _task_card(qapp, on_comments=None):
+def _task_card(qapp, on_comments=None, on_kitsu=None):
     return TaskCard(
         parent=None,
-        task_data={"id": "t1", "entity_name": "Monkey", "task_type_name": "Modeling"},
+        task_data={
+            "id": "t1",
+            "project_id": "p1",
+            "entity_name": "Monkey",
+            "task_type_name": "Modeling",
+        },
         project_root="/tmp/does-not-exist",
         is_installed=True,
         can_work=True,
@@ -22,6 +27,7 @@ def _task_card(qapp, on_comments=None):
         comment_count=3,
         unread_count=2,
         on_comments_callback=on_comments,
+        on_kitsu_callback=on_kitsu,
     )
 
 
@@ -68,6 +74,16 @@ def test_comment_badge_click_invokes_callback(qapp):
     card.comment_badge.click()
 
     assert calls == [True]
+
+
+def test_task_kitsu_button_invokes_callback(qapp):
+    calls = []
+    card = _task_card(qapp, on_kitsu=lambda task: calls.append(task))
+
+    card.kitsu_btn.click()
+
+    assert calls[0]["id"] == "t1"
+    assert calls[0]["project_id"] == "p1"
 
 
 def test_artist_project_card_opens_tasks(qapp):
