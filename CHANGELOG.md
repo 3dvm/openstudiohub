@@ -5,7 +5,7 @@ All notable changes to OpenStudioHub are documented here.
 The project follows Semantic Versioning. Before `1.0.0`, minor and patch
 releases may include larger UI or workflow changes.
 
-## [0.7.5] - 2026-10-21
+## [0.7.5] - 2026-10-25
 
 ### Added
 
@@ -55,7 +55,12 @@ releases may include larger UI or workflow changes.
   - top-bar bell with unread badge;
   - VCS failure notifications derived from the audit trail;
   - per-user read state and baseline;
-  - TD-only administrative notifications.
+  - TD-only administrative notifications;
+  - copy any notification to the clipboard with its SVN error code, project,
+    paths and message;
+  - dismiss notifications individually or clear the whole visible list;
+  - dismissed notifications are kept in a hidden per-user archive and never
+    reappear in the visible list.
 
 ### Changed
 
@@ -101,7 +106,7 @@ releases may include larger UI or workflow changes.
   diff, conflicts, out-of-date commits and the needs-lock workflow.
 - Added CI workflow with Subversion installed and Qt running offscreen.
 - Added theme consistency checks and notification service/view tests.
-- Full suite: 633 passing tests.
+- Full suite: 644 passing tests.
 
 ## [0.7.0] - 2026-06-25
 

@@ -34,7 +34,7 @@ sidebar footer, top bar, cards, dialogs, settings panels and data views.
 - **History and audit:** revision log, diffs, working-copy diffs, JSONL audit
   trail and the TD VCS Audit viewer.
 - **Notifications and UI:** top-bar notification center, unified QSS theme,
-  Settings footer, responsive VCS dialogs and 633 passing tests.
+  Settings footer, responsive VCS dialogs and 644 passing tests.
 
 ## v0.7.0 - Core Architecture Refactor & Stability (Feature Freeze) — ✅ DONE
 *Taking a step back to leap forward.* Before we introduce advanced AI features and render farm orchestration, we are dedicating an entire milestone to technical excellence.
