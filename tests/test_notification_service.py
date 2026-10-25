@@ -147,3 +147,87 @@ def test_td_sees_administrative_failures(tmp_path):
 
     assert len(created) == 1
     assert "Repository Create" in created[0].title
+
+
+def test_dismiss_moves_notification_to_hidden_archive(tmp_path):
+    service, logger = _service(tmp_path)
+    service.refresh_from_audit()
+    logger.log(
+        "commit",
+        project="Neon",
+        ok=False,
+        error_code="E160028",
+        message="stale",
+        paths=["pro/a.blend"],
+    )
+    notification = service.refresh_from_audit()[0]
+
+    assert service.dismiss(notification.id) is True
+
+    assert service.list() == []
+    assert service.unread_count() == 0
+    archived = service.list_dismissed()
+    assert [item.id for item in archived] == [notification.id]
+
+    restored = NotificationService(
+        audit_logger=logger,
+        user_id_provider=lambda: "artist-1",
+        state_dir=tmp_path,
+    )
+    assert restored.list() == []
+    assert restored.list_dismissed()[0].message == "stale"
+    assert restored.list_dismissed()[0].error_code == "E160028"
+
+
+def test_dismissed_notifications_do_not_return_after_refresh(tmp_path):
+    service, logger = _service(tmp_path)
+    service.refresh_from_audit()
+    logger.log("commit", project="Neon", ok=False, error_code="E160028", message="stale")
+    notification = service.refresh_from_audit()[0]
+    service.dismiss(notification.id)
+
+    assert service.refresh_from_audit() == []
+    assert service.list() == []
+
+
+def test_dismiss_ignores_unknown_id(tmp_path):
+    service, _logger = _service(tmp_path)
+
+    assert service.dismiss("missing") is False
+
+
+def test_dismiss_all_archives_every_visible_notification(tmp_path):
+    service, logger = _service(tmp_path)
+    service.refresh_from_audit()
+    logger.log("one", project="A", ok=False, error_code="E1")
+    logger.log("two", project="B", ok=False, error_code="E2")
+    service.refresh_from_audit()
+
+    assert service.dismiss_all() == 2
+
+    assert service.list() == []
+    assert service.unread_count() == 0
+    assert len(service.list_dismissed()) == 2
+
+
+def test_clipboard_text_includes_error_details(tmp_path):
+    service, logger = _service(tmp_path)
+    service.refresh_from_audit()
+    logger.log(
+        "lock",
+        project="Neon",
+        ok=False,
+        error_code="E160039",
+        message="already locked",
+        paths=["pro/a.blend", "pro/b.blend"],
+    )
+    notification = service.refresh_from_audit()[0]
+
+    text = notification.clipboard_text()
+
+    assert "Lock failed" in text
+    assert "Project: Neon" in text
+    assert "Error code: E160039" in text
+    assert "- pro/a.blend" in text
+    assert "Message: already locked" in text
+

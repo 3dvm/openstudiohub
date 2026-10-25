@@ -173,9 +173,15 @@ by the VCS audit trail:
 * artists and PMs only receive client/project failures;
 * opening the bell, marking one item read or marking everything read updates
   the unread badge;
-* read state and the notification baseline are stored per user under
-  `<state_dir>/notifications_<user>.json`, so historical failures do not flood
-  the list on first launch.
+* each notification can be copied to the clipboard as plain text (title, time,
+  project, SVN error code, paths and message) and dismissed with `×`;
+* **Clear all** archives every visible notification at once;
+* dismissed notifications leave the visible list but remain in a hidden archive
+  under the per-user state file, so they can still be inspected for support
+  without flooding the list again;
+* read state, the hidden archive and the notification baseline are stored per
+  user under `<state_dir>/notifications_<user>.json`, so historical failures do
+  not flood the list on first launch.
 
 Kitsu comment/assignment activity can be added later through the existing
 `ActivityCard` component once `ProductionService.get_recent_activity()` is

@@ -164,6 +164,8 @@ class TopBar(QFrame):
             self.notification_panel = NotificationPanel(self)
             self.notification_panel.mark_all_read.connect(self.notifications_vm.mark_all_read)
             self.notification_panel.notification_clicked.connect(self._on_notification_clicked)
+            self.notification_panel.dismiss_notification.connect(self.notifications_vm.dismiss)
+            self.notification_panel.clear_all.connect(self.notifications_vm.dismiss_all)
 
         self.notifications_vm.refresh()
         self.notification_panel.set_notifications(self.notifications_vm.list())

@@ -31,14 +31,17 @@ class NotificationService:
         role_provider: Optional[Callable[[], str]] = None,
         state_dir: Optional[Path] = None,
         max_items: int = 100,
+        max_archived: int = 500,
     ) -> None:
         self.audit = audit_logger or VcsAuditLogger()
         self._user_id_provider = user_id_provider or (lambda: "default")
         self._role_provider = role_provider or (lambda: "")
         self._state_dir = Path(state_dir) if state_dir is not None else default_state_dir()
         self.max_items = max(10, int(max_items))
+        self.max_archived = max(10, int(max_archived))
         self._user_id = ""
         self._items: list[Notification] = []
+        self._dismissed: list[Notification] = []
         self._seen: set[str] = set()
         self._baseline_done = False
         self._ensure_loaded()
@@ -49,6 +52,11 @@ class NotificationService:
     def list(self) -> list[Notification]:
         self._ensure_loaded()
         return list(self._items)
+
+    def list_dismissed(self) -> list[Notification]:
+        """Return the hidden archive of dismissed notifications."""
+        self._ensure_loaded()
+        return list(self._dismissed)
 
     def unread_count(self) -> int:
         self._ensure_loaded()
@@ -61,7 +69,7 @@ class NotificationService:
         self._ensure_loaded()
         if not notification.id:
             return notification
-        if any(item.id == notification.id for item in self._items):
+        if self._is_known(notification.id):
             return notification
         self._items.insert(0, notification)
         del self._items[self.max_items :]
@@ -90,6 +98,30 @@ class NotificationService:
         self._items = [item.with_read(True) for item in self._items]
         self._save()
 
+    def dismiss(self, notification_id: str) -> bool:
+        """Remove one notification from the visible list into the hidden archive."""
+        self._ensure_loaded()
+        target = next((item for item in self._items if item.id == notification_id), None)
+        if target is None:
+            return False
+        self._items = [item for item in self._items if item.id != notification_id]
+        self._dismissed.insert(0, target)
+        del self._dismissed[self.max_archived :]
+        self._save()
+        return True
+
+    def dismiss_all(self) -> int:
+        """Archive every visible notification. Returns the number dismissed."""
+        self._ensure_loaded()
+        count = len(self._items)
+        if count == 0:
+            return 0
+        self._dismissed = list(self._items) + self._dismissed
+        del self._dismissed[self.max_archived :]
+        self._items = []
+        self._save()
+        return count
+
     def refresh_from_audit(self) -> list[Notification]:
         """Create notifications for new failed VCS operations."""
         self._ensure_loaded()
@@ -108,18 +140,22 @@ class NotificationService:
             self._seen.add(fingerprint)
             if bool(event.get("ok", True)):
                 continue
+            if self._is_dismissed(fingerprint):
+                continue
             if not self._is_visible_to_current_role(event):
                 continue
             new_notifications.append(self._from_audit_event(event, fingerprint))
 
+        added: list[Notification] = []
         for notification in reversed(new_notifications):
-            if any(item.id == notification.id for item in self._items):
+            if self._is_known(notification.id):
                 continue
             self._items.insert(0, notification)
-        if new_notifications:
+            added.append(notification)
+        if added:
             del self._items[self.max_items :]
             self._save()
-        return new_notifications
+        return list(reversed(added))
 
     # ------------------------------------------------------------------
     # Persistence
@@ -145,6 +181,12 @@ class NotificationService:
             for item in items
             if isinstance(item, dict)
         ][: self.max_items]
+        dismissed = data.get("dismissed") or []
+        self._dismissed = [
+            Notification.from_dict(item)
+            for item in dismissed
+            if isinstance(item, dict)
+        ][: self.max_archived]
         seen = data.get("seen") or []
         self._seen = {str(value) for value in seen if str(value)}
         self._baseline_done = bool(data.get("baseline_done", False))
@@ -155,6 +197,7 @@ class NotificationService:
                 self._state_path(),
                 {
                     "items": [item.to_dict() for item in self._items],
+                    "dismissed": [item.to_dict() for item in self._dismissed],
                     "seen": list(self._seen)[-500:],
                     "baseline_done": self._baseline_done,
                 },
@@ -162,6 +205,14 @@ class NotificationService:
         except OSError:
             # Notifications are best effort and must never break the UI.
             pass
+
+    def _is_known(self, notification_id: str) -> bool:
+        return any(item.id == notification_id for item in self._items) or self._is_dismissed(
+            notification_id
+        )
+
+    def _is_dismissed(self, notification_id: str) -> bool:
+        return any(item.id == notification_id for item in self._dismissed)
 
     # ------------------------------------------------------------------
     # Audit mapping
@@ -204,4 +255,5 @@ class NotificationService:
             project=str(event.get("project", "") or ""),
             paths=Notification.dedupe_paths(paths),
             target=f"project:{event.get('project', '')}" if event.get("project") else "",
+            error_code=str(event.get("error_code", "") or ""),
         )

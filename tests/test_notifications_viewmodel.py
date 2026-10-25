@@ -41,3 +41,59 @@ def test_mark_read_updates_count(tmp_path, qapp):
     vm.mark_read(notification.id)
 
     assert vm.unread_count() == 0
+
+
+def test_dismiss_removes_notification_and_emits(tmp_path, qapp):
+    vm, logger = _vm(tmp_path)
+    vm.refresh()
+    logger.log("commit", project="Neon", ok=False, error_code="E160028", message="stale")
+    vm.refresh()
+    notification = vm.list()[0]
+    counts = []
+    items = []
+    vm.unread_count_changed.connect(counts.append)
+    vm.notifications_changed.connect(lambda values: items.append(list(values)))
+
+    vm.dismiss(notification.id)
+
+    assert vm.list() == []
+    assert counts[-1] == 0
+    assert items[-1] == []
+
+
+def test_dismiss_all_removes_notifications_and_emits(tmp_path, qapp):
+    vm, logger = _vm(tmp_path)
+    vm.refresh()
+    logger.log("one", project="A", ok=False, error_code="E1")
+    logger.log("two", project="B", ok=False, error_code="E2")
+    vm.refresh()
+    counts = []
+    vm.unread_count_changed.connect(counts.append)
+
+    vm.dismiss_all()
+
+    assert vm.list() == []
+    assert counts[-1] == 0
+
+
+def test_copy_text_formats_notification(tmp_path, qapp):
+    vm, logger = _vm(tmp_path)
+    vm.refresh()
+    logger.log(
+        "commit",
+        project="Neon",
+        ok=False,
+        error_code="E160028",
+        message="stale",
+        paths=["pro/a.blend"],
+    )
+    vm.refresh()
+    notification = vm.list()[0]
+
+    text = vm.copy_text(notification.id)
+
+    assert "Commit failed" in text
+    assert "Error code: E160028" in text
+    assert "- pro/a.blend" in text
+    assert vm.copy_text("missing") == ""
+

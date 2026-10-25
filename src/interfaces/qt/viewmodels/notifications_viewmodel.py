@@ -53,6 +53,20 @@ class NotificationsViewModel(BaseViewModel):
         self.service.mark_all_read()
         self._emit()
 
+    def dismiss(self, notification_id: str) -> None:
+        if self.service.dismiss(notification_id):
+            self._emit()
+
+    def dismiss_all(self) -> None:
+        if self.service.dismiss_all():
+            self._emit()
+
+    def copy_text(self, notification_id: str) -> str:
+        for notification in self.service.list():
+            if notification.id == notification_id:
+                return notification.clipboard_text()
+        return ""
+
     def _emit(self) -> None:
         items = self.service.list()
         self.notifications_changed.emit(items)

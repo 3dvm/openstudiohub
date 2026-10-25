@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -26,6 +27,8 @@ from src.domain.notifications import Notification
 
 class NotificationItem(QFrame):
     clicked = Signal(str)
+    copy_requested = Signal(str)
+    dismiss_requested = Signal(str)
 
     def __init__(self, parent, notification: Notification) -> None:
         super().__init__(parent)
@@ -47,12 +50,32 @@ class NotificationItem(QFrame):
         timestamp = QLabel(self._format_time(notification.timestamp))
         timestamp.setObjectName("NotificationItemTime")
         header.addWidget(timestamp, alignment=Qt.AlignTop)
+        self.btn_copy = QPushButton(self.tr("Copy"))
+        self.btn_copy.setObjectName("NotificationItemAction")
+        self.btn_copy.setCursor(Qt.PointingHandCursor)
+        self.btn_copy.setToolTip(self.tr("Copy notification"))
+        self.btn_copy.clicked.connect(self._copy)
+        header.addWidget(self.btn_copy, alignment=Qt.AlignTop)
+        self.btn_dismiss = QPushButton("×")
+        self.btn_dismiss.setObjectName("NotificationItemDismiss")
+        self.btn_dismiss.setCursor(Qt.PointingHandCursor)
+        self.btn_dismiss.setToolTip(self.tr("Dismiss notification"))
+        self.btn_dismiss.clicked.connect(
+            lambda: self.dismiss_requested.emit(self.notification.id)
+        )
+        header.addWidget(self.btn_dismiss, alignment=Qt.AlignTop)
         layout.addLayout(header)
 
         message = QLabel(notification.message)
         message.setObjectName("NotificationItemMessage")
         message.setWordWrap(True)
         layout.addWidget(message)
+
+    def _copy(self) -> None:
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText(self.notification.clipboard_text())
+        self.copy_requested.emit(self.notification.id)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self.clicked.emit(self.notification.id)
@@ -70,6 +93,8 @@ class NotificationItem(QFrame):
 class NotificationPanel(QFrame):
     mark_all_read = Signal()
     notification_clicked = Signal(str)
+    dismiss_notification = Signal(str)
+    clear_all = Signal()
 
     def __init__(self, parent) -> None:
         super().__init__(parent, Qt.Popup)
@@ -86,6 +111,10 @@ class NotificationPanel(QFrame):
         title.setObjectName("NotificationTitle")
         header.addWidget(title)
         header.addStretch()
+        self.btn_clear_all = QPushButton(self.tr("Clear all"))
+        self.btn_clear_all.setObjectName("GhostButton")
+        self.btn_clear_all.clicked.connect(self.clear_all.emit)
+        header.addWidget(self.btn_clear_all)
         self.btn_mark_all = QPushButton(self.tr("Mark all read"))
         self.btn_mark_all.setObjectName("GhostButton")
         self.btn_mark_all.clicked.connect(self.mark_all_read.emit)
@@ -113,10 +142,12 @@ class NotificationPanel(QFrame):
         items = list(notifications or [])
         self.scroll.setVisible(bool(items))
         self.lbl_empty.setVisible(not items)
+        self.btn_clear_all.setVisible(bool(items))
         self.btn_mark_all.setVisible(bool(items))
         for notification in items:
             item = NotificationItem(self.list_widget, notification)
             item.clicked.connect(self._on_item_clicked)
+            item.dismiss_requested.connect(self.dismiss_notification.emit)
             self.list_layout.insertWidget(self.list_layout.count() - 1, item)
 
     def _on_item_clicked(self, notification_id: str) -> None:

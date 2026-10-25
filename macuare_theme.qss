@@ -605,6 +605,31 @@ QLabel#NotificationItemTime {
     font-size: 10px;
 }
 
+QPushButton#NotificationItemAction,
+QPushButton#NotificationItemDismiss {
+    background-color: transparent;
+    color: #64748B;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0 4px;
+    font-size: 10px;
+}
+
+QPushButton#NotificationItemDismiss {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+QPushButton#NotificationItemAction:hover {
+    color: #F8FAFC;
+    background-color: #2E3643;
+}
+
+QPushButton#NotificationItemDismiss:hover {
+    color: #F87171;
+    background-color: #2E3643;
+}
+
 /* =========================================================
    GLOBAL CONTROLS
 ========================================================= */

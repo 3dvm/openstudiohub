@@ -24,6 +24,7 @@ class Notification:
     project: str = ""
     paths: tuple[str, ...] = field(default_factory=tuple)
     target: str = ""
+    error_code: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -37,6 +38,7 @@ class Notification:
             "project": self.project,
             "paths": list(self.paths),
             "target": self.target,
+            "error_code": self.error_code,
         }
 
     @classmethod
@@ -55,6 +57,7 @@ class Notification:
             project=str(data.get("project", "")),
             paths=tuple(str(path) for path in paths),
             target=str(data.get("target", "")),
+            error_code=str(data.get("error_code", "")),
         )
 
     def with_read(self, read: bool = True) -> "Notification":
@@ -69,7 +72,22 @@ class Notification:
             project=self.project,
             paths=self.paths,
             target=self.target,
+            error_code=self.error_code,
         )
+
+    def clipboard_text(self) -> str:
+        """Return a plain-text representation suitable for the clipboard."""
+        lines = [f"{self.timestamp} - {self.title}".strip(" -")]
+        if self.project:
+            lines.append(f"Project: {self.project}")
+        if self.error_code:
+            lines.append(f"Error code: {self.error_code}")
+        if self.paths:
+            lines.append("Paths:")
+            lines.extend(f"- {path}" for path in self.paths)
+        if self.message:
+            lines.append(f"Message: {self.message}")
+        return "\n".join(lines)
 
     @staticmethod
     def dedupe_paths(paths: Iterable[str]) -> tuple[str, ...]:
