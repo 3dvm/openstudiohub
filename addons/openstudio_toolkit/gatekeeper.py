@@ -11,9 +11,9 @@
 # =========================================================================================
 
 """
-Módulo principal de The Gatekeeper.
-Implementa el Scene Sanity Check, la purga de datos huérfanos, validación de dependencias,
-auditoría matemática de la geometría y detona los hooks de publicación.
+Main module of the Gatekeeper.
+Implements Scene Sanity Check, horphan data purge, dependencies validation,
+geometry audit and starts publishing hooks.
 """
 
 import bpy
@@ -44,7 +44,7 @@ PRIMITIVAS_PROHIBIDAS = set(FORBIDDEN_PRIMITIVES)
 TIPOS_AUDITABLES = set(AUDITABLE_OBJECT_TYPES)
 
 # ---------------------------------------------------------
-# FUNCIONES DE LA FASE 1: LIMPIEZA
+# PHASE 1: CLEANING
 # ---------------------------------------------------------
 
 def purgar_huerfanos_recursivo() -> int:

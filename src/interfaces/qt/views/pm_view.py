@@ -12,6 +12,7 @@ Switches between the project list and the batch entity builder.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QStackedWidget, QVBoxLayout
 
+from src.domain.production.kitsu_links import task_kitsu_url
 from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
@@ -19,8 +20,10 @@ from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderVie
 from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
+from src.interfaces.qt.viewmodels.task_board_viewmodel import TaskBoardViewModel
 from src.interfaces.qt.widgets.blend_builder_widget import BlendBuilderWidget
 from src.interfaces.qt.widgets.project_list_widget import ProjectListWidget
+from src.interfaces.qt.widgets.task_board_widget import TaskBoardWidget
 
 
 class ViewPM(BaseDashboardView):
@@ -33,24 +36,44 @@ class ViewPM(BaseDashboardView):
         repair_vm: ProjectRepairViewModel,
         auth_service,
         config_factory,
-        on_logout,
+        production_service=None,
+        on_logout=None,
         status_sink: StatusSink | None = None,
         credential_vault=None,
+        task_board_vm=None,
+        notifications_vm=None,
         **kwargs,
     ) -> None:
-        super().__init__(parent, auth_service, config_factory, on_logout, status_sink, **kwargs)
+        super().__init__(
+            parent,
+            auth_service,
+            config_factory,
+            on_logout,
+            status_sink,
+            notifications_vm=notifications_vm,
+            **kwargs,
+        )
 
         self.project_list_vm = project_list_vm
         self.blend_builder_vm = blend_builder_vm
         self.audit_vm = audit_vm
         self.repair_vm = repair_vm
         self.credential_vault = credential_vault
+        # The production service is required by the task board; fall back to
+        # the one owned by the project list ViewModel for older callers.
+        self.production_service = production_service or getattr(
+            project_list_vm, "production_service", None
+        )
+        self.task_board_vm = task_board_vm or TaskBoardViewModel(
+            self.production_service, auth_service, status_sink=status_sink
+        )
 
         self.setObjectName("ViewPMBase")
 
         self.add_sidebar_button("btn_projects", self.tr("Projects"), "📁", "folder.svg", lambda: self._switch_panel("btn_projects"), active=True)
+        self.add_sidebar_button("btn_tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("btn_tasks"))
         self.add_sidebar_button("btn_batch", self.tr("Batch Creation"), "📦", "box.svg", lambda: self._switch_panel("btn_batch"))
-        self.add_sidebar_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
+        self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_pm_content()
 
@@ -63,12 +86,21 @@ class ViewPM(BaseDashboardView):
             audit_vm=self.audit_vm,
             repair_vm=self.repair_vm,
             on_open_wizard_callback=self._open_wizard_for_project,
+            on_open_tasks_callback=self._open_project_tasks,
         )
         self.stacked_content.addWidget(self.project_list)
+
+        self.task_board = TaskBoardWidget(
+            self.stacked_content,
+            self.task_board_vm,
+            on_open_kitsu_callback=self._open_task_kitsu,
+        )
+        self.stacked_content.addWidget(self.task_board)
 
         self.blend_builder = BlendBuilderWidget(
             parent=self.stacked_content,
             viewmodel=self.blend_builder_vm,
+            on_open_kitsu_callback=self.open_kitsu_in_hub,
         )
         self.stacked_content.addWidget(self.blend_builder)
 
@@ -89,6 +121,7 @@ class ViewPM(BaseDashboardView):
         layout.addWidget(lbl_title)
 
         self.tab_credentials = TabCredentials()
+        self.tab_credentials.server_changed.connect(self._load_credentials_for)
         layout.addWidget(self.tab_credentials)
 
         btn_save = QPushButton(self.tr("Save Session Credentials"))
@@ -103,26 +136,61 @@ class ViewPM(BaseDashboardView):
 
     def _save_credentials(self) -> None:
         creds = self.tab_credentials.credentials_payload()
+        server_id = creds["server_id"]
+        if not server_id or self.credential_vault is None:
+            return
         username = creds["username"]
         if not username:
             user = self.auth.current_user
             username = user.email if user else "pm"
-        self.credential_vault.save_svn_credentials(username, creds["password"], creds["enabled"])
+        self.credential_vault.save_server_credentials(
+            server_id, username, creds["password"], creds["enabled"], creds.get("ssh_passphrase") or None
+        )
         self.update_status(self.tr("✓ VCS credentials stored in RAM for this session."), "green")
 
+    def _load_credentials_for(self, server_id: str) -> None:
+        if not server_id or self.credential_vault is None:
+            self.tab_credentials.load_data("", False, False)
+            return
+        username, _ = self.credential_vault.get_server_credentials(server_id)
+        self.tab_credentials.load_data(
+            username or "",
+            self.credential_vault.is_server_enabled(server_id),
+            self.credential_vault.has_ssh_passphrase(server_id),
+        )
+
+    def _pm_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
+
+    def _open_project_tasks(self, project_id: str) -> None:
+        self._switch_panel("btn_tasks")
+        self.task_board.select_project(project_id)
+
+    def _open_task_kitsu(self, task_data: dict) -> None:
+        url = task_kitsu_url(self.config_factory.get_kitsu_api_url(), task_data)
+        if url:
+            self.open_kitsu_in_hub(url)
+
     def _switch_panel(self, panel_id: str) -> None:
+        self.show_dashboard_content()
         self.set_active_sidebar_button(panel_id)
-        indices = {"btn_projects": 0, "btn_batch": 1, "settings": 2}
+        indices = {"btn_projects": 0, "btn_tasks": 1, "btn_batch": 2, "settings": 3}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
 
         if panel_id == "btn_projects":
             self.project_list.refresh()
+        elif panel_id == "btn_batch":
+            self.blend_builder.refresh_projects()
         elif panel_id == "settings" and self.credential_vault is not None:
-            username, _ = self.credential_vault.get_svn_credentials()
-            self.tab_credentials.load_data(username or "", self.credential_vault.is_svn_enabled())
+            servers = self._pm_servers()
+            default_id = next((s["id"] for s in servers if s.get("is_default")), "")
+            self.tab_credentials.set_servers(servers, default_id)
+            self._load_credentials_for(default_id)
 
     def _open_wizard_for_project(self, project_name: str) -> None:
         self._switch_panel("btn_batch")
-        index = self.blend_builder.combo_projects.findText(project_name)
-        if index >= 0:
-            self.blend_builder.combo_projects.setCurrentIndex(index)
+        self.blend_builder.select_project(project_name)

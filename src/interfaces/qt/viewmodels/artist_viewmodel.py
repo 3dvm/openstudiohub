@@ -11,7 +11,7 @@ blocked), and orchestrates the launch and install use cases. It exposes plain
 ``ArtistTaskCardModel`` dataclasses so the View only renders.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -21,17 +21,42 @@ from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
+from src.application.services.task_file_sync_service import TaskFileSyncService
+from src.domain.identity.value_objects import Role
+from src.domain.production.comments import (
+    comment_task_id,
+    newest_comment_timestamp,
+    normalize_checklist,
+    to_iso,
+    unread_comment_count,
+)
+from src.infrastructure.comment_read_store import CommentReadStore
+from src.infrastructure.ui_prefs_store import UiPrefsStore
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
+from src.interfaces.qt.viewmodels.task_comments_viewmodel import TaskCommentsViewModel
 from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     VcsPrompt,
     ensure_vcs_credentials,
     vcs_requires_credentials,
 )
 from src.interfaces.qt.workers.artist_workers import (
+    CheckVcsChangesWorker,
     FetchArtistTasksWorker,
+    FetchTaskLockStatesWorker,
+    FetchTaskStatusesWorker,
     InstallProjectWorker,
     LaunchTaskWorker,
+    PublishVcsChangesWorker,
+    ResolveVcsConflictWorker,
+    UpdateVcsWorker,
 )
+from src.interfaces.qt.workers.comment_workers import FetchProjectsCommentsWorker
+from src.interfaces.qt.workers.vcs_history_workers import (
+    ExportVcsRevisionWorker,
+    FetchVcsDiffWorker,
+    FetchVcsHistoryWorker,
+)
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 @dataclass
@@ -46,10 +71,37 @@ class ArtistTaskCardModel:
     blocked_reason: str
     project_id: str
     project_name: str
+    task_file_path: Optional[str] = None
+    pending_changes: list = field(default_factory=list)
+    vcs_enabled: bool = False
+    lock_owner: str = ""
+    lock_is_mine: bool = False
+    comment_count: int = 0
+    unread_count: int = 0
 
 
 class ArtistViewModel(BaseViewModel):
     tasks_loaded = Signal(list)  # list[ArtistTaskCardModel]
+    projects_loaded = Signal(list)  # [{id, name, task_count, installed}]
+    comment_counts_ready = Signal(dict)  # {task_id: {total, unread}}
+    tasks_load_started = Signal()
+    tasks_load_finished = Signal(bool)  # success
+    vcs_changes_ready = Signal(str, list)  # (task_id, list[FileChange])
+    vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
+    vcs_conflict_resolved = Signal(str, bool, str)  # (task_id, success, message)
+    vcs_history_ready = Signal(str, list)  # (task_id, revisions)
+    vcs_history_failed = Signal(str, str)  # (task_id, message)
+    vcs_diff_ready = Signal(str, str, str)  # (task_id, revision, diff)
+    vcs_export_finished = Signal(str, bool, str)  # (task_id, success, message)
+    vcs_update_finished = Signal(str, bool, str)  # (project_id, success, message)
+    vcs_update_review_required = Signal(str, object)  # (project_id, VcsUpdateReport)
+    task_locks_ready = Signal(dict)  # {task_id: {"owner": str, "is_mine": bool}}
+    task_statuses_loaded = Signal(str, list)  # (project_id, list[dict])
+
+    COMMENT_WIDTH_KEY = "comment_panel_width"
+    DEFAULT_COMMENT_WIDTH = 360
+    MIN_COMMENT_WIDTH = 240
+    MAX_COMMENT_WIDTH = 900
 
     def __init__(
         self,
@@ -61,6 +113,8 @@ class ArtistViewModel(BaseViewModel):
         register_instance: Callable[[bool], None],
         status_sink: StatusSink | None = None,
         vcs_prompt: VcsPrompt | None = None,
+        comment_read_store: CommentReadStore | None = None,
+        prefs_store: UiPrefsStore | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
@@ -72,43 +126,205 @@ class ArtistViewModel(BaseViewModel):
         self.register_instance = register_instance
         self.vcs_prompt = vcs_prompt
 
+        self.task_file_sync_service = TaskFileSyncService(config_factory)
+        self.comment_read_store = comment_read_store or CommentReadStore()
+        self.prefs_store = prefs_store or UiPrefsStore()
+        self.comments = TaskCommentsViewModel(
+            production_service,
+            auth_service,
+            read_store=self.comment_read_store,
+            status_sink=status_sink,
+        )
+        self._launching_card: Optional[ArtistTaskCardModel] = None
         self._cards: List[ArtistTaskCardModel] = []
-        self._worker: Optional[FetchArtistTasksWorker] = None
-        self._install_worker: Optional[InstallProjectWorker] = None
-        self._launch_worker: Optional[LaunchTaskWorker] = None
+        self._tasks_loading = False
+        self._status_cache: dict = {}
+        self._comments_by_task: dict[str, list] = {}
+        self._awaiting_lock_release: set[str] = set()
+        self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
     # Data loading
     # ------------------------------------------------------------------
     def load_tasks(self) -> None:
-        if self._worker is not None and self._worker.isRunning():
+        if self._tasks_loading or self.workers.is_running("tasks"):
             return
 
+        self._tasks_loading = True
+        self.tasks_load_started.emit()
         self.report_status("Fetching your assigned tasks from Kitsu...", "yellow")
-        self._cards = []
 
-        self._worker = FetchArtistTasksWorker(self.production_service)
-        self._worker.data_ready.connect(self._on_tasks_fetched)
-        self._worker.error_occurred.connect(lambda e: self.report_status(f"Network error: {e}", "red"))
-        self._worker.finished.connect(self._on_worker_finished)
-        self._worker.start()
-
-    def _on_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._worker = None
+        worker = FetchArtistTasksWorker(self.production_service)
+        worker.data_ready.connect(self._on_tasks_fetched)
+        worker.error_occurred.connect(self._on_tasks_fetch_failed)
+        self.workers.start("tasks", worker)
 
     def _on_tasks_fetched(self, tasks: list) -> None:
+        previous = {str(card.task_data.get("id", "")): card for card in self._cards}
+        self._tasks_loading = False
+
         if not tasks:
+            self._cards = []
             self.report_status("You have no pending tasks. Enjoy your coffee! ☕", "white")
             self.tasks_loaded.emit([])
+            self.projects_loaded.emit([])
+            self.tasks_load_finished.emit(True)
             return
 
         cards = [self.enrich_task(task) for task in tasks]
+        # Keep the live per-task VCS/comment badges across a refresh.
+        for card in cards:
+            prior = previous.get(str(card.task_data.get("id", "")))
+            if prior is not None:
+                card.pending_changes = list(prior.pending_changes)
+                card.lock_owner = prior.lock_owner
+                card.lock_is_mine = prior.lock_is_mine
+                card.comment_count = prior.comment_count
+                card.unread_count = prior.unread_count
         self._cards = cards
         self.report_status(f"🟢 Synchronized: {len(tasks)} active tasks found.", "green")
         self.tasks_loaded.emit(cards)
+        self.projects_loaded.emit(self._project_summaries(cards))
+        self.tasks_load_finished.emit(True)
+        self._refresh_task_locks(cards)
+        self._refresh_comment_counts(cards)
+
+    @staticmethod
+    def _project_summaries(cards: List[ArtistTaskCardModel]) -> list:
+        projects: dict = {}
+        for card in cards:
+            if not card.project_id:
+                continue
+            entry = projects.setdefault(
+                card.project_id,
+                {
+                    "id": card.project_id,
+                    "name": card.project_name,
+                    "task_count": 0,
+                    "installed": False,
+                },
+            )
+            entry["task_count"] += 1
+            entry["installed"] = entry["installed"] or bool(card.is_installed)
+        return sorted(projects.values(), key=lambda item: str(item["name"]).lower())
+
+    # ------------------------------------------------------------------
+    # Comment badges
+    # ------------------------------------------------------------------
+    def _user_id(self) -> str:
+        user = getattr(self.auth_service, "current_user", None)
+        return str(getattr(user, "id", "") or "")
+
+    def comment_panel_width(self) -> int:
+        try:
+            value = int(
+                self.prefs_store.get(
+                    self._user_id(),
+                    self.COMMENT_WIDTH_KEY,
+                    self.DEFAULT_COMMENT_WIDTH,
+                )
+            )
+        except (TypeError, ValueError):
+            value = self.DEFAULT_COMMENT_WIDTH
+        return max(self.MIN_COMMENT_WIDTH, min(value, self.MAX_COMMENT_WIDTH))
+
+    def set_comment_panel_width(self, width: int) -> None:
+        try:
+            self.prefs_store.set(
+                self._user_id(),
+                self.COMMENT_WIDTH_KEY,
+                max(self.MIN_COMMENT_WIDTH, min(int(width), self.MAX_COMMENT_WIDTH)),
+            )
+        except Exception:  # noqa: BLE001 - preference persistence is best-effort
+            pass
+
+    def _refresh_comment_counts(self, cards: List[ArtistTaskCardModel]) -> None:
+        if self.production_service is None or not cards:
+            return
+        projects: dict = {}
+        for card in cards:
+            if card.project_id:
+                projects.setdefault(card.project_id, []).append(card.task_data)
+        if not projects or self.workers.is_running("comment_summary"):
+            return
+        worker = FetchProjectsCommentsWorker(self.production_service, projects)
+        worker.data_ready.connect(self._on_comment_summary)
+        self.workers.start("comment_summary", worker)
+
+    def _on_comment_summary(self, payload: dict) -> None:
+        user_id = self._user_id()
+        counts: dict = {}
+        by_task: dict = {}
+        for comments in (payload or {}).values():
+            for comment in comments or []:
+                task_id = comment_task_id(comment)
+                if task_id:
+                    by_task.setdefault(task_id, []).append(comment)
+        self._comments_by_task = by_task
+
+        for card in self._cards:
+            task_id = self._task_id(card)
+            comments = by_task.get(task_id, [])
+            if not comments:
+                card.comment_count = 0
+                card.unread_count = 0
+                counts[task_id] = {"total": 0, "unread": 0}
+                continue
+
+            last_seen = (
+                self.comment_read_store.get_last_seen(user_id, task_id) if user_id else None
+            )
+            if last_seen is None:
+                newest = newest_comment_timestamp(comments)
+                if user_id and newest is not None:
+                    self.comment_read_store.set_last_seen(user_id, task_id, to_iso(newest))
+                unread = 0
+            else:
+                unread = unread_comment_count(comments, user_id, last_seen)
+
+            card.comment_count = len(comments)
+            card.unread_count = unread
+            counts[task_id] = {"total": len(comments), "unread": unread}
+
+        self.comment_counts_ready.emit(counts)
+
+    def thumbnail_fetcher(self, project_id: str, token: str, host: str):
+        if self.production_service is None:
+            return None
+        return self.production_service.download_project_thumbnail(project_id, token, host)
+
+    def _on_tasks_fetch_failed(self, error: str) -> None:
+        self._tasks_loading = False
+        self.report_status(f"Network error: {error}", "red")
+        self.tasks_load_finished.emit(False)
+
+    # ------------------------------------------------------------------
+    # Project task statuses (for the status filter)
+    # ------------------------------------------------------------------
+    def load_task_statuses(self, project_id: str) -> None:
+        """Fetch (or replay from cache) the statuses available for a project.
+
+        ``project_id`` may be ``"ALL"`` to request the global status list.
+        """
+        key = project_id or "ALL"
+        cached = self._status_cache.get(key)
+        if cached is not None:
+            self.task_statuses_loaded.emit(key, list(cached))
+            return
+        if self.workers.is_running("task_statuses"):
+            return
+
+        worker = FetchTaskStatusesWorker(self.production_service, key)
+        worker.statuses_ready.connect(self._on_task_statuses_loaded)
+        worker.error_occurred.connect(self._on_task_statuses_failed)
+        self.workers.start("task_statuses", worker)
+
+    def _on_task_statuses_loaded(self, project_id: str, statuses: list) -> None:
+        self._status_cache[project_id or "ALL"] = list(statuses)
+        self.task_statuses_loaded.emit(project_id or "ALL", list(statuses))
+
+    def _on_task_statuses_failed(self, error: str) -> None:
+        self.report_status(f"Could not load task statuses: {error}", "red")
 
     def enrich_task(self, task_data: dict) -> ArtistTaskCardModel:
         """Compute filesystem-backed state for a single raw Kitsu task."""
@@ -143,6 +359,8 @@ class ArtistViewModel(BaseViewModel):
 
         config_path = project_root / vfs_local / "project_config.json" if project_root else None
 
+        task_file_path = (task_data.get("data") or {}).get("filepath") or None
+
         return ArtistTaskCardModel(
             task_data=task_data,
             project_root=project_root,
@@ -152,15 +370,75 @@ class ArtistViewModel(BaseViewModel):
             blocked_reason=blocked_reason,
             project_id=task_data.get("project_id", ""),
             project_name=project_name,
+            task_file_path=task_file_path,
+            vcs_enabled=self.task_file_sync_service.is_vcs_enabled(project_root),
+        )
+
+    # ------------------------------------------------------------------
+    # File lock badges
+    # ------------------------------------------------------------------
+    def _current_username(self) -> str:
+        user = getattr(self.auth_service, "current_user", None)
+        return getattr(user, "email", "") or ""
+
+    def _refresh_task_locks(self, cards: List[ArtistTaskCardModel]) -> None:
+        """Query the VCS lock owner for each card's linked file, off-thread."""
+        targets = [
+            (self._task_id(card), card.project_root, card.task_file_path)
+            for card in cards
+            if card.project_root and card.task_file_path and self.is_vcs_enabled(card.project_root)
+        ]
+        if not targets or self.workers.is_running("task_locks"):
+            return
+
+        worker = FetchTaskLockStatesWorker(self.task_file_sync_service, targets)
+        worker.locks_ready.connect(self._on_task_locks_ready)
+        self.workers.start("task_locks", worker)
+
+    def _on_task_locks_ready(self, owners: dict) -> None:
+        username = self._current_username()
+        payload = {}
+        for card in self._cards:
+            task_id = self._task_id(card)
+            owner = owners.get(task_id, "")
+            card.lock_owner = owner
+            card.lock_is_mine = bool(owner) and owner == username
+            payload[task_id] = {"owner": owner, "is_mine": card.lock_is_mine}
+        self.task_locks_ready.emit(payload)
+
+    def _emit_task_lock(self, card: ArtistTaskCardModel) -> None:
+        self.task_locks_ready.emit(
+            {
+                self._task_id(card): {
+                    "owner": card.lock_owner,
+                    "is_mine": card.lock_is_mine,
+                }
+            }
         )
 
     # ------------------------------------------------------------------
     # Launch use case
     # ------------------------------------------------------------------
-    def _ensure_vcs_credentials(self) -> Optional[tuple[str, str]]:
-        """Gate VCS-backed actions behind the session credentials prompt."""
+    def _resolve_server(self, project_root=None):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if callable(getter) and project_root:
+            try:
+                server = getter(project_root)
+                if server is not None:
+                    return server
+            except Exception:  # noqa: BLE001
+                pass
+        getter = getattr(self.config_factory, "get_default_server", None)
+        return getter() if callable(getter) else None
+
+    def _ensure_vcs_credentials(self, project_root=None) -> Optional[tuple[str, str]]:
+        """Gate VCS-backed actions behind the per-server credentials prompt."""
+        server = self._resolve_server(project_root)
         return ensure_vcs_credentials(
-            required=vcs_requires_credentials(self.config_factory),
+            required=vcs_requires_credentials(self.config_factory, server=server),
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
@@ -172,10 +450,21 @@ class ArtistViewModel(BaseViewModel):
             self.report_status("Config file missing. Reinstall workspace.", "red")
             return
 
-        creds = self._ensure_vcs_credentials()
+        creds = self._ensure_vcs_credentials(card.project_root)
         if creds is None:
             return
         svn_user, svn_pwd = creds
+
+        if self.is_vcs_enabled() and card.task_file_path and card.project_root:
+            locked, lock_message = self.task_file_sync_service.lock_task_file(
+                card.project_root, card.task_file_path, svn_user, svn_pwd
+            )
+            if not locked:
+                self.report_status(f"🔒 {lock_message}", "red")
+                return
+            card.lock_owner = self._current_username()
+            card.lock_is_mine = True
+            self._emit_task_lock(card)
 
         self.report_status("🚀 Delegating to the DCC orchestrator...", "yellow")
 
@@ -188,7 +477,7 @@ class ArtistViewModel(BaseViewModel):
 
         self.register_instance(True)
 
-        if self._launch_worker is not None and self._launch_worker.isRunning():
+        if self.workers.is_running("launch"):
             self.report_status("A launch is already in progress...", "red")
             return
 
@@ -207,49 +496,478 @@ class ArtistViewModel(BaseViewModel):
             "config_factory": self.config_factory,
         }
 
-        self._launch_worker = LaunchTaskWorker(kwargs)
-        self._launch_worker.finished_launch.connect(self._on_launch_finished)
-        self._launch_worker.finished.connect(self._on_launch_worker_finished)
-        self._launch_worker.start()
+        worker = LaunchTaskWorker(kwargs)
+        worker.finished_launch.connect(self._on_launch_finished)
+        self._launching_card = card
+        self.workers.start("launch", worker, critical=True)
 
     def _on_launch_finished(self, success: bool, message: str) -> None:
         self.register_instance(False)
         self.report_status(message, "green" if success else "red")
 
-    def _on_launch_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._launch_worker = None
+        card = self._launching_card
+        self._launching_card = None
+        if card and self.is_vcs_enabled() and card.task_file_path and card.project_root:
+            # The lock is released only after a successful publish. If the
+            # session produced no changes, the scan below releases it because
+            # there is nothing left to upload.
+            self._awaiting_lock_release.add(self._task_id(card))
+            self.check_vcs_changes(card)
+
+    # ------------------------------------------------------------------
+    # VCS update use case
+    # ------------------------------------------------------------------
+    def update_vcs(self, project_id: str, project_root: Optional[Path]) -> bool:
+        """Pull the latest revision from the VCS for a project's workspace.
+
+        Returns ``True`` when the update worker started, ``False`` when it was
+        aborted (VCS disabled, project folder missing, already running or the
+        credentials prompt was cancelled).
+        """
+        if not project_root:
+            self.report_status("Cannot update: project folder is missing on NAS.", "red")
+            return False
+        if not self.is_vcs_enabled(project_root):
+            self.report_status("Version Control is disabled for this project.", "yellow")
+            return False
+        if self.workers.is_running("vcs_update"):
+            self.report_status("An update is already in progress...", "red")
+            return False
+
+        creds = self._ensure_vcs_credentials(project_root)
+        if creds is None:
+            return False
+        vcs_user, vcs_pwd = creds
+
+        self.report_status("⟳ Updating the project workspace from the VCS...", "yellow")
+        worker = UpdateVcsWorker(
+            sync_service=self.task_file_sync_service,
+            project_id=str(project_id or ""),
+            project_root=project_root,
+            username=vcs_user,
+            password=vcs_pwd,
+        )
+        worker.finished_update.connect(self._on_vcs_update_finished)
+        worker.finished_update_report.connect(self._on_vcs_update_report)
+        self.workers.start("vcs_update", worker, critical=True)
+        return True
+
+    def is_vcs_update_running(self) -> bool:
+        return self.workers.is_running("vcs_update")
+
+    def _on_vcs_update_finished(self, project_id: str, success: bool, message: str) -> None:
+        if success:
+            self.report_status(f"🟢 {message}", "green")
+            self._recheck_project_changes(project_id)
+        else:
+            self.report_status(f"🔴 Update Error: {message}", "red")
+        self.vcs_update_finished.emit(project_id, success, message)
+
+    def move_vcs_path_aside(self, project_root, relative_path: str):
+        """Move an obstructing workspace path aside and keep a timestamped copy."""
+        if not project_root:
+            return False, "Project folder is missing on NAS."
+        ok, message = self.task_file_sync_service.move_path_aside(
+            Path(project_root), relative_path
+        )
+        self.report_status(message, "green" if ok else "red")
+        return ok, message
+
+    def ignore_vcs_path(self, project_root, relative_path: str):
+        """Add a project-local ignore pattern without touching the repository."""
+        if not project_root:
+            return False, "Project folder is missing on NAS."
+        ok, message = self.task_file_sync_service.add_local_ignore(
+            Path(project_root), relative_path
+        )
+        self.report_status(message, "green" if ok else "red")
+        return ok, message
+
+    def _on_vcs_update_report(self, project_id: str, report) -> None:
+        """Open the review dialog when the update needs local cleanup."""
+        issues = tuple(getattr(report, "issues", ()) or ())
+        if issues:
+            self.report_status(
+                f"The update needs attention: {len(issues)} path(s) require cleanup.",
+                "yellow",
+            )
+            self.vcs_update_review_required.emit(project_id, report)
+
+    def _recheck_project_changes(self, project_id: str) -> None:
+        card = next(
+            (c for c in self._cards if str(c.project_id) == str(project_id)), None
+        )
+        if card is not None:
+            self.check_vcs_changes(card)
+
+    # ------------------------------------------------------------------
+    # VCS publish use case
+    # ------------------------------------------------------------------
+    def is_vcs_enabled(self, project_root: Optional[Path] = None) -> bool:
+        return self.task_file_sync_service.is_vcs_enabled(project_root)
+
+    def check_vcs_changes(self, card: ArtistTaskCardModel) -> None:
+        """Scan the project workspace for files not yet committed to the VCS."""
+        if not self.is_vcs_enabled() or not card.project_root:
+            return
+        if self.workers.is_running("vcs_check"):
+            return
+
+        self.report_status("Checking for uncommitted files on the VCS...", "yellow")
+        worker = CheckVcsChangesWorker(self.task_file_sync_service, self._task_id(card), card.project_root)
+        worker.changes_ready.connect(self._on_vcs_changes_ready)
+        worker.error_occurred.connect(lambda e: self.report_status(f"VCS scan error: {e}", "red"))
+        self.workers.start("vcs_check", worker)
+
+    def _on_vcs_changes_ready(self, task_id: str, changes: list) -> None:
+        card = None
+        for candidate in self._cards:
+            if self._task_id(candidate) == task_id:
+                candidate.pending_changes = list(changes)
+                card = candidate
+                break
+
+        awaiting_release = task_id in self._awaiting_lock_release
+        if awaiting_release:
+            self._awaiting_lock_release.discard(task_id)
+            if not changes and card is not None:
+                self._unlock_task_file(card)
+            elif changes:
+                self.report_status(
+                    "You have unpublished changes. Publish them to release the lock.",
+                    "yellow",
+                )
+
+        if changes:
+            self.report_status(f"⚠️ {len(changes)} file(s) with pending changes on the VCS.", "yellow")
+        else:
+            self.report_status("✓ Everything is up to date on the VCS.", "green")
+        self.vcs_changes_ready.emit(task_id, list(changes))
+
+    def publish_vcs_changes(
+        self,
+        card: ArtistTaskCardModel,
+        selected_changes: list,
+        message: str = "",
+    ) -> bool:
+        """Commit the selected files (adding the new ones first).
+
+        Returns ``True`` when the publish worker actually started, ``False`` when
+        it was aborted (nothing selected, no project, already running or the
+        credentials prompt was cancelled).
+        """
+        if not selected_changes:
+            self.report_status("No files selected for publishing.", "yellow")
+            return False
+        if not card.project_root:
+            self.report_status("Cannot publish: project folder is missing on NAS.", "red")
+            return False
+        if self.workers.is_running("vcs_publish"):
+            self.report_status("A publish is already in progress...", "red")
+            return False
+
+        creds = self._ensure_vcs_credentials(card.project_root)
+        if creds is None:
+            return False
+        vcs_user, vcs_pwd = creds
+
+        selected_paths = [change.relative_path for change in selected_changes]
+        unversioned_paths = [change.relative_path for change in selected_changes if change.is_unversioned]
+        message = (message or "").strip() or self._commit_message(card, len(selected_paths))
+
+        worker = PublishVcsChangesWorker(
+            sync_service=self.task_file_sync_service,
+            task_id=self._task_id(card),
+            project_root=card.project_root,
+            selected_paths=selected_paths,
+            unversioned_paths=unversioned_paths,
+            username=vcs_user,
+            password=vcs_pwd,
+            message=message,
+        )
+        worker.finished_publish.connect(self._on_vcs_publish_finished)
+        self.workers.start("vcs_publish", worker, critical=True)
+        return True
+
+    def resolve_vcs_conflict(self, card: ArtistTaskCardModel, change, strategy: str) -> bool:
+        """Resolve one conflict and rescan the workspace when it finishes."""
+        if not card.project_root:
+            self.report_status("Cannot resolve: project folder is missing on NAS.", "red")
+            return False
+        if self.workers.is_running("vcs_resolve"):
+            self.report_status("A conflict resolution is already in progress...", "red")
+            return False
+        relative_path = str(getattr(change, "relative_path", change) or "")
+        if not relative_path:
+            self.report_status("No conflicted file selected.", "red")
+            return False
+
+        worker = ResolveVcsConflictWorker(
+            sync_service=self.task_file_sync_service,
+            task_id=self._task_id(card),
+            project_root=card.project_root,
+            relative_path=relative_path,
+            strategy=strategy,
+        )
+        worker.finished_resolve.connect(self._on_vcs_conflict_resolved)
+        self.workers.start("vcs_resolve", worker, critical=True)
+        self.report_status("Resolving the VCS conflict...", "yellow")
+        return True
+
+    def _on_vcs_conflict_resolved(self, task_id: str, success: bool, message: str) -> None:
+        self.report_status(message, "green" if success else "red")
+        self.vcs_conflict_resolved.emit(task_id, success, message)
+        if success:
+            card = next(
+                (candidate for candidate in self._cards if self._task_id(candidate) == task_id),
+                None,
+            )
+            if card is not None:
+                self.check_vcs_changes(card)
+
+    def _on_vcs_publish_finished(self, task_id: str, success: bool, message: str) -> None:
+        if success:
+            for card in self._cards:
+                if self._task_id(card) == task_id:
+                    card.pending_changes = []
+                    self._unlock_task_file(card)
+                    card.lock_owner = ""
+                    card.lock_is_mine = False
+                    self._emit_task_lock(card)
+                    break
+            self.report_status(f"🟢 {message}", "green")
+        else:
+            self.report_status(f"🔴 Publish Error: {message}", "red")
+        self.vcs_publish_finished.emit(task_id, success, message)
+
+    def completed_checklist_items(self, task_id: str) -> list[str]:
+        """Return the deduplicated, completed checklist items for a task."""
+        items: list[str] = []
+        seen: set[str] = set()
+        for comment in self._comments_by_task.get(str(task_id), []):
+            for item in normalize_checklist(comment.get("checklist")):
+                if not item.get("checked"):
+                    continue
+                text = str(item.get("text") or "").strip()
+                if text and text not in seen:
+                    seen.add(text)
+                    items.append(text)
+        return items
+
+    def can_break_foreign_locks(self) -> bool:
+        """Only a TD may break a lock owned by another user."""
+        try:
+            return self.auth_service.current_role() is Role.TD
+        except Exception:  # noqa: BLE001
+            return False
+
+    def release_task_lock(self, card: ArtistTaskCardModel) -> None:
+        """Release a lock owned by the current user (stale session recovery)."""
+        if not card.lock_is_mine:
+            self.report_status("Only the lock owner can release this lock.", "red")
+            return
+        self._release_task_lock(card, action="release")
+
+    def break_task_lock(self, card: ArtistTaskCardModel) -> None:
+        """Break a foreign lock. Restricted to the TD role."""
+        if not self.can_break_foreign_locks():
+            self.report_status("Only a TD can break a foreign lock.", "red")
+            return
+        self._release_task_lock(card, action="break")
+
+    def _release_task_lock(self, card: ArtistTaskCardModel, action: str) -> None:
+        if not self.is_vcs_enabled() or not card.task_file_path or not card.project_root:
+            return
+        server = self._resolve_server(card.project_root)
+        server_id = server.id if server is not None else ""
+        user, pwd = self.credential_vault.get_server_credentials(server_id)
+        ok, message = self.task_file_sync_service.unlock_task_file(
+            card.project_root,
+            card.task_file_path,
+            user,
+            pwd,
+            force=True,
+        )
+        if not ok:
+            self.report_status(message, "red")
+            return
+        card.lock_owner = ""
+        card.lock_is_mine = False
+        self._emit_task_lock(card)
+        if action == "break":
+            self.report_status("Foreign lock broken.", "green")
+        else:
+            self.report_status("File lock released.", "green")
+
+    def _unlock_task_file(self, card: ArtistTaskCardModel, force: bool = False) -> None:
+        """Release the write lock after the task files have been synced."""
+        if not self.is_vcs_enabled() or not card.task_file_path or not card.project_root:
+            return
+        server = self._resolve_server(card.project_root)
+        server_id = server.id if server is not None else ""
+        user, pwd = self.credential_vault.get_server_credentials(server_id)
+        ok, message = self.task_file_sync_service.unlock_task_file(
+            card.project_root, card.task_file_path, user, pwd, force=force
+        )
+        if not ok and "not locked" not in message.lower():
+            self.report_status(f"VCS unlock warning: {message}", "yellow")
+
+    @staticmethod
+    def _task_id(card: ArtistTaskCardModel) -> str:
+        return str(card.task_data.get("id", ""))
+
+    @staticmethod
+    def _commit_message(card: ArtistTaskCardModel, file_count: int) -> str:
+        file_name = Path(card.task_file_path).name if card.task_file_path else "task files"
+        return f"OpenStudioHub: {file_count} file(s) for {card.project_name} ({file_name})."
 
     # ------------------------------------------------------------------
     # Install use case
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # History, diff and revision export
+    # ------------------------------------------------------------------
+    def request_vcs_history(self, card: ArtistTaskCardModel, limit: int = 20) -> bool:
+        """Fetch the revision log for the task's linked file."""
+        if not card.project_root or not card.task_file_path:
+            self.report_status("No linked file is available for history.", "yellow")
+            return False
+        history_key = f"vcs_history_{self._task_id(card)}"
+        if self.workers.is_running(history_key):
+            self.report_status("A VCS history request is already running...", "yellow")
+            return False
+        creds = self._ensure_vcs_credentials(card.project_root)
+        if creds is None:
+            return False
+        user, pwd = creds
+        worker = FetchVcsHistoryWorker(
+            self.task_file_sync_service,
+            self._task_id(card),
+            card.project_root,
+            card.task_file_path,
+            limit,
+            user,
+            pwd,
+        )
+        worker.history_ready.connect(self._on_vcs_history_ready)
+        worker.error_occurred.connect(
+            lambda message, task_id=self._task_id(card): self._on_vcs_history_failed(
+                task_id, message
+            )
+        )
+        self.workers.start(history_key, worker)
+        self.report_status("Fetching the file history from the VCS...", "yellow")
+        return True
+
+    def _on_vcs_history_ready(self, task_id: str, revisions: list) -> None:
+        self.report_status(f"Loaded {len(revisions)} revision(s) from the VCS.", "green")
+        self.vcs_history_ready.emit(task_id, list(revisions))
+
+    def _on_vcs_history_failed(self, task_id: str, message: str) -> None:
+        self.report_status(f"VCS history error: {message}", "red")
+        self.vcs_history_failed.emit(task_id, message)
+
+    def request_vcs_diff(
+        self,
+        card: ArtistTaskCardModel,
+        revision: Optional[int] = None,
+    ) -> bool:
+        """Fetch a textual diff for the working copy or a specific revision."""
+        if not card.project_root or not card.task_file_path:
+            self.report_status("No linked file is available for a diff.", "yellow")
+            return False
+        diff_key = f"vcs_diff_{self._task_id(card)}"
+        if self.workers.is_running(diff_key):
+            self.report_status("A VCS diff request is already running...", "yellow")
+            return False
+        creds = self._ensure_vcs_credentials(card.project_root)
+        if creds is None:
+            return False
+        user, pwd = creds
+        worker = FetchVcsDiffWorker(
+            self.task_file_sync_service,
+            self._task_id(card),
+            card.project_root,
+            card.task_file_path,
+            revision,
+            user,
+            pwd,
+        )
+        worker.diff_ready.connect(self._on_vcs_diff_ready)
+        worker.error_occurred.connect(
+            lambda message, task_id=self._task_id(card): self._on_vcs_history_failed(
+                task_id, message
+            )
+        )
+        self.workers.start(diff_key, worker)
+        self.report_status("Fetching the VCS diff...", "yellow")
+        return True
+
+    def _on_vcs_diff_ready(self, task_id: str, revision: str, diff: str) -> None:
+        self.report_status("VCS diff loaded.", "green")
+        self.vcs_diff_ready.emit(task_id, revision, diff)
+
+    def export_vcs_revision(
+        self,
+        card: ArtistTaskCardModel,
+        revision: int,
+        destination: Path,
+    ) -> bool:
+        """Export a historical revision to a file without overwriting the workspace."""
+        if not card.project_root or not card.task_file_path:
+            self.report_status("No linked file is available to export.", "yellow")
+            return False
+        export_key = f"vcs_export_{self._task_id(card)}"
+        if self.workers.is_running(export_key):
+            self.report_status("A revision export is already running...", "yellow")
+            return False
+        creds = self._ensure_vcs_credentials(card.project_root)
+        if creds is None:
+            return False
+        user, pwd = creds
+        worker = ExportVcsRevisionWorker(
+            self.task_file_sync_service,
+            self._task_id(card),
+            card.project_root,
+            card.task_file_path,
+            revision,
+            Path(destination),
+            user,
+            pwd,
+        )
+        worker.export_finished.connect(self._on_vcs_export_finished)
+        self.workers.start(export_key, worker, critical=True)
+        self.report_status(f"Exporting revision {revision}...", "yellow")
+        return True
+
+    def _on_vcs_export_finished(self, task_id: str, success: bool, message: str) -> None:
+        self.report_status(message, "green" if success else "red")
+        self.vcs_export_finished.emit(task_id, success, message)
+
     def install(self, card: ArtistTaskCardModel) -> None:
         if not card.project_root:
             self.report_status("Cannot install: Project folder is missing on NAS.", "red")
             return
 
-        if self._install_worker and self._install_worker.isRunning():
+        if self.workers.is_running("install"):
             self.report_status("Please wait, an installation is already running...", "red")
             return
 
-        creds = self._ensure_vcs_credentials()
+        creds = self._ensure_vcs_credentials(card.project_root)
         if creds is None:
             return
         vcs_user, vcs_pwd = creds
 
-        self._install_worker = InstallProjectWorker(
+        worker = InstallProjectWorker(
             project_root=card.project_root,
             vcs_user=vcs_user,
             vcs_pwd=vcs_pwd,
             installation_service=self.installation_service,
             task_data=card.task_data,
         )
-        self._install_worker.progress_updated.connect(self.report_status)
-        self._install_worker.finished_install.connect(self._on_install_finished)
-        self._install_worker.finished.connect(self._on_install_worker_finished)
-        self._install_worker.start()
+        worker.progress_updated.connect(self.report_status)
+        worker.finished_install.connect(self._on_install_finished)
+        self.workers.start("install", worker, critical=True)
 
     def _on_install_finished(self, success: bool, message: str) -> None:
         if success:
@@ -258,21 +976,31 @@ class ArtistViewModel(BaseViewModel):
         else:
             self.report_status(f"🔴 Install Error: {message}", "red")
 
-    def _on_install_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._install_worker = None
-
     # ------------------------------------------------------------------
-    # Session VCS settings (RAM-only)
+    # Session VCS settings (RAM-only, per server)
     # ------------------------------------------------------------------
-    def vcs_settings(self) -> tuple[str, bool]:
-        username, _ = self.credential_vault.get_svn_credentials()
-        return username or "", self.credential_vault.is_svn_enabled()
+    def list_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
 
-    def save_vcs_settings(self, username: str, password: str, enabled: bool) -> None:
+    def vcs_settings(self, server_id: str = "") -> tuple[str, bool]:
+        if not server_id:
+            return "", False
+        username, _ = self.credential_vault.get_server_credentials(server_id)
+        return username or "", self.credential_vault.is_server_enabled(server_id)
+
+    def has_ssh_passphrase(self, server_id: str = "") -> bool:
+        if not server_id:
+            return False
+        return self.credential_vault.has_ssh_passphrase(server_id)
+
+    def save_vcs_settings(self, server_id: str, username: str, password: str, enabled: bool) -> None:
+        if not server_id:
+            return
         if not username:
             username = self.auth_service.current_user.email if self.auth_service.current_user else "artist"
-        self.credential_vault.save_svn_credentials(username, password, enabled)
+        self.credential_vault.save_server_credentials(server_id, username, password, enabled)
         self.report_status("✓ VCS credentials stored in RAM for this session.", "green")

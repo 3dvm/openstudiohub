@@ -13,20 +13,26 @@ between the Login view and the role-based dashboards.
 from pathlib import Path
 import os
 import sys
-import urllib.parse
 
 from _version import __version__
 
-from PySide6.QtCore import QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QIcon
-from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QMessageBox, QStackedWidget
+from PySide6.QtGui import QCloseEvent, QIcon
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QInputDialog,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+)
 
 from src.domain.identity.value_objects import Role
 from src.infrastructure.kitsu_manager import KitsuManager
+from src.infrastructure.qt_worker import active_critical_workers, wait_for_all
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
 from src.interfaces.qt.components.vcs_credentials_dialog import VcsCredentialsDialog
 from src.interfaces.qt.composition import AppContext
-from src.interfaces.qt.shell.web_context_view import WebContextView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
 from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderViewModel
 from src.interfaces.qt.viewmodels.infrastructure_viewmodel import InfrastructureViewModel
@@ -34,6 +40,7 @@ from src.interfaces.qt.viewmodels.login_viewmodel import LoginViewModel
 from src.interfaces.qt.viewmodels.new_project_viewmodel import NewProjectViewModel
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
 from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
+from src.interfaces.qt.viewmodels.vcs_credential_gate import VcsPromptResult
 from src.interfaces.qt.views.artist_view import ViewArtist
 from src.interfaces.qt.views.login_view import ViewLogin
 from src.interfaces.qt.views.new_project_dialog import NewProjectDialog
@@ -75,16 +82,32 @@ class OpenStudioHub(QMainWindow):
     # ------------------------------------------------------------------
     # VCS credential gate
     # ------------------------------------------------------------------
-    def _prompt_vcs_credentials(self) -> tuple[str, str] | None:
-        """Show the modal VCS credentials prompt; return the pair or None on cancel."""
-        default_user, _ = self.ctx.credential_vault.get_svn_credentials()
+    def _prompt_vcs_credentials(self, server_id: str, server_label: str, needs_passphrase: bool) -> VcsPromptResult | None:
+        """Show the modal VCS credentials prompt; return the values or None on cancel."""
+        default_user, _ = self.ctx.credential_vault.get_server_credentials(server_id)
         if not default_user and self.ctx.auth_service.current_user is not None:
             default_user = self.ctx.auth_service.current_user.email
 
-        dialog = VcsCredentialsDialog(self, default_user or "")
+        dialog = VcsCredentialsDialog(
+            self,
+            default_user or "",
+            server_label=server_label,
+            include_passphrase=needs_passphrase,
+        )
         if dialog.exec() == QDialog.Accepted:
-            return dialog.credentials()
+            user, pwd = dialog.credentials()
+            return VcsPromptResult(username=user, password=pwd, ssh_passphrase=dialog.ssh_passphrase())
         return None
+
+    def _prompt_ssh_passphrase(self, server_label: str) -> str | None:
+        """Ask for the SSH key passphrase when a remote server needs it."""
+        text, accepted = QInputDialog.getText(
+            self,
+            self.tr("SSH Passphrase"),
+            self.tr(f"SSH key passphrase for '{server_label}':"),
+            QLineEdit.Password,
+        )
+        return text if accepted and text else None
 
     # ------------------------------------------------------------------
     # Process guardian
@@ -105,11 +128,33 @@ class OpenStudioHub(QMainWindow):
 
             QMessageBox.warning(self, self.tr("Blocked Operation"), message)
             event.ignore()
-        else:
+            return
+
+        if active_critical_workers():
+            QMessageBox.warning(
+                self,
+                self.tr("Blocked Operation"),
+                self.tr(
+                    "A background operation (migration, installation or project creation) "
+                    "is still running.\n\nPlease wait for it to finish before closing the Hub."
+                ),
+            )
+            event.ignore()
+            return
+
+        wait_for_all(2000)
+        # Local teardown must never block the window from closing, even if the
+        # Kitsu server is unreachable (e.g. a stale session on the login screen).
+        try:
             if self.ctx.auth_service.access_token():
                 self.ctx.auth_service.logout()
+        except Exception as error:  # noqa: BLE001
+            print(f"[OpenStudioHub] Warning: logout during shutdown failed: {error}")
+        try:
             self.ctx.credential_vault.clear()
-            event.accept()
+        except Exception as error:  # noqa: BLE001
+            print(f"[OpenStudioHub] Warning: credential vault cleanup failed: {error}")
+        event.accept()
 
     # ------------------------------------------------------------------
     # Login
@@ -151,11 +196,6 @@ class OpenStudioHub(QMainWindow):
 
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.current_view)
-
-        self.web_context = WebContextView(self)
-        self.web_context.back_requested.connect(self.close_kitsu)
-        self.view_stack.addWidget(self.web_context)
-
         self.setCentralWidget(self.view_stack)
 
     def _retire_previous_dashboard(self) -> None:
@@ -172,7 +212,15 @@ class OpenStudioHub(QMainWindow):
         if not hasattr(self, "_retired_views"):
             self._retired_views = []
         self._retired_views.append(view)
-        view.deleteLater()
+
+        # Never destroy a view whose critical threads are still working.
+        if active_critical_workers():
+            return
+
+        try:
+            view.deleteLater()
+        except RuntimeError:
+            pass
 
     def _build_project_list_vm(self, nas_dir, read_vcs_credentials: bool) -> ProjectListViewModel:
         return ProjectListViewModel(
@@ -189,12 +237,17 @@ class OpenStudioHub(QMainWindow):
             status_sink=self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,
             vcs_prompt=self._prompt_vcs_credentials,
+            ssh_passphrase_prompt=self._prompt_ssh_passphrase,
         )
 
     def _build_td_view(self, nas_dir):
         project_list_vm = self._build_project_list_vm(nas_dir, True)
         infrastructure_vm = InfrastructureViewModel(
-            self.ctx.config_factory, self.ctx.production_service, self.ctx.status_sink
+            self.ctx.config_factory,
+            self.ctx.production_service,
+            self.ctx.status_sink,
+            credential_vault=self.ctx.credential_vault,
+            ssh_passphrase_prompt=self._prompt_ssh_passphrase,
         )
         settings_vm = SettingsViewModel(
             self.ctx.config_factory,
@@ -218,6 +271,7 @@ class OpenStudioHub(QMainWindow):
             on_new_project_callback=self._open_new_project_dialog,
             on_repair_callback=self._open_repair_dialog,
             status_sink=self.ctx.status_sink,
+            notifications_vm=self.ctx.notifications_vm,
         )
 
     def _build_pm_view(self, nas_dir):
@@ -228,6 +282,8 @@ class OpenStudioHub(QMainWindow):
             self.ctx.credential_vault,
             self.ctx.status_sink,
             vcs_prompt=self._prompt_vcs_credentials,
+            installation_service=self.ctx.installation_service,
+            user_role=self.ctx.auth_service.current_role().value,
         )
 
         return ViewPM(
@@ -238,9 +294,11 @@ class OpenStudioHub(QMainWindow):
             repair_vm=self.ctx.repair_viewmodel,
             auth_service=self.ctx.auth_service,
             config_factory=self.ctx.config_factory,
+            production_service=self.ctx.production_service,
             on_logout=self.ejecutar_logout,
             status_sink=self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,
+            notifications_vm=self.ctx.notifications_vm,
         )
 
     def _build_artist_view(self, nas_dir):
@@ -262,6 +320,7 @@ class OpenStudioHub(QMainWindow):
             config_factory=self.ctx.config_factory,
             on_logout=self.ejecutar_logout,
             status_sink=self.ctx.status_sink,
+            notifications_vm=self.ctx.notifications_vm,
         )
 
     def _open_new_project_dialog(self) -> None:
@@ -271,6 +330,7 @@ class OpenStudioHub(QMainWindow):
             self.ctx.vault_service,
             credential_vault=self.ctx.credential_vault,
             vcs_prompt=self._prompt_vcs_credentials,
+            project_creation_service=self.ctx.project_creation_service,
         )
         dialog = NewProjectDialog(self, vm, on_success_callback=self._on_project_created)
         # Keep a strong Python reference so the dialog (and its ViewModel's
@@ -325,18 +385,10 @@ class OpenStudioHub(QMainWindow):
         if not target_url:
             target_url = f"{kitsu_url}/news-feed"
 
-        if False:  # SSO still needs a fix first for embeded opening
-            parsed_url = urllib.parse.urlparse(kitsu_url)
-            allowed_hosts = [parsed_url.hostname, "localhost", "127.0.0.1"]
-
-            token = self.ctx.auth_service.access_token()
-            self.web_context.load_context(target_url, "Kitsu", allowed_hosts, sso_token=token)
-            self.view_stack.setCurrentWidget(self.web_context)
-        else:
-            QDesktopServices.openUrl(QUrl(target_url))
+        self.current_view.open_kitsu_in_hub(target_url)
 
     def close_kitsu(self) -> None:
-        self.view_stack.setCurrentWidget(self.current_view)
+        self.current_view.show_dashboard_content()
         print("[OpenStudioHub] Returned from Kitsu.")
 
     def open_watchtower(self, project_root_path: Path, project_id: str = "") -> None:
@@ -367,8 +419,7 @@ class OpenStudioHub(QMainWindow):
         self.wt_launcher.launch()
 
     def _on_watchtower_ready(self, url: str) -> None:
-        self.web_context.load_context(url, "Watchtower", ["localhost", "127.0.0.1"])
-        self.view_stack.setCurrentWidget(self.web_context)
+        self.current_view.open_watchtower_in_hub(url)
 
     # ------------------------------------------------------------------
     # Logout
@@ -378,6 +429,20 @@ class OpenStudioHub(QMainWindow):
             self.close()
             return
 
+        if active_critical_workers():
+            QMessageBox.warning(
+                self,
+                self.tr("Blocked Operation"),
+                self.tr(
+                    "A background operation (migration, installation or project creation) "
+                    "is still running.\n\nPlease wait for it to finish before logging out."
+                ),
+            )
+            return
+
+        current_view = getattr(self, "current_view", None)
+        if current_view is not None and hasattr(current_view, "clear_web_auth"):
+            current_view.clear_web_auth()
         self.ctx.auth_service.logout()
         self.ctx.credential_vault.clear()
         self.show_login()

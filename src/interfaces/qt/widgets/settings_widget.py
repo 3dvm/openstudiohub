@@ -30,7 +30,6 @@ from src.interfaces.qt.settings_tabs.tab_identity import TabIdentity
 from src.interfaces.qt.settings_tabs.tab_software import TabSoftware
 from src.interfaces.qt.settings_tabs.tab_topography import TabTopography
 from src.interfaces.qt.settings_tabs.tab_vault import TabVault
-from src.interfaces.qt.settings_tabs.tab_vcs import TabVCS
 from src.interfaces.qt.viewmodels.settings_viewmodel import SettingsViewModel
 
 
@@ -56,7 +55,7 @@ class SettingsWidget(QFrame):
         main_layout.setSpacing(0)
 
         self.tab_bar_frame = QFrame()
-        self.tab_bar_frame.setStyleSheet("background-color: #1F2531; border-bottom: 1px solid #141820;")
+        self.tab_bar_frame.setObjectName("SettingsTabBar")
         self.tab_bar_frame.setFixedHeight(35)
 
         self.tab_bar_layout = QHBoxLayout(self.tab_bar_frame)
@@ -69,17 +68,15 @@ class SettingsWidget(QFrame):
 
         self.tab_identity = TabIdentity(self.auth_service, self.production_service, self.status_callback, parent=self.stack)
         self.tab_vault = TabVault(parent=self.stack)
-        self.tab_vcs = TabVCS(parent=self.stack)
         self.tab_topography = TabTopography(parent=self.stack)
         self.tab_software = TabSoftware(self.stack, self.vault_service, self.status_callback)
         self.tab_credentials = TabCredentials(parent=self.stack)
 
         self._add_nav_item(self.tr("Identity and API"), self.tab_identity, 0)
         self._add_nav_item(self.tr("Vault Storage"), self.tab_vault, 1)
-        self._add_nav_item(self.tr("Pipeline and VCS"), self.tab_vcs, 2)
-        self._add_nav_item(self.tr("Project Topography"), self.tab_topography, 3)
-        self._add_nav_item(self.tr("Software and Manifest"), self.tab_software, 4)
-        self._add_nav_item(self.tr("Session Credentials"), self.tab_credentials, 5)
+        self._add_nav_item(self.tr("Project Topography"), self.tab_topography, 2)
+        self._add_nav_item(self.tr("Software and Manifest"), self.tab_software, 3)
+        self._add_nav_item(self.tr("Session Credentials"), self.tab_credentials, 4)
 
         self.tab_bar_layout.addStretch()
         self.tab_bar_layout.addWidget(self.lbl_unsaved_warning)
@@ -133,14 +130,14 @@ class SettingsWidget(QFrame):
     def _connect_modified_signals(self) -> None:
         self.tab_identity.modified.connect(self._on_field_modified)
         self.tab_vault.modified.connect(self._on_field_modified)
-        self.tab_vcs.modified.connect(self._on_field_modified)
         self.tab_topography.modified.connect(self._on_field_modified)
         self.tab_software.modified.connect(self._on_field_modified)
         self.tab_credentials.modified.connect(self._on_field_modified)
+        self.tab_credentials.server_changed.connect(self._load_credentials_for)
 
     def _on_field_modified(self) -> None:
         self.lbl_unsaved_warning.setText(self.tr("● Unsaved Changes"))
-        self.lbl_unsaved_warning.setStyleSheet("color: #F59E0B; font-weight: bold; font-size: 13px; margin-left: 15px;")
+        self.lbl_unsaved_warning.setObjectName("WarningLabel")
 
     def _load_current_data(self) -> None:
         state = self.vm.load_state()
@@ -159,35 +156,55 @@ class SettingsWidget(QFrame):
         vault_path = str(self._vault_path())
         self.tab_vault.load_data(projects_path, vault_path)
 
-        active_adapter = vcs.get("active_adapter", "svn")
-        repo_url = vcs.get("repository_url", "")
-        enable_sparse = vcs.get("enable_vendor_sparse_checkout", True)
-
-        self.tab_vcs.load_data(active_adapter, repo_url, enable_sparse)
         self.tab_topography.load_data(topo)
         self.tab_software.load_data(manifest)
 
-        vcs_username, vcs_enabled = self.vm.load_session_credentials()
-        self.tab_credentials.load_data(vcs_username, vcs_enabled)
+        servers = self.vm.list_servers()
+        default_id = next((server["id"] for server in servers if server.get("is_default")), "")
+        self.tab_credentials.set_servers(servers, default_id)
+        self._load_credentials_for(default_id)
 
         self.lbl_unsaved_warning.setText("")
+
+    def _load_credentials_for(self, server_id: str) -> None:
+        if not server_id:
+            self.tab_credentials.load_data("", False, False)
+            return
+        username, enabled = self.vm.load_session_credentials(server_id)
+        self.tab_credentials.load_data(username, enabled, self.vm.has_ssh_passphrase(server_id))
 
     def _collect_payload(self) -> dict:
         payload = {}
         payload.update(self.tab_identity.identity_payload())
-        payload.update(self.tab_vcs.vcs_payload())
         payload.update(self.tab_topography.topography_payload())
 
         vault_data = self.tab_vault.vault_payload()
         projects_dir = vault_data.get("vcs_engine", {}).get("local_workspace_root", "")
 
-        payload["infrastructure_topology"] = vault_data.get("infrastructure_topology", {})
+        # Preserve the VCS server registry (managed in the Infrastructure panel)
+        # so it is carried by the exported Studio Seed.
+        existing_vcs = self.vm.config_factory.get_raw_config().get("vcs_engine", {})
+        vcs_payload = dict(payload.get("vcs_engine", {}))
+        if "servers" in existing_vcs:
+            vcs_payload["servers"] = existing_vcs["servers"]
+        if "default_server_id" in existing_vcs:
+            vcs_payload["default_server_id"] = existing_vcs["default_server_id"]
 
-        existing_roots = self.vm.config_factory.get_raw_config().get("vcs_engine", {}).get("local_workspace_root", {})
+        infra_payload = dict(vault_data.get("infrastructure_topology", {}))
+        selected_vault = infra_payload.pop("vault_path", "")
+        # Persist the vault portably (relative to the workspace root) so seeds and
+        # other machines never inherit this machine's absolute home path.
+        infra_payload.update(self.vm.config_factory.portable_vault_config(selected_vault))
+        existing_infra = self.vm.config_factory.get_raw_config().get("infrastructure_topology", {})
+        if "vcs_server" in existing_infra:
+            infra_payload.setdefault("vcs_server", existing_infra["vcs_server"])
+        payload["infrastructure_topology"] = infra_payload
+
+        existing_roots = existing_vcs.get("local_workspace_root", {})
         roots = dict(existing_roots) if isinstance(existing_roots, dict) else {}
         roots[self._current_os()] = projects_dir
-
-        payload["vcs_engine"].update({"local_workspace_root": roots})
+        vcs_payload["local_workspace_root"] = roots
+        payload["vcs_engine"] = vcs_payload
 
         return payload
 
@@ -208,7 +225,13 @@ class SettingsWidget(QFrame):
         config_ok, vault_ok = self.vm.save(payload, software_payload)
 
         creds = self.tab_credentials.credentials_payload()
-        self.vm.save_session_credentials(creds["username"], creds["password"], creds["enabled"])
+        self.vm.save_session_credentials(
+            creds["server_id"],
+            creds["username"],
+            creds["password"],
+            creds["enabled"],
+            creds.get("ssh_passphrase", ""),
+        )
 
         if config_ok and vault_ok:
             self.lbl_unsaved_warning.setText("")

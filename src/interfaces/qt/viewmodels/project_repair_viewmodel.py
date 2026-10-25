@@ -26,6 +26,7 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     vcs_requires_credentials,
 )
 from src.interfaces.qt.workers.project_repair_workers import ProjectRepairWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class ProjectRepairViewModel(BaseViewModel):
@@ -45,15 +46,25 @@ class ProjectRepairViewModel(BaseViewModel):
         self.credential_vault = credential_vault
         self.config_factory = config_factory
         self.vcs_prompt = vcs_prompt
-        self._worker = None
+        self.workers = WorkerManager(self)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-    def _resolve_vcs_credentials(self, vcs_enabled: bool) -> Optional[tuple[str, str]]:
-        """Gate the VCS-backed repair behind the session credentials prompt."""
+    def _resolve_vcs_credentials(self, vcs_enabled: bool, server_id: str = "") -> Optional[tuple[str, str]]:
+        """Gate the VCS-backed repair behind the per-server credentials prompt."""
+        server = None
+        get_server = getattr(self.config_factory, "get_server", None)
+        if server_id and callable(get_server):
+            server = get_server(server_id)
+        if server is None:
+            get_default = getattr(self.config_factory, "get_default_server", None)
+            server = get_default() if callable(get_default) else None
         return ensure_vcs_credentials(
-            required=vcs_enabled and vcs_requires_credentials(self.config_factory),
+            required=vcs_enabled and vcs_requires_credentials(self.config_factory, server=server),
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
@@ -64,23 +75,15 @@ class ProjectRepairViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     def is_busy(self) -> bool:
         """True while a repair worker is running."""
-        return self._worker is not None and self._worker.isRunning()
+        return self.workers.is_running("repair")
 
     def _start_worker(self, worker: ProjectRepairWorker) -> bool:
         if self.is_busy():
             self.report_status("A repair is already in progress...", "red")
             return False
-        self._worker = worker
         worker.result.connect(self._on_repair_finished)
-        worker.finished.connect(self._on_worker_finished)
-        worker.start()
+        self.workers.start("repair", worker, critical=True)
         return True
-
-    def _on_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._worker = None
 
     def repair_nas_ghost(self, project_name: str, template_name: str = "") -> None:
         worker = ProjectRepairWorker(
@@ -101,7 +104,7 @@ class ProjectRepairViewModel(BaseViewModel):
         blueprint,
         vcs_enabled: bool = True,
     ) -> None:
-        creds = self._resolve_vcs_credentials(vcs_enabled)
+        creds = self._resolve_vcs_credentials(vcs_enabled, getattr(blueprint, "vcs_server_id", ""))
         if creds is None:
             return
         vcs_user, vcs_pwd = creds

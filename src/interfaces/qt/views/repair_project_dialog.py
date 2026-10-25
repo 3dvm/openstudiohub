@@ -30,6 +30,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.domain.shared_kernel.addon_contract import (
+    parse_addon_configuration,
+    resolve_addon_entry,
+)
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.domain.workspace.entities import (
     ERROR_INVALID_BLUEPRINT,
@@ -39,6 +43,8 @@ from src.domain.workspace.entities import (
 )
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 from src.interfaces.qt.workers.new_project_workers import FetchKitsuTemplatesWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
+from src.interfaces.qt.widgets.addon_config_panel import AddonConfigPanel
 
 
 class RepairProjectDialog(QDialog):
@@ -70,8 +76,9 @@ class RepairProjectDialog(QDialog):
 
         self.vault_data = self.vault_service.load_inventory()
         self.tool_checkboxes = {}
+        self.addon_config_panels = {}
         self.template_group = None
-        self._templates_worker = None
+        self.workers = WorkerManager(self)
         self._repair_connected = False
 
         self.setObjectName("ViewLoginBase")
@@ -98,7 +105,7 @@ class RepairProjectDialog(QDialog):
         main_layout.addSpacing(5)
 
         lbl_name = QLabel(self.tr("Project:"))
-        lbl_name.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_name.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_name)
 
         self.entry_name = QLineEdit(self.project_name)
@@ -113,6 +120,7 @@ class RepairProjectDialog(QDialog):
             self._build_kitsu_orphan_fields(main_layout)
 
         self.lbl_status = QLabel("")
+        self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setAlignment(Qt.AlignCenter)
         self.lbl_status.hide()
         main_layout.addWidget(self.lbl_status)
@@ -126,14 +134,12 @@ class RepairProjectDialog(QDialog):
 
     def _build_nas_ghost_fields(self, main_layout) -> None:
         lbl_template = QLabel(self.tr("Kitsu Template:"))
-        lbl_template.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_template.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_template)
 
         self.combo_kitsu_template = QComboBox()
         self.combo_kitsu_template.setFixedHeight(40)
-        self.combo_kitsu_template.setStyleSheet(
-            "QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }"
-        )
+        self.combo_kitsu_template.setObjectName("StandardComboBox")
         self.combo_kitsu_template.addItem(self.tr("Loading templates..."))
         self.combo_kitsu_template.setEnabled(False)
         main_layout.addWidget(self.combo_kitsu_template)
@@ -141,30 +147,26 @@ class RepairProjectDialog(QDialog):
 
     def _build_kitsu_orphan_fields(self, main_layout) -> None:
         lbl_version = QLabel(self.tr("Target Blender Version:"))
-        lbl_version.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        lbl_version.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_version)
 
         versions = list(self.vault_data.keys()) if self.vault_data else []
         self.combo_version = QComboBox()
         self.combo_version.addItems(versions)
         self.combo_version.setFixedHeight(40)
-        self.combo_version.setStyleSheet(
-            "QComboBox { background-color: #0F172A; border: 1px solid #475569; border-radius: 8px; color: #F8FAFC; padding: 5px; }"
-        )
+        self.combo_version.setObjectName("StandardComboBox")
         self.combo_version.currentTextChanged.connect(self._draw_dynamic_dependencies)
         main_layout.addWidget(self.combo_version)
 
         lbl_addons = QLabel(self.tr("Vault Components (vault_manifest.json):"))
-        lbl_addons.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        lbl_addons.setObjectName("SectionTitle")
         main_layout.addWidget(lbl_addons)
 
         self.scroll_addons = QScrollArea()
         self.scroll_addons.setWidgetResizable(True)
-        self.scroll_addons.setStyleSheet(
-            "QScrollArea { border: 1px solid #334155; border-radius: 8px; background-color: #1E293B; }"
-        )
+        self.scroll_addons.setObjectName("DataScroll")
         self.addons_widget = QWidget()
-        self.addons_widget.setStyleSheet("background: transparent;")
+        self.addons_widget.setObjectName("TransparentGridContainer")
         self.addons_layout = QVBoxLayout(self.addons_widget)
         self.addons_layout.setAlignment(Qt.AlignTop)
         self.scroll_addons.setWidget(self.addons_widget)
@@ -173,23 +175,29 @@ class RepairProjectDialog(QDialog):
         self.lbl_vcs = QLabel(self.tr("Version Control System (VCS):"))
         main_layout.addWidget(self.lbl_vcs)
         self.combo_vcs = QComboBox()
-        self.combo_vcs.addItems(["Settings Default", "SVN", "Git-LFS", "None (NAS only)"])
+        self._populate_vcs_servers()
         main_layout.addWidget(self.combo_vcs)
+
+    def _populate_vcs_servers(self) -> None:
+        try:
+            registry = self.config_factory.get_vcs_servers()
+        except Exception:  # noqa: BLE001
+            registry = None
+        if registry is not None:
+            for server in registry.servers:
+                if not server.is_enabled:
+                    continue
+                label = server.name + ("  (default)" if server.id == registry.default_server_id else "")
+                self.combo_vcs.addItem(label, server.id)
+        self.combo_vcs.addItem(self.tr("None (NAS only)"), "")
 
     # ------------------------------------------------------------------
     # Template / dependencies loaders
     # ------------------------------------------------------------------
     def _load_kitsu_templates(self) -> None:
-        self._templates_worker = FetchKitsuTemplatesWorker(self.production_service)
-        self._templates_worker.data_ready.connect(self._on_templates_loaded)
-        self._templates_worker.finished.connect(self._on_templates_worker_finished)
-        self._templates_worker.start()
-
-    def _on_templates_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._templates_worker = None
+        worker = FetchKitsuTemplatesWorker(self.production_service)
+        worker.data_ready.connect(self._on_templates_loaded)
+        self.workers.start("templates", worker)
 
     def _on_templates_loaded(self, templates: list) -> None:
         self.combo_kitsu_template.clear()
@@ -209,6 +217,7 @@ class RepairProjectDialog(QDialog):
     def _draw_dynamic_dependencies(self, selected_version: str) -> None:
         self._clear_addons_layout()
         self.tool_checkboxes.clear()
+        self.addon_config_panels.clear()
         self.template_group = QButtonGroup(self)
         if not selected_version:
             return
@@ -219,33 +228,44 @@ class RepairProjectDialog(QDialog):
 
         for category, items in available_categories.items():
             lbl_cat = QLabel(f"[{category.upper()}]")
-            lbl_cat.setStyleSheet("color: #10B981; font-weight: bold; margin-top: 10px;")
+            lbl_cat.setObjectName("SuccessLabel")
             self.addons_layout.addWidget(lbl_cat)
             self.tool_checkboxes[category] = {}
 
             for item_name, data in items.items():
-                item_version = data.get("version", "1.0")
-                is_mandatory = data.get("mandatory", False)
-                label_text = f"{item_name} v{item_version} - {data.get('description', '')}"
+                entry = resolve_addon_entry(item_name, data)
+                item_version = entry.get("version", "1.0")
+                is_mandatory = entry.get("mandatory", False)
+                label_text = f"{item_name} v{item_version} - {entry.get('description', '')}"
 
                 if category == "templates":
                     cb = QRadioButton(label_text)
-                    cb.setStyleSheet("QRadioButton { color: #F8FAFC; padding: 5px; }")
                     self.template_group.addButton(cb)
                 else:
                     cb = QCheckBox(label_text)
-                    cb.setStyleSheet("QCheckBox { color: #F8FAFC; padding: 5px; }")
 
                 cb.toggled.connect(
-                    lambda checked, c=category, n=item_name, r=data.get("requires", []): self._resolve_sub_dependencies(checked, c, n, r)
+                    lambda checked, c=category, n=item_name, r=entry.get("requires", []): self._resolve_sub_dependencies(checked, c, n, r)
                 )
                 self.addons_layout.addWidget(cb)
+
+                config_schema = entry.get("config_schema")
+                if config_schema:
+                    default_config = entry.get("default_config") or {}
+                    panel = AddonConfigPanel(config_schema, default_config.get("settings") or {})
+                    cb.toggled.connect(panel.set_editable)
+                    self.addons_layout.addWidget(panel)
+                    self.addon_config_panels[item_name] = panel
 
                 if is_mandatory:
                     cb.setChecked(True)
                     cb.setEnabled(False)
 
-                self.tool_checkboxes[category][item_name] = {"checkbox": cb, "version": item_version}
+                self.tool_checkboxes[category][item_name] = {
+                    "checkbox": cb,
+                    "version": item_version,
+                    "meta": entry,
+                }
 
     def _resolve_sub_dependencies(self, checked: bool, parent_category: str, parent_name: str, requires: list) -> None:
         for req in requires:
@@ -306,6 +326,7 @@ class RepairProjectDialog(QDialog):
     def _collect_blueprint(self) -> ProjectBlueprint:
         version_blender = self.combo_version.currentText().strip()
         final_dependencies, main_template = {}, None
+        final_addon_config = {}
         for category, items in self.tool_checkboxes.items():
             final_dependencies[category] = {}
             for item_name, data in items.items():
@@ -313,9 +334,18 @@ class RepairProjectDialog(QDialog):
                     final_dependencies[category][item_name] = data["version"]
                     if category == "templates":
                         main_template = item_name
+                        continue
+                    final_addon_config[item_name] = self._build_addon_config(item_name, data.get("meta", {}))
 
         if not main_template:
             main_template = "Macuare_Estudio"
+
+        server_id = self.combo_vcs.currentData() or ""
+        server = None
+        if server_id:
+            getter = getattr(self.config_factory, "get_server", None)
+            if callable(getter):
+                server = getter(server_id)
 
         return ProjectBlueprint(
             project_name=self.project_name,
@@ -323,22 +353,34 @@ class RepairProjectDialog(QDialog):
             blender_version=version_blender,
             template=main_template,
             dependencies=final_dependencies,
+            addon_configuration=parse_addon_configuration(final_addon_config),
             topography=self.config_factory.get_topography(),
-            vcs_enabled=True,
+            vcs_enabled=bool(server_id),
+            vcs_server_id=server_id,
+            vcs_base_url=server.repository_url if server else "",
         )
 
+    def _build_addon_config(self, addon_name: str, meta: dict) -> dict:
+        default_config = meta.get("default_config") or {}
+        panel = self.addon_config_panels.get(addon_name)
+        if panel is not None and panel.schema:
+            settings = panel.values()
+        else:
+            settings = dict(default_config.get("settings") or {})
+        return {
+            "enabled": True,
+            "module_match": meta.get("module_match", addon_name),
+            "settings": settings,
+            "behaviors": list(default_config.get("behaviors") or []),
+        }
+
     def _resolve_vcs_enabled(self) -> bool:
-        vcs_config = self.config_factory.get_raw_config().get("vcs_engine", {})
-        vcs_selection = self.combo_vcs.currentIndex()
-        if vcs_selection == 3:
-            return False
-        if vcs_selection == 0:
-            return vcs_config.get("active_adapter", "svn") != "none"
-        return True
+        return bool(self.combo_vcs.currentData())
 
     def _set_busy_status(self, message: str) -> None:
         self.lbl_status.setText(message)
-        self.lbl_status.setStyleSheet("color: #F59E0B; font-weight: bold;")
+        from src.interfaces.qt.ui_style import set_ui_state
+        set_ui_state(self.lbl_status, "warning")
         self.lbl_status.show()
 
     # ------------------------------------------------------------------
@@ -360,11 +402,15 @@ class RepairProjectDialog(QDialog):
 
     def try_safe_delete(self) -> None:
         """Delete the dialog without destroying a still-running worker thread."""
-        worker = self._templates_worker
-        if worker is not None and worker.isRunning():
-            worker.finished.connect(self.deleteLater)
-        else:
+        workers = self.workers.active()
+        if not workers:
             self.deleteLater()
+            return
+        for worker in workers:
+            try:
+                worker.finished.connect(self.deleteLater)
+            except RuntimeError:
+                continue
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._disconnect_repair_signal()
@@ -374,14 +420,16 @@ class RepairProjectDialog(QDialog):
         self._disconnect_repair_signal()
         if success:
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #10B981; font-weight: bold;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "success")
             self.on_success()
             self.close()
         else:
             self.btn_repair.setEnabled(True)
             self.btn_repair.setText(self.tr("Repair Project"))
             self.lbl_status.setText(message)
-            self.lbl_status.setStyleSheet("color: #EF4444; font-weight: bold;")
+            from src.interfaces.qt.ui_style import set_ui_state
+            set_ui_state(self.lbl_status, "error")
 
 
 class RepairBatchDialog(QDialog):
@@ -404,9 +452,7 @@ class RepairBatchDialog(QDialog):
         layout.addWidget(lbl_title)
 
         self.list_widget = QListWidget()
-        self.list_widget.setStyleSheet(
-            "QListWidget { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 8px; }"
-        )
+        self.list_widget.setObjectName("DataList")
         for project in damaged_projects:
             label = f"{project['name']} — {project['error_type']}"
             item = QListWidgetItem(label)

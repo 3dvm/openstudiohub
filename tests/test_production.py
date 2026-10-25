@@ -47,7 +47,9 @@ def test_naming_asset():
 
 def test_naming_storyboard_and_edit():
     assert NamingPolicy.storyboard_path("sq01") == "edit/storyboards/sq01-storyboard.blend"
+    # File names are always lower-cased, including the edit master.
     assert NamingPolicy.edit_path("Neon Chase") == "edit/neon-chase-edit.blend"
+    assert NamingPolicy.edit_path("MIDEQ_promo") == "edit/mideq_promo-edit.blend"
 
 
 def test_normalize_task_name():
@@ -141,6 +143,26 @@ class FakeKitsu:
             "task_status_name": "Todo",
         }
 
+    def all_tasks_for_asset(self, asset):
+        return [
+            {
+                "id": "t1",
+                "entity_id": asset.get("id", ""),
+                "entity_type_name": "Asset",
+                "entity_name": asset.get("name", ""),
+                "asset_type_name": "Character",
+                "task_type_id": "tt1",
+                "task_type_name": "Modeling",
+                "data": {"filepath": "pro/assets/character/prota/character-prota-model.blend"},
+            }
+        ]
+
+    def get_task(self, task_id):
+        return {"id": task_id, "data": {}}
+
+    def update_task_data(self, task, data):
+        return {"id": task.get("id"), "data": data}
+
     def update_entity_data(self, entity_id, data):
         return {}
 
@@ -167,3 +189,93 @@ def test_repository_create_task():
 def test_repository_update_entity_data():
     repo = KitsuProductionRepository(FakeKitsu())
     assert repo.update_entity_data("e1", {"blend_file_path": "x"}) is True
+
+
+def test_repository_asset_tasks_and_task_data_update():
+    repo = KitsuProductionRepository(FakeKitsu())
+    tasks = repo.all_tasks_for_asset({"id": "a1", "name": "Prota"})
+    assert tasks[0].filepath == "pro/assets/character/prota/character-prota-model.blend"
+    assert repo.update_task_data("t1", {"filepath": "x.blend"}) is True
+
+
+# ----------------------------------------------------------------------
+# Task linked-file helpers
+# ----------------------------------------------------------------------
+def test_task_filepath_helpers(tmp_path):
+    task = Task.from_kitsu_dict(
+        {
+            "id": "t1",
+            "entity_type_name": "Asset",
+            "entity_name": "Prota",
+            "asset_type_name": "Character",
+            "task_type_name": "Modeling",
+            "data": {"filepath": "pro/assets/character/prota/character-prota-model.blend"},
+        }
+    )
+    assert task.filepath == "pro/assets/character/prota/character-prota-model.blend"
+    assert task.has_file(tmp_path, "svn") is False
+
+    physical = tmp_path / "svn" / task.filepath
+    physical.parent.mkdir(parents=True)
+    physical.write_bytes(b"x")
+    assert task.has_file(tmp_path, "svn") is True
+
+    assert task.with_filepath("other.blend").filepath == "other.blend"
+    assert task.without_filepath().filepath == ""
+    assert task.filepath == "pro/assets/character/prota/character-prota-model.blend"
+
+
+# ----------------------------------------------------------------------
+# Launch target resolution (mixed-case DCC masters)
+# ----------------------------------------------------------------------
+def test_find_latest_versioned_matches_mixed_case_and_orders_numerically(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    edit_dir = tmp_path / "edit"
+    edit_dir.mkdir()
+    for name in (
+        "MIDEQ_promo-edit-v001.blend",
+        "MIDEQ_promo-edit-v010.blend",
+        "MIDEQ_promo-edit-v002.blend",
+    ):
+        (edit_dir / name).write_bytes(b"")
+
+    latest = LaunchService._find_latest_versioned(edit_dir / "mideq_promo-edit")
+
+    assert latest is not None
+    assert latest.name == "MIDEQ_promo-edit-v010.blend"
+
+
+def test_find_latest_versioned_returns_none_when_absent(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    assert LaunchService._find_latest_versioned(tmp_path / "edit" / "missing") is None
+
+
+def test_find_case_insensitive_unversioned(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    edit_dir = tmp_path / "edit"
+    edit_dir.mkdir()
+    (edit_dir / "MIDEQ_promo-edit.blend").write_bytes(b"")
+
+    found = LaunchService._find_case_insensitive(edit_dir / "mideq_promo-edit.blend")
+
+    assert found is not None
+    assert found.name == "MIDEQ_promo-edit.blend"
+
+
+def test_resolve_target_file_finds_mixed_case_edit_master(tmp_path):
+    from src.application.services.launch_service import LaunchService
+
+    project_root = tmp_path / "project"
+    edit_dir = project_root / "svn" / "edit"
+    edit_dir.mkdir(parents=True)
+    (edit_dir / "MIDEQ_promo-edit-v001.blend").write_bytes(b"")
+
+    # The Hub often only has the lower-cased folder/project name.
+    task_data = {"entity_type_name": "Edit", "project_name": "mideq_promo"}
+    resolved = LaunchService._resolve_target_file(project_root, "svn", task_data, None)
+
+    assert resolved is not None
+    assert resolved.name == "MIDEQ_promo-edit-v001.blend"

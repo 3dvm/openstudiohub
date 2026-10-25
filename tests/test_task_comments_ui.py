@@ -1,0 +1,149 @@
+"""Unit tests for the task comment badge and project task actions."""
+
+from PySide6.QtWidgets import QLabel
+
+from src.interfaces.qt.components.comment_panel import CommentPanel
+from src.interfaces.qt.components.project_card import ProjectCard
+from src.interfaces.qt.components.task_card import TaskCard
+
+
+def _task_card(qapp, on_comments=None, on_kitsu=None):
+    return TaskCard(
+        parent=None,
+        task_data={
+            "id": "t1",
+            "project_id": "p1",
+            "entity_name": "Monkey",
+            "task_type_name": "Modeling",
+        },
+        project_root="/tmp/does-not-exist",
+        is_installed=True,
+        can_work=True,
+        blocked_reason="",
+        token="",
+        host="",
+        on_launch_callback=lambda: None,
+        on_install_callback=lambda: None,
+        comment_count=3,
+        unread_count=2,
+        on_comments_callback=on_comments,
+        on_kitsu_callback=on_kitsu,
+    )
+
+
+def _project_card(qapp, on_open_tasks, tasks_only=True):
+    return ProjectCard(
+        parent=None,
+        project_data={"id": "p1", "name": "Neon"},
+        user_role="artist" if tasks_only else "td",
+        status={
+            "project_dir": None,
+            "is_installed": False,
+            "badge_text": "4 task(s)",
+            "sync_text": "🗂️ 4 task(s)",
+        },
+        token="",
+        host="",
+        thumbnail_fetcher=lambda *args: None,
+        on_install=lambda *args: None,
+        on_launch=lambda *args: None,
+        on_delete=lambda *args: None,
+        on_open_kitsu=lambda *args: None,
+        on_watchtower=lambda *args: None,
+        on_open_tasks=on_open_tasks,
+        tasks_only=tasks_only,
+    )
+
+
+def test_comment_badge_shows_count_and_unread_highlight(qapp):
+    card = _task_card(qapp)
+
+    assert card.comment_badge.text() == "3"
+    assert "#F97316" in card.comment_badge.styleSheet()
+
+    card.set_comment_counts(5, 0)
+
+    assert card.comment_badge.text() == "5"
+    assert "#F97316" not in card.comment_badge.styleSheet()
+
+
+def test_comment_badge_click_invokes_callback(qapp):
+    calls = []
+    card = _task_card(qapp, on_comments=lambda: calls.append(True))
+
+    card.comment_badge.click()
+
+    assert calls == [True]
+
+
+def test_task_kitsu_button_invokes_callback(qapp):
+    calls = []
+    card = _task_card(qapp, on_kitsu=lambda task: calls.append(task))
+
+    card.kitsu_btn.click()
+
+    assert calls[0]["id"] == "t1"
+    assert calls[0]["project_id"] == "p1"
+
+
+def test_artist_project_card_opens_tasks(qapp):
+    calls = []
+    card = _project_card(qapp, lambda pid: calls.append(pid), tasks_only=True)
+
+    assert card.btn_primary_action.text() == "Open Tasks"
+    assert card.btn_primary_action.isEnabled() is True
+    card.btn_primary_action.click()
+
+    assert calls == ["p1"]
+
+
+def test_td_project_card_exposes_view_tasks_action(qapp):
+    calls = []
+    card = _project_card(qapp, lambda pid: calls.append(pid), tasks_only=False)
+
+    actions = [action.text() for action in card.options_menu.actions()]
+    assert any("View Tasks" in text for text in actions)
+
+    next(a for a in card.options_menu.actions() if "View Tasks" in a.text()).trigger()
+    assert calls == ["p1"]
+
+
+def test_checklist_renders_progress_and_toggles(qapp):
+    panel = CommentPanel(None)
+    panel.set_comments(
+        [
+            {
+                "id": "c1",
+                "text": "Review notes",
+                "_author": "Bob",
+                "_created": "2026-10-20 10:00",
+                "_checklist": [
+                    {"text": "Check lighting", "checked": False},
+                    {"text": "Verify textures", "checked": True},
+                ],
+            }
+        ]
+    )
+
+    labels = [label.text() for label in panel.findChildren(QLabel)]
+    assert any("Checklist 1/2" in text for text in labels)
+    assert len(panel._checklist_boxes) == 2
+
+    captured = []
+    panel.checklist_toggled.connect(
+        lambda comment_id, index, checked: captured.append((comment_id, index, checked))
+    )
+    panel._checklist_boxes[0].click()
+
+    assert captured == [("c1", 0, True)]
+
+
+def test_checklist_can_be_disabled_while_saving(qapp):
+    panel = CommentPanel(None)
+    panel.set_comments(
+        [{"id": "c1", "_checklist": [{"text": "Check lighting", "checked": False}]}]
+    )
+
+    panel.set_checklist_enabled(False)
+
+    assert panel._checklist_boxes[0].isEnabled() is False

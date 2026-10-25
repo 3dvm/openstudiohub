@@ -50,29 +50,36 @@ def test_credential_vault_roundtrip_and_env():
         os.environ.pop(key, None)
 
     vault = CredentialVault()
-    assert vault.has_svn_credentials() is False
+    assert vault.has_server_credentials("vps") is False
 
     vault.save_kitsu_credentials("ada@studio.com", "kitsu-secret")
     assert vault.get_kitsu_credentials() == ("ada@studio.com", "kitsu-secret")
     assert os.environ["OPENSTUDIO_KITSU_USER"] == "ada@studio.com"
     assert os.environ["OPENSTUDIO_KITSU_PWD"] == "kitsu-secret"
 
-    vault.save_svn_credentials("artist", "svn-secret")
-    assert vault.has_svn_credentials() is True
-    assert vault.get_svn_credentials() == ("artist", "svn-secret")
+    vault.save_server_credentials("vps", "artist", "svn-secret")
+    assert vault.has_server_credentials("vps") is True
+    assert vault.get_server_credentials("vps") == ("artist", "svn-secret")
+    assert vault.is_server_enabled("vps") is True
+
+    vault.set_server_enabled("vps", False)
+    assert vault.is_server_enabled("vps") is False
+
+    vault.save_server_credentials("vps", "artist", "svn-secret", enabled=True)
+    assert vault.is_server_enabled("vps") is True
+
+    assert vault.has_ssh_passphrase("vps") is False
+    vault.save_ssh_passphrase("vps", "key-secret")
+    assert vault.get_ssh_passphrase("vps") == "key-secret"
+
+    vault.export_server_env("vps")
     assert os.environ["OPENSTUDIO_SVN_USER"] == "artist"
-    assert vault.is_svn_enabled() is True
-
-    vault.set_svn_enabled(False)
-    assert vault.is_svn_enabled() is False
-
-    vault.save_svn_credentials("artist", "svn-secret", enabled=True)
-    assert vault.is_svn_enabled() is True
+    assert os.environ["OPENSTUDIO_SVN_PASSWORD"] == "svn-secret"
 
     vault.clear()
     assert vault.get_kitsu_credentials() == (None, None)
-    assert vault.get_svn_credentials() == (None, None)
-    assert vault.has_svn_credentials() is False
-    assert vault.is_svn_enabled() is False
+    assert vault.get_server_credentials("vps") == (None, None)
+    assert vault.has_server_credentials("vps") is False
+    assert vault.is_server_enabled("vps") is False
     assert "OPENSTUDIO_KITSU_USER" not in os.environ
     assert "OPENSTUDIO_SVN_PASSWORD" not in os.environ

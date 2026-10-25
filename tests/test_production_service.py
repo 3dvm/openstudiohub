@@ -14,7 +14,12 @@ class FakeKitsu:
         return [
             {"id": "t1", "entity_type_name": "Shot", "task_status_name": "Todo"},
             {"id": "t2", "entity_type_name": "Asset", "entity_id": "a1", "task_status_name": "Todo"},
+        ]
+
+    def all_done_tasks_for_person(self, user):
+        return [
             {"id": "t3", "entity_type_name": "Shot", "task_status_name": "Done"},
+            {"id": "t4", "entity_type_name": "Shot", "task_status_id": "s2"},
         ]
 
     def get_asset(self, asset_id):
@@ -23,23 +28,81 @@ class FakeKitsu:
     def get_asset_type(self, asset_type_id):
         return {"id": "at1", "name": "Character"}
 
+    def all_task_statuses(self):
+        return [
+            {"id": "s1", "name": "Todo", "color": "#f5f5f5", "short_name": "todo"},
+            {"id": "s2", "name": "Done", "color": "#22c55e", "short_name": "done"},
+        ]
+
+    def get_project(self, project_id):
+        return {"id": project_id, "name": "Neon"}
+
+    def all_task_statuses_for_project(self, project):
+        return [{"id": "s1", "name": "Todo"}]
+
 
 def test_list_open_projects():
     svc = ProductionService(FakeKitsu())
     assert svc.list_open_projects()[0]["name"] == "Neon"
 
 
-def test_get_artist_task_board_filters_and_enriches():
+def test_get_artist_task_board_includes_done_and_enriches():
     svc = ProductionService(FakeKitsu())
     tasks = svc.get_artist_task_board()
 
-    # "Done" task is filtered out.
-    assert len(tasks) == 2
-    assert {t["id"] for t in tasks} == {"t1", "t2"}
+    # Open + finished tasks are returned.
+    assert {t["id"] for t in tasks} == {"t1", "t2", "t3", "t4"}
 
     asset_task = next(t for t in tasks if t["id"] == "t2")
     assert asset_task["asset_type_id"] == "at1"
     assert asset_task["asset_type_name"] == "Character"
+
+
+def test_get_artist_task_board_backfills_status_from_id():
+    svc = ProductionService(FakeKitsu())
+    tasks = svc.get_artist_task_board()
+
+    done_task = next(t for t in tasks if t["id"] == "t4")
+    assert done_task["task_status_name"] == "Done"
+    assert done_task["task_status_color"] == "#22c55e"
+    assert done_task["task_status_short_name"] == "done"
+
+
+def test_get_artist_task_board_survives_done_fetch_failure():
+    class BrokenDoneKitsu(FakeKitsu):
+        def all_done_tasks_for_person(self, user):
+            raise RuntimeError("boom")
+
+    svc = ProductionService(BrokenDoneKitsu())
+    tasks = svc.get_artist_task_board()
+
+    assert {t["id"] for t in tasks} == {"t1", "t2"}
+
+
+def test_get_project_task_statuses_uses_project_when_selected():
+    svc = ProductionService(FakeKitsu())
+
+    statuses = svc.get_project_task_statuses("p1")
+
+    assert statuses == [{"id": "s1", "name": "Todo"}]
+
+
+def test_get_project_task_statuses_uses_global_for_all():
+    svc = ProductionService(FakeKitsu())
+
+    statuses = svc.get_project_task_statuses("ALL")
+
+    assert [s["name"] for s in statuses] == ["Todo", "Done"]
+
+
+def test_get_project_task_statuses_returns_empty_on_error():
+    class BrokenKitsu(FakeKitsu):
+        def all_task_statuses(self):
+            raise RuntimeError("boom")
+
+    svc = ProductionService(BrokenKitsu())
+
+    assert svc.get_project_task_statuses("ALL") == []
 
 
 def test_audit_assets_renames_dirty_names(tmp_path):
@@ -53,6 +116,12 @@ def test_audit_assets_renames_dirty_names(tmp_path):
         def all_asset_types(self):
             return [{"id": "at1", "name": "Character"}]
 
+        def all_task_types(self):
+            return [{"id": "tt1", "name": "Modeling"}]
+
+        def all_tasks_for_asset(self, asset):
+            return []
+
         def update_asset(self, asset):
             self.updated = asset
             return asset
@@ -63,3 +132,39 @@ def test_audit_assets_renames_dirty_names(tmp_path):
     assert result[0]["name"] == "my_asset"
     assert result[0]["type"] == "Character"
     assert kitsu.updated["name"] == "my_asset"
+
+
+def test_audit_assets_maps_per_task_files(tmp_path):
+    class FakeKitsuAssets:
+        def all_assets_for_project(self, project_id):
+            return [{"id": "a1", "name": "Monkey", "entity_type_id": "at1"}]
+
+        def all_asset_types(self):
+            return [{"id": "at1", "name": "Character"}]
+
+        def all_task_types(self):
+            return [{"id": "tt1", "name": "Modeling"}, {"id": "tt2", "name": "Rigging"}]
+
+        def all_tasks_for_asset(self, asset):
+            return [
+                {"id": "t1", "task_type_id": "tt1", "data": {"filepath": "pro/assets/char/monkey/monkey-model.blend"}},
+                {"id": "t2", "task_type_id": "tt2", "data": {}},
+            ]
+
+        def update_asset(self, asset):
+            return asset
+
+    physical = tmp_path / "svn" / "pro/assets/char/monkey/monkey-model.blend"
+    physical.parent.mkdir(parents=True)
+    physical.write_bytes(b"x")
+
+    result = ProductionService(FakeKitsuAssets()).audit_assets("p1", tmp_path, "svn")
+    asset = result[0]
+    assert asset["has_file"] is False  # one task still missing its file
+    assert asset["asset_type_id"] == "at1"
+    assert asset["asset_type_name"] == "Character"
+    assert asset["tasks"]["Modeling"]["has_file"] is True
+    assert asset["tasks"]["Rigging"]["has_file"] is False
+    assert asset["tasks"]["Modeling"]["filepath"].endswith("monkey-model.blend")
+    assert asset["tasks"]["Modeling"]["linked"] is True
+    assert asset["tasks"]["Rigging"]["linked"] is False

@@ -16,17 +16,25 @@ Garantiza que cualquier motor (SVN, Git) exponga los mismos métodos al Hub.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
+
+from src.domain.workspace.vcs_server_profile import VCSServerProfile
 
 class AbstractVCS(ABC):
     """
     Interfaz base para todos los adaptadores de Control de Versiones.
     Garantiza que cualquier motor (SVN, Git) exponga los mismos métodos al Hub.
     """
-    def __init__(self, repo_url: str, workspace_dir: Path):
+    def __init__(self, repo_url: str, workspace_dir: Path, server_profile: Optional[VCSServerProfile] = None):
         self.repo_url = repo_url
         self.workspace_dir = workspace_dir
+        self.server_profile = server_profile or VCSServerProfile()
+
+    @abstractmethod
+    def check_cli(self) -> Tuple[bool, str]:
+        """Verifica que las herramientas de línea de comandos requeridas estén instaladas."""
+        pass
 
     @abstractmethod
     def full_pull(self, username: Optional[str] = None, password: Optional[str] = None) -> bool:
@@ -49,8 +57,19 @@ class AbstractVCS(ABC):
         pass
 
     @abstractmethod
-    def unlock(self, path: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        """Libera un archivo bloqueado en el servidor."""
+    def unlock(
+        self,
+        path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        force: bool = False,
+    ) -> bool:
+        """Release a file lock, optionally forcing a stale/foreign lock."""
+        pass
+
+    @abstractmethod
+    def resolve(self, path: str, accept: str = "working") -> bool:
+        """Resolve a conflicted path with the requested acceptance strategy."""
         pass
 
     @abstractmethod
@@ -59,8 +78,57 @@ class AbstractVCS(ABC):
         pass
 
     @abstractmethod
-    def get_status(self) -> Dict[str, str]:
-        """Devuelve el estado de los archivos locales (modificados, añadidos, etc)."""
+    def relocate(self, new_url: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+        """Repunta el working copy local a una nueva URL de repositorio."""
+        pass
+
+    @abstractmethod
+    def get_lock_info(self, path: str) -> Optional[Dict[str, str]]:
+        """Devuelve ``{'owner': ..., 'token': ..., 'comment': ...}`` si el archivo está bloqueado."""
+        pass
+
+    @abstractmethod
+    def get_status(self, path: Optional[str] = None) -> Dict[str, str]:
+        """Devuelve el estado de los archivos locales (modificados, añadidos, etc).
+
+        Cuando se entrega ``path`` el sondeo se restringe a esa ruta (relativa al
+        workspace); si es ``None`` se sondea todo el workspace. El diccionario
+        resultante mapea la ruta relativa al código de estado del motor VCS.
+        """
+        pass
+
+    @abstractmethod
+    def get_log(
+        self,
+        path: Optional[str] = None,
+        limit: int = 20,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[dict]:
+        """Return the most recent revisions that changed ``path``."""
+        pass
+
+    @abstractmethod
+    def get_diff(
+        self,
+        path: str,
+        revision: Optional[int] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> str:
+        """Return a textual diff for ``path`` (working copy or one revision)."""
+        pass
+
+    @abstractmethod
+    def export_revision(
+        self,
+        path: str,
+        revision: int,
+        destination: Path,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> bool:
+        """Export ``path`` at ``revision`` to ``destination`` without touching the WC."""
         pass
 
     @abstractmethod
@@ -96,10 +164,54 @@ class AbstractVCS(ABC):
         pass
 
     @abstractmethod
+    def add(self, paths: List[str]) -> bool:
+        """
+        Registra explícitamente una selección de archivos nuevos (unversioned)
+        para prepararlos para el commit.
+        """
+        pass
+
+    @abstractmethod
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
         """
         Crea el repositorio remoto en el servidor para el nuevo proyecto 
         e inicializa la topología base si es necesario.
+        """
+        pass
+
+    @abstractmethod
+    def destroy_server_repository(self, project_name: str, vfs_svn: str) -> Tuple[bool, str]:
+        """
+        Elimina el repositorio del servidor cuando sea posible (rollback).
+        Devuelve ``(ok, mensaje)``; para servidores remotos puede no estar soportado.
+        """
+        pass
+
+    @abstractmethod
+    def ensure_server_policy(self, project_name: str) -> Tuple[bool, str]:
+        """Install or refresh server-side repository policy (hooks, auto-props)."""
+        pass
+
+    @abstractmethod
+    def list_server_locks(self, project_name: str) -> Tuple[bool, list, str]:
+        """List repository locks for a project."""
+        pass
+
+    @abstractmethod
+    def break_server_lock(self, project_name: str, path: str) -> Tuple[bool, str]:
+        """Remove a repository lock as an administrator."""
+        pass
+
+    @abstractmethod
+    def check_server_health(
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        timeout: float = 5.0,
+    ) -> Tuple[bool, str]:
+        """
+        Verifica que el servidor VCS esté accesible antes de iniciar operaciones.
+        Devuelve ``(ok, mensaje)`` con un mensaje legible para la UI.
         """
         pass
 

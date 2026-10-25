@@ -19,14 +19,17 @@ import zipfile
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.application.sparse_manager import SparseManager
+from src.infrastructure.sandbox.blender_locator import BlenderLocator
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
 
 class InstallationService:
-    def __init__(self, config_factory, vault_root: Path) -> None:
+    def __init__(self, config_factory, vault_root: Path, credential_vault=None) -> None:
         self.config_factory = config_factory
         self._vault_root = vault_root
+        self.credential_vault = credential_vault
 
     @property
     def vault_root(self) -> Path:
@@ -60,13 +63,29 @@ class InstallationService:
         return "macos", "dmg"
 
     def verify_installation(self, project_root: Path) -> bool:
-        """Return True when the local sandbox and VCS checkout already exist."""
+        """Return True when the local sandbox, VCS checkout and Blender exist.
+
+        A project is only considered installed when the local configuration was
+        written (the last step of :meth:`instalar_entorno`), the VCS checkout is
+        present, and the isolated Blender binary can be resolved. The previous
+        check only tested ``project_config.json`` + ``svn`` so projects with a
+        half-provisioned ``local`` folder (e.g. missing ``blender-build``) were
+        treated as installed and the spawner failed later with a hidden error.
+        """
         vfs_local = self.config_factory.get_vfs_local_name()
         vfs_svn = self.config_factory.get_vfs_svn_name()
 
+        project_root = Path(project_root)
         config_local = project_root / vfs_local / "project_config.json"
         vcs_dir = project_root / vfs_svn
-        return config_local.exists() and vcs_dir.exists()
+        if not (config_local.exists() and vcs_dir.exists()):
+            return False
+
+        try:
+            BlenderLocator.resolve(project_root / vfs_local / "blender-build")
+        except FileNotFoundError:
+            return False
+        return True
 
     def instalar_entorno(
         self,
@@ -76,7 +95,9 @@ class InstallationService:
         status_callback,
         user_role: str = "artist",
         task_metadata: Optional[Dict[str, str]] = None,
+        progress_callback=None,
     ) -> Tuple[bool, str]:
+        progress = progress_callback or (lambda _percent: None)
         vfs_svn = self.config_factory.get_vfs_svn_name()
         vfs_local = self.config_factory.get_vfs_local_name()
         vfs_pipe = self.config_factory.get_vfs_pipeline_name()
@@ -97,23 +118,60 @@ class InstallationService:
             blender_version = init_data.get("blender_version", "4.2.0")
             dependencies = init_data.get("dependencies", {})
             template_name = init_data.get("template", "")
+            addon_configuration = init_data.get("addon_configuration", {})
 
-            checkout_ok = self._gestionar_vcs(project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata)
+            server = self._resolve_server(project_root)
+            if server is not None:
+                vcs_type = server.adapter
+                profile = server.profile
+                vcs_base_url = init_data.get("vcs_base_url") or server.repository_url
+                sparse_enabled = server.enable_vendor_sparse_checkout
+            else:
+                vcs_type = self.config_factory.get_vcs_adapter_type()
+                vcs_base_url = init_data.get("vcs_base_url") or self.config_factory.get_vcs_repository_url()
+                profile = getattr(self.config_factory, "get_vcs_server_profile", lambda: None)()
+                sparse_enabled = getattr(self.config_factory, "is_vendor_sparse_enabled", lambda: True)()
+
+            progress(5)
+            checkout_ok = self._gestionar_vcs(
+                project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata,
+                base_repo_url=vcs_base_url, vcs_type=vcs_type, profile=profile, sparse_enabled=sparse_enabled,
+                server=server,
+            )
             if not checkout_ok:
                 return False, "VCS Synchronization aborted."
+            progress(55)
 
+            progress(58)
             self._instalar_blender(project_root, vfs_local, blender_version, status_callback)
+            progress(78)
 
             if template_name:
+                progress(80)
                 self._instalar_template(project_root, vfs_local, template_name, blender_version, status_callback)
+                progress(84)
 
             status_callback("Deploying project extensions...", "yellow")
+            progress(86)
             self._sincronizar_addons(project_root, vfs_local, dependencies, status_callback)
+            progress(92)
+
+            status_callback("Generating add-on startup configuration...", "yellow")
+            progress(93)
+            AddonConfigGenerator(self.config_factory).generate(
+                project_root,
+                addon_configuration,
+                self.config_factory.get_topography(),
+                status_callback=status_callback,
+            )
+            progress(95)
 
             status_callback("Configuring production VFS symlinks...", "yellow")
+            progress(96)
             self._crear_symlinks(project_path=project_root, vfs_svn=vfs_svn, vfs_shared=vfs_shared)
 
             status_callback("Generating local workspace configuration...", "yellow")
+            progress(98)
             config_local_dir = project_root / vfs_local
             config_local_dir.mkdir(exist_ok=True)
 
@@ -136,20 +194,47 @@ class InstallationService:
             with open(config_local_file, "w", encoding="utf-8") as handle:
                 json.dump(local_config_data, handle, indent=4)
 
+            progress(100)
             return True, "Local workspace installed and verified successfully."
 
         except Exception as error:  # noqa: BLE001
             return False, f"Critical error during local installation: {str(error)}"
 
-    def _gestionar_vcs(self, project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata) -> bool:
-        vcs_root = project_root / vfs_svn
-        vcs_type = self.config_factory.get_vcs_adapter_type()
+    def _resolve_server(self, project_root):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(project_root)
+        except Exception:  # noqa: BLE001
+            return None
 
-        base_repo_url = self.config_factory.get_vcs_repository_url()
+    def _gestionar_vcs(self, project_root, vfs_svn, vcs_user, vcs_pwd, status_callback, user_role, task_metadata, base_repo_url=None, vcs_type=None, profile=None, sparse_enabled=None, server=None) -> bool:
+        vcs_root = project_root / vfs_svn
+        if vcs_type is None:
+            vcs_type = self.config_factory.get_vcs_adapter_type()
+
+        if not base_repo_url:
+            base_repo_url = self.config_factory.get_vcs_repository_url()
         final_repo_url = f"{base_repo_url}/{project_root.name}/{vfs_svn}"
 
-        router = VCSRouter(vcs_type=vcs_type, repo_url=final_repo_url, workspace_dir=vcs_root)
-        is_sparse_enabled = getattr(self.config_factory, "is_vendor_sparse_enabled", lambda: True)()
+        if profile is None:
+            profile = getattr(self.config_factory, "get_vcs_server_profile", lambda: None)()
+        provider = None
+        if self.credential_vault is not None:
+            server_id = server.id if server is not None else ""
+            provider = lambda: self.credential_vault.get_ssh_passphrase(server_id)
+
+        router = VCSRouter(
+            vcs_type=vcs_type,
+            repo_url=final_repo_url,
+            workspace_dir=vcs_root,
+            server_profile=profile,
+            ssh_passphrase_provider=provider,
+        )
+        is_sparse_enabled = sparse_enabled
+        if is_sparse_enabled is None:
+            is_sparse_enabled = getattr(self.config_factory, "is_vendor_sparse_enabled", lambda: True)()
 
         if user_role == "vendor" and is_sparse_enabled:
             status_callback("Initializing Sparse Checkout (Jailing Mode)...", "yellow")

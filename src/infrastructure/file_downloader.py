@@ -12,15 +12,17 @@
 
 """
 Motor de transferencia asíncrono para descargas masivas (Chunked Streaming).
-Desacoplado del hilo principal de la GUI (QThread). Escribe de forma atómica
+Desacoplado del hilo principal de la GUI (ManagedWorker). Escribe de forma atómica
 en el disco destino e implementa limpieza de residuos (Rollback) ante caídas de red.
 """
 
 import requests
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 
-class FileDownloaderWorker(QThread):
+from src.infrastructure.qt_worker import ManagedWorker
+
+class FileDownloaderWorker(ManagedWorker):
     """
     Worker Thread para descargas HTTP.
     Emite el progreso porcentual y garantiza la integridad estructural del archivo.

@@ -10,7 +10,6 @@ The OS detection + executable resolution was previously duplicated in
 ``env_launcher``, ``blender_spawners`` (x3) and ``project_card``.
 """
 
-import glob
 import platform
 from pathlib import Path
 from typing import Optional
@@ -45,21 +44,41 @@ class BlenderLocator:
         """Resolve the Blender executable under a ``blender-build`` directory.
 
         If ``version`` is given, resolve the exact extracted folder; otherwise
-        glob for the first matching executable (used by the headless spawners).
+        search for the executable inside an extracted ``blender-*`` archive
+        folder (used by the headless spawners).
+
+        The previous implementation globbed recursively for ``**/blender`` and
+        picked ``sorted(...)[0]``. That matched unrelated paths shipped with the
+        archive (e.g. ``5.2/scripts/addons_core/io_scene_gltf2/blender`` is a
+        directory that sorts before the real binary), so spawning always failed.
         """
         os_name = BlenderLocator.current_os()
         rel_exe = BlenderLocator.relative_executable(os_name)
+        build_dir = Path(build_dir)
 
         if version:
-            candidate = build_dir / BlenderLocator.archive_folder_name(version, os_name) / rel_exe
+            root = build_dir / BlenderLocator.archive_folder_name(version, os_name)
+            candidate = root / rel_exe
             if not candidate.exists() and os_name == "macos":
-                candidate = build_dir / BlenderLocator.archive_folder_name(version, os_name) / "Blender"
+                candidate = root / "Blender"
             if not candidate.exists():
                 raise FileNotFoundError(f"Blender {version} not found in {build_dir}")
             return candidate
 
-        pattern = f"**/{rel_exe}"
-        candidates = glob.glob(str(build_dir / pattern), recursive=True)
+        # Preferred layout: <build_dir>/blender-<version>-<os>-x64/<exe>.
+        candidates = [path for path in build_dir.glob(f"blender-*/{rel_exe}") if path.is_file()]
+        if not candidates:
+            # Fallback for non-standard layouts: match the executable suffix.
+            suffix_parts = Path(rel_exe).parts
+            for path in build_dir.rglob(suffix_parts[-1]):
+                if not path.is_file():
+                    continue
+                if tuple(path.parts[-len(suffix_parts):]) == suffix_parts:
+                    candidates.append(path)
+
         if not candidates:
             raise FileNotFoundError(f"Blender executable not found in {build_dir}")
-        return Path(sorted(candidates)[0])
+
+        # Shallowest match wins (archive root over nested copies).
+        candidates.sort(key=lambda path: (len(path.parts), str(path)))
+        return candidates[0]

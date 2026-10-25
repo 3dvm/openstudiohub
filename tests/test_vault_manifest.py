@@ -1,8 +1,9 @@
 """Unit tests for the unified vault manifest (schema consolidation)."""
 
+import json
 import zipfile
 
-from src.domain.vault.manifest import VaultManifest
+from src.domain.vault.manifest import VaultManifest, needs_migration
 from src.infrastructure.manifest_manager import ManifestManager
 from src.infrastructure.vault_manifest_repository import FileVaultManifestRepository
 
@@ -26,6 +27,65 @@ def test_vault_manifest_from_legacy_shape():
     manifest = VaultManifest.from_dict(legacy)
     assert manifest.registered_versions() == ["5.1.2"]
     assert manifest.to_dict()["5.1.2"]["categories"]["addons"]["a"]["version"] == "1.0"
+
+
+def test_vault_manifest_from_blender_versions_list_shape():
+    # Pre-unification NAS shape: a "blender_versions" wrapper with list add-ons.
+    legacy = {
+        "blender_versions": {
+            "5.2.0": {
+                "addons": [
+                    {"name": "Blender Kitsu", "version": "1.0.0", "path": "addons/blender_kitsu_v1.0.0.zip"},
+                    {"name": "Blender Log", "version": "1.0.0", "path": "addons/blender_log_v1.0.0.zip"},
+                ],
+                "templates": [],
+            },
+            "5.1.2": {"addons": [], "templates": []},
+        }
+    }
+    manifest = VaultManifest.from_dict(legacy)
+
+    assert manifest.registered_versions() == ["5.2.0", "5.1.2"]
+    assert manifest.get_addons("5.2.0")["Blender Kitsu"]["version"] == "1.0.0"
+    assert manifest.get_addons("5.2.0")["Blender Kitsu"]["path"] == "addons/blender_kitsu_v1.0.0.zip"
+    assert manifest.get_templates("5.2.0") == {}
+    assert manifest.get_addons("5.1.2") == {}
+
+
+def test_normalize_category_skips_unnamed_and_malformed_entries():
+    legacy = {
+        "blender_versions": {
+            "5.2.0": {"addons": ["not-a-dict", {"version": "1.0"}], "templates": []}
+        }
+    }
+    manifest = VaultManifest.from_dict(legacy)
+    # The string entry is dropped; the dict without a name falls back to an index.
+    assert manifest.get_addons("5.2.0") == {"item_1": {"version": "1.0"}}
+
+
+def test_needs_migration_detection():
+    assert needs_migration({"blender_versions": {"5.2.0": {"addons": []}}}) is True
+    assert needs_migration({"5.2.0": {"addons": [], "templates": []}}) is True
+    assert needs_migration({"5.2.0": {"addons": {"a": {"version": "1.0"}}, "templates": {}}}) is False
+    assert needs_migration({"5.2.0": {"categories": {"addons": {"a": {"version": "1.0"}}}}}) is False
+
+
+def test_repository_self_heals_legacy_manifest(tmp_path):
+    legacy_path = tmp_path / "vault_manifest.json"
+    legacy_path.write_text(
+        json.dumps({"blender_versions": {"5.2.0": {"addons": [{"name": "Kitsu", "version": "1.0.0"}], "templates": []}}}),
+        encoding="utf-8",
+    )
+
+    loaded = FileVaultManifestRepository(tmp_path).load()
+    assert loaded.registered_versions() == ["5.2.0"]
+    assert loaded.get_addons("5.2.0")["Kitsu"]["version"] == "1.0.0"
+
+    # The legacy file was rewritten canonical on load.
+    rewritten = json.loads(legacy_path.read_text(encoding="utf-8"))
+    assert "blender_versions" not in rewritten
+    assert rewritten["5.2.0"]["categories"]["addons"]["Kitsu"]["version"] == "1.0.0"
+
 
 
 def test_vault_manifest_add_addon():

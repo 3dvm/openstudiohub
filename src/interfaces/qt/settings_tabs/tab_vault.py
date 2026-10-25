@@ -32,8 +32,8 @@ class TabVault(QWidget):
 
     def _build_ui(self) -> None:
         layout = QFormLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         proj_layout = QHBoxLayout()
@@ -63,7 +63,7 @@ class TabVault(QWidget):
         layout.addRow(self._styled_label(self.tr("Vault Directory:")), path_layout)
 
         lbl_desc = QLabel(self.tr("Physical storage paths on the NAS.\nThe Projects Directory holds live production assets, while the Vault contains immutable software components and engine templates."))
-        lbl_desc.setStyleSheet("color: #64748B; font-size: 12px;")
+        lbl_desc.setObjectName("HintLabel")
         layout.addRow("", lbl_desc)
 
     def _create_input(self, placeholder: str = "") -> QLineEdit:
@@ -75,7 +75,7 @@ class TabVault(QWidget):
 
     def _styled_label(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 13px;")
+        label.setObjectName("InputLabel")
         return label
 
     def _connect_signals(self) -> None:

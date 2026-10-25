@@ -51,3 +51,40 @@ When you click "Batch Create", the Hub:
 2. Scaffolds the nested directories.
 3. Copies the base `.blend` template to prevent Sparse Checkout deadlocks for Vendors.
 4. Updates the Kitsu task metadata with the relative path to the newly created `.blend` file, allowing artists to launch the files directly from their Hub dashboards.
+
+## 4. Task Board, Comments & Assignments
+
+The **Tasks** board gives PMs and TDs a project-scoped view of every Kitsu task, with the same comment threads the artists see.
+
+### Opening the task board
+You can reach it in two ways:
+
+* **Sidebar → Tasks**: choose a project in the board's selector.
+* **Project card → View Tasks**: opens the board already scoped to that project.
+
+The header includes a project selector, a search box (entity or task type), a status filter, a refresh button and a table/cards view toggle. The selected view is remembered per user in `~/.openstudio/state/ui_prefs.json`.
+
+### Table or cards
+* **Table/List view** — one row per task with a 56 px thumbnail, entity, task type, status, responsibles and comment count. Best for scanning and assigning many tasks.
+* **Cards view** — a visual grid with a medium thumbnail, status badge, responsible list and comment badge.
+
+The **Entity** column/card title uses the real shot, asset, sequence, edit or episode name resolved from the project, while the **Type** column shows the task type (Modeling, Animation, ...). It never displays the raw Kitsu UUID; if a name cannot be resolved, it shows `—`.
+
+### Comments and checklists
+The comment badge (`💬 N`) shows the **total** number of comments and turns orange when there is activity you have not seen. Click it to open the right-side comments drawer for that task, read the thread and reply. Posting a comment keeps the task's current status; this version does not include a status selector in the composer.
+
+Comments with a checklist render a `Checklist x/y` header and one checkbox per item. PMs, TDs with access and the assigned artist can tick items; the change is written to Kitsu and does **not** change the task status. The drawer keeps each checklist attached to its own comment, and its width can be dragged with the splitter handle.
+
+Unread state is tracked locally per Kitsu user and machine (`~/.openstudio/state/task_comments_seen.json`), because Kitsu does not expose a per-user read flag. Press **⟳ Refresh** to pull new comments and update the badges.
+
+### Assigning responsibles (PM only)
+In **Table/List** view, the **Responsibles** column is an editable button for PMs; in **Cards** view use the **Edit** button next to the responsible list.
+
+1. Click the button to open the searchable people picker.
+2. Check one or more people (Kitsu supports multiple responsibles per task).
+3. Press **Apply**. The Hub assigns the new people and removes the unchecked ones in Kitsu.
+
+Only users with the **manager (PM)** role can edit responsibles. TDs can open the same task board and see the responsible list, but the field is read-only. Artists see their own assignments and cannot reassign tasks.
+
+### Opening tasks in Kitsu
+The **Kitsu** column in the table and the **Kitsu** button on task cards open the task inside the Hub, using the current session. The link is built from the task's entity type (`sequences`, `shots`, `assets`, `edits`), so a sequence task opens its sequence task page. The embedded browser keeps the Hub sidebar/top bar visible; **Return to Hub** closes it. Kitsu and Watchtower navigation stays embedded, while links to other domains open in the system browser.

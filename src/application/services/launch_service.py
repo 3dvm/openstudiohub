@@ -14,16 +14,18 @@ Extracted from the module-level ``lanzar_blender`` function; the raw
 ``os.environ`` string writes are replaced by ``SandboxEnvironment.to_os_environ()``.
 """
 
-import glob
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.domain.path_resolver import PathResolver
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
+from src.domain.workspace.blueprint import ProjectBlueprint
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
 StatusCallback = Callable[[str, str], None]
@@ -119,6 +121,8 @@ class LaunchService:
         for key, value in sandbox_env.to_os_environ().items():
             env[key] = str(value)
 
+        self._refresh_addon_config(project_root)
+
         bootstrap_dst = self._deploy_bootstrap(project_root, vfs_local)
 
         status_callback(f"Arrancando {project_name} (Contexto: {task_type.upper()})...", "green")
@@ -137,22 +141,89 @@ class LaunchService:
         if target_file:
             return target_file
 
+        # Prefer the explicit per-task link stored in Kitsu custom data.
+        linked_path = (task_data.get("data") or {}).get("filepath")
+        if linked_path:
+            return project_root / production_folder / linked_path
+
         resolver = PathResolver()
         resolved_rel_path = resolver.resolve(task_data)
         if not resolved_rel_path:
             return None
 
-        base_target_str = str(project_root / production_folder / resolved_rel_path).replace(".blend", "")
-        versioned_files = glob.glob(f"{base_target_str}-v*.blend")
-        if versioned_files:
-            return Path(sorted(versioned_files)[-1])
-        return Path(f"{base_target_str}.blend")
+        base_target = (project_root / production_folder / resolved_rel_path).with_suffix("")
+
+        # The DCC add-on writes versioned masters preserving the project name's
+        # case (e.g. ``MIDEQ_promo-edit-v001.blend``), while the resolved task
+        # name may be lower-cased. Match case-insensitively and pick the newest
+        # version, otherwise fall back to the un-versioned master.
+        versioned = LaunchService._find_latest_versioned(base_target)
+        if versioned is not None:
+            return versioned
+
+        unversioned = LaunchService._find_case_insensitive(base_target.with_suffix(".blend"))
+        return unversioned if unversioned is not None else base_target.with_suffix(".blend")
+
+    @staticmethod
+    def _find_latest_versioned(base_target: Path) -> Optional[Path]:
+        """Return the newest ``<base>-vNNN.blend`` (case-insensitive), if any."""
+        directory = base_target.parent
+        if not directory.exists():
+            return None
+
+        pattern = re.compile(rf"^{re.escape(base_target.name)}-v(\d+)\.blend$", re.IGNORECASE)
+        matches = []
+        for entry in directory.iterdir():
+            match = pattern.match(entry.name)
+            if match:
+                matches.append((int(match.group(1)), entry))
+
+        if not matches:
+            return None
+        return max(matches, key=lambda item: item[0])[1]
+
+    @staticmethod
+    def _find_case_insensitive(path: Path) -> Optional[Path]:
+        """Return an existing file whose name matches ``path`` ignoring case."""
+        directory = path.parent
+        if not directory.exists():
+            return None
+
+        target = path.name.lower()
+        for entry in directory.iterdir():
+            if entry.name.lower() == target:
+                return entry
+        return None
+
+    def _refresh_addon_config(self, project_root: Path) -> None:
+        """Regenerate the ``cfg_<addon>.py`` scripts from the project blueprint.
+
+        This keeps already-installed workspaces (and older blueprints) in sync
+        without requiring a full reinstall, and guarantees the DCC-side support
+        modules are present before Blender boots.
+        """
+        try:
+            vfs_pipeline = self.config_factory.get_vfs_pipeline_name()
+            init_path = project_root / vfs_pipeline / "project_init.json"
+            if not init_path.exists():
+                return
+            with open(init_path, "r", encoding="utf-8") as handle:
+                blueprint = ProjectBlueprint.from_dict(json.load(handle))
+            AddonConfigGenerator(self.config_factory).generate(
+                project_root,
+                blueprint.addon_configuration,
+                blueprint.topography,
+            )
+        except Exception as error:  # noqa: BLE001
+            print(f"[LaunchService] Add-on config refresh skipped: {error}")
 
     @staticmethod
     def _deploy_bootstrap(project_root: Path, vfs_local: str) -> Path:
         src_root = Path(__file__).resolve().parent.parent.parent  # -> src/
-        bootstrap_src = src_root / "infrastructure" / "templates" / "bootstrap.py"
+        templates_dir = src_root / "infrastructure" / "templates"
+        bootstrap_src = templates_dir / "bootstrap.py"
         env_contract_src = src_root / "domain" / "shared_kernel" / "env_contract.py"
+        addon_runtime_src = templates_dir / "addon_runtime.py"
 
         bootstrap_dst = project_root / vfs_local / "bootstrap.py"
         bootstrap_dst.parent.mkdir(parents=True, exist_ok=True)
@@ -161,8 +232,11 @@ class LaunchService:
             raise FileNotFoundError("No se encontro src/infrastructure/templates/bootstrap.py")
 
         shutil.copy2(bootstrap_src, bootstrap_dst)
-        # Ship the shared env contract next to bootstrap.py so the DCC-side
-        # script can import it from its own directory (Blender has no `src`).
+        # Ship the shared env contract + add-on runtime next to bootstrap.py so
+        # the DCC-side scripts can import them from their own directory
+        # (Blender has no `src`).
         if env_contract_src.exists():
             shutil.copy2(env_contract_src, bootstrap_dst.parent / "env_contract.py")
+        if addon_runtime_src.exists():
+            shutil.copy2(addon_runtime_src, bootstrap_dst.parent / "addon_runtime.py")
         return bootstrap_dst

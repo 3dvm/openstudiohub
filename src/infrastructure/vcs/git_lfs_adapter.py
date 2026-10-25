@@ -16,7 +16,7 @@ Concrete adapter for Git LFS operations.
 Anchored to English standard.
 """
 
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from pathlib import Path
 from .abstract_vcs import AbstractVCS
 
@@ -39,13 +39,59 @@ class GitLFSAdapter(AbstractVCS):
     def lock(self, path: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
-    def unlock(self, path: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+    def unlock(
+        self,
+        path: str,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        force: bool = False,
+    ) -> bool:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def resolve(self, path: str, accept: str = "working") -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
     def revert(self, path: str) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
-    def get_status(self) -> Dict[str, str]:
+    def relocate(self, new_url: str, username: Optional[str] = None, password: Optional[str] = None) -> bool:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def get_lock_info(self, path: str) -> Optional[Dict[str, str]]:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def check_cli(self) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."
+
+    def get_status(self, path: Optional[str] = None) -> Dict[str, str]:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def get_log(
+        self,
+        path: Optional[str] = None,
+        limit: int = 20,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> List[dict]:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def get_diff(
+        self,
+        path: str,
+        revision: Optional[int] = None,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> str:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
+    def export_revision(
+        self,
+        path: str,
+        revision: int,
+        destination: Path,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+    ) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
     def set_needs_lock(self, path: str) -> bool:
@@ -60,5 +106,28 @@ class GitLFSAdapter(AbstractVCS):
     def add_all(self, path: str = ".") -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
+    def add(self, paths: List[str]) -> bool:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
+
+    def destroy_server_repository(self, project_name: str, vfs_svn: str) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."
+
+    def ensure_server_policy(self, project_name: str) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."
+
+    def list_server_locks(self, project_name: str) -> Tuple[bool, list, str]:
+        return False, [], "Git LFS support is currently under development."
+
+    def break_server_lock(self, project_name: str, path: str) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."
+
+    def check_server_health(
+        self,
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        timeout: float = 5.0,
+    ) -> Tuple[bool, str]:
+        return False, "Git LFS support is currently under development."

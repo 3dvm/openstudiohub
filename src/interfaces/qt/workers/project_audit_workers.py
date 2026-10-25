@@ -6,10 +6,12 @@
 
 """Project audit workers (filesystem + Kitsu health checks off the UI thread)."""
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 
-class ProjectAuditWorker(QThread):
+class ProjectAuditWorker(ManagedWorker):
     """Audits every project on the grid without freezing the UI.
 
     Emits ``project_audited`` as soon as each ``HubProject`` is resolved so the

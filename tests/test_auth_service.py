@@ -48,6 +48,9 @@ class FakeKitsu:
     def get_access_token(self):
         return self.tokens.get("access_token", "")
 
+    def get_refresh_token(self):
+        return self.tokens.get("refresh_token", "")
+
 
 class InMemorySessionRepository(SessionRepository):
     def __init__(self):
@@ -87,6 +90,20 @@ def test_login_success():
     assert isinstance(events[0], UserAuthenticated)
 
 
+def test_refresh_token_from_session_and_gazu():
+    svc, kitsu, repo, _events = make_service()
+    repo.save(
+        Session(
+            host="http://h/api",
+            tokens={"access_token": "saved", "refresh_token": "refresh-saved"},
+        )
+    )
+    assert svc.refresh_token() == "refresh-saved"
+
+    kitsu.set_tokens({"access_token": "live", "refresh_token": "refresh-live"})
+    assert svc.refresh_token() == "refresh-live"
+
+
 def test_login_invalid_credentials():
     svc, kitsu, repo, events = make_service()
     ok, msg = svc.login("ada@studio.com", "bad", "http://localhost:8080")
@@ -115,3 +132,21 @@ def test_restore_without_session():
     svc, kitsu, repo, events = make_service()
     assert svc.restore_session() is False
     assert svc.current_user is None
+
+
+def test_logout_is_resilient_when_server_unreachable():
+    svc, kitsu, repo, events = make_service()
+    repo.save(Session(host="http://h/api", tokens={"access_token": "saved"}))
+    assert svc.restore_session() is True
+
+    def boom():
+        raise ConnectionError("host unreachable")
+
+    kitsu.log_out = boom
+
+    svc.logout()
+
+    assert svc.current_user is None
+    assert svc.current_role() is Role.GUEST
+    assert repo.session is None
+    assert isinstance(events[0], UserLoggedOut)

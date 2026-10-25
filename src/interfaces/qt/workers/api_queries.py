@@ -12,10 +12,12 @@ only invoke a service method and re-emit the result as Qt signals.
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 
-class FetchProjectsWorker(QThread):
+class FetchProjectsWorker(ManagedWorker):
     data_ready = Signal(list)
     error_occurred = Signal(str)
 
@@ -30,7 +32,7 @@ class FetchProjectsWorker(QThread):
             self.error_occurred.emit(str(error))
 
 
-class FetchShotsWorker(QThread):
+class FetchShotsWorker(ManagedWorker):
     data_ready = Signal(list, list)
     error_occurred = Signal(str)
 
@@ -49,7 +51,7 @@ class FetchShotsWorker(QThread):
             self.error_occurred.emit(str(error))
 
 
-class FetchEntitiesWorker(QThread):
+class FetchEntitiesWorker(ManagedWorker):
     data_ready = Signal(list)
     error_occurred = Signal(str)
 
@@ -65,7 +67,7 @@ class FetchEntitiesWorker(QThread):
             self.error_occurred.emit(str(error))
 
 
-class FetchSequencesWorker(QThread):
+class FetchSequencesWorker(ManagedWorker):
     data_ready = Signal(list)
     error_occurred = Signal(str)
 
@@ -83,7 +85,7 @@ class FetchSequencesWorker(QThread):
             self.error_occurred.emit(str(error))
 
 
-class FetchAssetsWorker(QThread):
+class FetchAssetsWorker(ManagedWorker):
     data_ready = Signal(list)
     error_occurred = Signal(str)
 
@@ -101,7 +103,7 @@ class FetchAssetsWorker(QThread):
             self.error_occurred.emit(str(error))
 
 
-class FetchEditStatusWorker(QThread):
+class FetchEditStatusWorker(ManagedWorker):
     data_ready = Signal(dict)
     error_occurred = Signal(str)
 

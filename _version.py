@@ -1,17 +1,17 @@
-## =========================================================================================
+# =========================================================================================
 # OPENSTUDIOHUB
-# Módulo: _version.py
-# Rol Arquitectónico: Main App Root / Orquestador Inicial (PySide6)
+# Module: _version.py
+# Architectural role: Application version source of truth
 # =========================================================================================
-# Copyright (c) 2026 Ernesto Del Valle Macuare. Todos los derechos reservados.
-# Licencia: GNU General Public License v3.0 (GPLv3)
+# Copyright (c) 2026 Ernesto Del Valle Macuare. All rights reserved.
+# License: GNU General Public License v3.0 (GPLv3)
 #
-# Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.6.3
+# Author: Ernesto Del Valle Macuare
+# File version: 0.7.5
 # =========================================================================================
 
-# Tupla para comparaciones lógicas internas
-VERSION_INFO = (0, 7, 0)
+# Tuple used by internal comparisons.
+VERSION_INFO = (0, 7, 5)
 
-# String en formato Semantic Versioning (SemVer)
+# Semantic Versioning string (SemVer).
 __version__ = ".".join(map(str, VERSION_INFO))

@@ -10,21 +10,23 @@
 """
 Single source of truth for the process-environment "contract" between the Hub
 and the Blender-side scripts (``src/infrastructure/templates/bootstrap.py``,
-``src/infrastructure/templates/headless_builder.py``, and ``addons/openstudio_toolkit``).
+``src/infrastructure/templates/headless_builder.py``, the generated
+``cfg_<addon>.py`` scripts, and ``addons/openstudio_toolkit``).
 
 Historically the ~25 ``OPENSTUDIO_*`` / ``BLENDER_*`` variables were written by
 six different modules and read by three more, as raw ``os.environ`` strings with
 no validation — so producer/consumer drift was guaranteed. This module is the
 typed model they must all share.
 
-STATUS (Phase 0): this is the *specification only*. It is not yet wired into the
-producers/consumers; that happens in Phase 5 (LaunchService) and Phase 7
-(Blender-side alignment). Until then it must stay in sync with the existing
-string keys listed below.
+The ``KITSU_*`` block is kept here because it is *per-launch session context*
+(host/credentials/active entity) injected RAM-only and consumed by the add-on
+config scripts. It is not part of ``project_init.json``: static, per-project
+add-on settings live under ``addon_configuration`` (see
+``src/domain/shared_kernel/addon_contract.py``).
 
 Because Blender runs its own embedded Python and cannot import the Hub package
-tree, this single file is copied into the sandbox alongside ``bootstrap.py`` and
-``headless_builder.py`` (same mechanism already used to ship ``bootstrap.py``).
+tree, this file is copied into the sandbox alongside ``bootstrap.py`` and
+``addon_runtime.py`` (same mechanism already used to ship ``bootstrap.py``).
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ class EnvKey:
     EXTENSIONS_DIR = "OPENSTUDIO_EXTENSIONS_DIR"
     SPLASH_PATH = "OPENSTUDIO_SPLASH_PATH"
     TARGET_FILE = "OPENSTUDIO_TARGET_FILE"
+    TASK_FILE_PATH = "OPENSTUDIO_TASK_FILE_PATH"
     USER_ROLE = "OPENSTUDIO_USER_ROLE"
     TASK_TYPE = "OPENSTUDIO_TASK_TYPE"
 
@@ -87,6 +90,7 @@ _FIELD_TO_KEY: Dict[str, str] = {
     "extensions_dir": EnvKey.EXTENSIONS_DIR,
     "splash_path": EnvKey.SPLASH_PATH,
     "target_file": EnvKey.TARGET_FILE,
+    "task_file_path": EnvKey.TASK_FILE_PATH,
     "user_role": EnvKey.USER_ROLE,
     "task_type": EnvKey.TASK_TYPE,
     "kitsu_host": EnvKey.KITSU_HOST,
@@ -130,6 +134,7 @@ class SandboxEnvironment:
     extensions_dir: Optional[str] = None
     splash_path: Optional[str] = None
     target_file: Optional[str] = None
+    task_file_path: Optional[str] = None
     user_role: Optional[str] = None
     task_type: Optional[str] = None
 

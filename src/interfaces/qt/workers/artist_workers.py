@@ -8,13 +8,16 @@
 
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
+from src.application.services.task_file_sync_service import TaskFileSyncService
 
 
-class FetchArtistTasksWorker(QThread):
+class FetchArtistTasksWorker(ManagedWorker):
     """Asynchronously fetches the tasks assigned to the current user."""
 
     data_ready = Signal(list)
@@ -32,7 +35,49 @@ class FetchArtistTasksWorker(QThread):
             self.error_occurred.emit(str(error))
 
 
-class InstallProjectWorker(QThread):
+class FetchTaskStatusesWorker(ManagedWorker):
+    """Fetches the task statuses available to a Kitsu project off the UI thread."""
+
+    statuses_ready = Signal(str, list)  # (project_id, list[dict])
+    error_occurred = Signal(str)
+
+    def __init__(self, production_service: ProductionService, project_id: str) -> None:
+        super().__init__()
+        self.production_service = production_service
+        self.project_id = project_id
+
+    def run(self) -> None:
+        try:
+            statuses = self.production_service.get_project_task_statuses(self.project_id)
+            self.statuses_ready.emit(self.project_id, statuses)
+        except Exception as error:  # noqa: BLE001
+            self.error_occurred.emit(str(error))
+
+
+class FetchTaskLockStatesWorker(ManagedWorker):
+    """Reads the VCS lock owner for each task's linked file off the UI thread."""
+
+    locks_ready = Signal(dict)  # {task_id: owner}
+
+    def __init__(self, sync_service: TaskFileSyncService, targets: list) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.targets = targets
+
+    def run(self) -> None:
+        owners: dict = {}
+        for task_id, project_root, relative_path in self.targets:
+            try:
+                info = self.sync_service.get_task_file_lock(project_root, relative_path)
+            except Exception:  # noqa: BLE001
+                info = None
+            owner = (info or {}).get("owner")
+            if owner:
+                owners[task_id] = owner
+        self.locks_ready.emit(owners)
+
+
+class InstallProjectWorker(ManagedWorker):
     """Runs the local installation engine without freezing the UI."""
 
     progress_updated = Signal(str, str)
@@ -91,7 +136,7 @@ class InstallProjectWorker(QThread):
             self.finished_install.emit(False, str(error))
 
 
-class LaunchTaskWorker(QThread):
+class LaunchTaskWorker(ManagedWorker):
     """Launches Blender in a background thread without freezing the UI."""
 
     finished_launch = Signal(bool, str)
@@ -108,3 +153,135 @@ class LaunchTaskWorker(QThread):
             self.finished_launch.emit(True, "DCC session finished and lock released.")
         except Exception as error:  # noqa: BLE001
             self.finished_launch.emit(False, f"Error launching DCC: {str(error)}")
+
+
+class CheckVcsChangesWorker(ManagedWorker):
+    """Scans the project VCS workspace for uncommitted local changes."""
+
+    changes_ready = Signal(str, list)  # (task_id, list[FileChange])
+    error_occurred = Signal(str)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        task_id: str,
+        project_root: Path,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.task_id = task_id
+        self.project_root = project_root
+
+    def run(self) -> None:
+        try:
+            changes = self.sync_service.scan_local_changes(self.project_root)
+            self.changes_ready.emit(self.task_id, changes)
+        except Exception as error:  # noqa: BLE001
+            self.error_occurred.emit(str(error))
+
+
+class UpdateVcsWorker(ManagedWorker):
+    """Pulls the latest VCS revision into the project workspace off the UI thread."""
+
+    finished_update = Signal(str, bool, str)  # (project_id, success, message)
+    finished_update_report = Signal(str, object)  # (project_id, VcsUpdateReport)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        project_id: str,
+        project_root: Path,
+        username: str,
+        password: str,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.project_id = project_id
+        self.project_root = project_root
+        self.username = username
+        self.password = password
+
+    def run(self) -> None:
+        try:
+            report = self.sync_service.update_working_copy_detailed(
+                project_root=self.project_root,
+                username=self.username,
+                password=self.password,
+            )
+            self.finished_update.emit(self.project_id, report.ok, report.message)
+            self.finished_update_report.emit(self.project_id, report)
+        except Exception as error:  # noqa: BLE001
+            self.finished_update.emit(self.project_id, False, str(error))
+
+
+class ResolveVcsConflictWorker(ManagedWorker):
+    """Resolve one VCS conflict off the UI thread."""
+
+    finished_resolve = Signal(str, bool, str)  # (task_id, success, message)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        task_id: str,
+        project_root: Path,
+        relative_path: str,
+        strategy: str,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.task_id = str(task_id)
+        self.project_root = project_root
+        self.relative_path = relative_path
+        self.strategy = strategy
+
+    def run(self) -> None:
+        try:
+            success, message = self.sync_service.resolve_conflict(
+                project_root=self.project_root,
+                relative_path=self.relative_path,
+                strategy=self.strategy,
+            )
+            self.finished_resolve.emit(self.task_id, success, message)
+        except Exception as error:  # noqa: BLE001
+            self.finished_resolve.emit(self.task_id, False, str(error))
+
+
+class PublishVcsChangesWorker(ManagedWorker):
+    """Commits the selected task files to the VCS without freezing the UI."""
+
+    finished_publish = Signal(str, bool, str)  # (task_id, success, message)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        task_id: str,
+        project_root: Path,
+        selected_paths: list,
+        unversioned_paths: list,
+        username: str,
+        password: str,
+        message: str,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.task_id = task_id
+        self.project_root = project_root
+        self.selected_paths = selected_paths
+        self.unversioned_paths = unversioned_paths
+        self.username = username
+        self.password = password
+        self.message = message
+
+    def run(self) -> None:
+        try:
+            success, message = self.sync_service.publish(
+                project_root=self.project_root,
+                selected_paths=self.selected_paths,
+                unversioned_paths=self.unversioned_paths,
+                username=self.username,
+                password=self.password,
+                message=self.message,
+            )
+            self.finished_publish.emit(self.task_id, success, message)
+        except Exception as error:  # noqa: BLE001
+            self.finished_publish.emit(self.task_id, False, str(error))

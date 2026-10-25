@@ -15,6 +15,7 @@ nav = [
   { "Features" = [
       { "Automated QA & Auto-Fixing" = "features/automated-qa.md" },
       { "Vendor Jailing & Sparse Checkout" = "features/vendor-jailing.md" },
+      { "VCS Client, Locks and Audit" = "features/vcs-client.md" },
       { "Automated Task Orchestration" = "features/kitsu-orchestration.md" },
       { "Standardized Workspaces & Sandboxing" = "features/standardized-workspaces.md" },
     ]

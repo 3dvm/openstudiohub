@@ -21,26 +21,39 @@ class StatusSink(QObject):
     """Shared channel that aggregates status messages from many ViewModels."""
 
     message = Signal(str, str)
+    progress = Signal(int)  # 0..100, or -1 to clear
 
     def emit_status(self, message: str, color: str = "white") -> None:
         self.message.emit(message, color)
+
+    def emit_progress(self, percent: int) -> None:
+        self.progress.emit(percent)
 
 
 class BaseViewModel(QObject):
     """Common signal surface for every ViewModel in the application."""
 
     status_message = Signal(str, str)
+    progress_changed = Signal(int)
     busy_changed = Signal(bool)
 
     def __init__(self, status_sink: StatusSink | None = None, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._status_sink = status_sink or StatusSink()
         self._status_sink.message.connect(self.status_message)
+        self._status_sink.progress.connect(self.progress_changed)
         self._busy = False
 
     def report_status(self, message: str, color: str = "white") -> None:
         """Publish a status message through the shared sink."""
         self._status_sink.message.emit(message, color)
+
+    def report_progress(self, percent: int) -> None:
+        """Publish a progress percentage (0..100, or -1 to clear)."""
+        self._status_sink.progress.emit(int(percent))
+
+    def clear_progress(self) -> None:
+        self._status_sink.progress.emit(-1)
 
     def set_busy(self, busy: bool) -> None:
         if self._busy == busy:

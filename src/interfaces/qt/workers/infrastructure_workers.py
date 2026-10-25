@@ -9,7 +9,9 @@
 import subprocess
 from pathlib import Path
 
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.infrastructure.dev_defaults import (
     DEV_KITSU_ADMIN_EMAIL,
@@ -17,7 +19,7 @@ from src.infrastructure.dev_defaults import (
 )
 
 
-class DockerWorker(QThread):
+class DockerWorker(ManagedWorker):
     """Runs Docker commands without freezing the UI while images download."""
 
     finished_signal = Signal(bool, str)
@@ -44,7 +46,32 @@ class DockerWorker(QThread):
             self.finished_signal.emit(False, f"System error: {str(error)}")
 
 
-class KitsuSeederWorker(QThread):
+class RemoteServerTestWorker(ManagedWorker):
+    """Probes a VCS server over SSH or SVN from the Infrastructure panel."""
+
+    finished_signal = Signal(bool, str)
+
+    def __init__(self, migration_service, target: str, server=None, verbose: bool = False) -> None:
+        super().__init__()
+        self.migration_service = migration_service
+        self.target = target
+        self.server = server
+        self.verbose = verbose
+
+    def run(self) -> None:
+        try:
+            if self.target == "ssh":
+                ok, message = self.migration_service.test_remote_connection(
+                    self.server, verbose=self.verbose
+                )
+            else:
+                ok, message = self.migration_service.test_remote_svn(self.server)
+        except Exception as error:  # noqa: BLE001
+            ok, message = False, f"Connection test failed: {error}"
+        self.finished_signal.emit(ok, message)
+
+
+class KitsuSeederWorker(ManagedWorker):
     """Interacts with the Kitsu database through Gazu and the CLI."""
 
     finished_signal = Signal(bool, str)
@@ -74,11 +101,22 @@ class KitsuSeederWorker(QThread):
                 )
 
             elif self.action == "dummy":
-                self.production_service.set_host("http://localhost:8080/api")
-                success, msg = self.production_service.seed_test_database(
-                    admin_email=DEV_KITSU_ADMIN_EMAIL,
-                    admin_pwd=DEV_KITSU_ADMIN_PASSWORD,
-                )
+                # Seed against the local Kitsu without clobbering the session's
+                # real host: restore it once the seeding finishes.
+                previous_host = ""
+                try:
+                    previous_host = self.production_service.kitsu.get_host()
+                except Exception:  # noqa: BLE001
+                    previous_host = ""
+                try:
+                    self.production_service.set_host("http://localhost:8080/api")
+                    success, msg = self.production_service.seed_test_database(
+                        admin_email=DEV_KITSU_ADMIN_EMAIL,
+                        admin_pwd=DEV_KITSU_ADMIN_PASSWORD,
+                    )
+                finally:
+                    if previous_host:
+                        self.production_service.set_host(previous_host)
                 self.finished_signal.emit(success, msg)
 
         except subprocess.CalledProcessError as error:

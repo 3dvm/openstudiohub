@@ -12,7 +12,6 @@ with typed domain entities (Project/Shot/Asset/Task); for now they keep their
 existing behavior so consumers are unchanged.
 """
 
-import glob
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -66,25 +65,37 @@ class ProductionService:
             return []
 
     def get_artist_task_board(self) -> List[dict]:
-        """Assigned tasks (filtered + asset-enriched) for the artist dashboard.
+        """Assigned tasks (open + done, asset-enriched) for the artist dashboard.
 
-        This moves the enrichment logic out of the UI worker into the
-        application layer.
+        Kitsu splits open and finished work across two endpoints, so both are
+        fetched. Status labels are backfilled from the studio status list for
+        payloads that only carry a ``task_status_id``.
         """
         try:
             raw_user = self.kitsu.get_current_user()
-            all_tasks = self.kitsu.all_tasks_for_person(raw_user)
+            open_tasks = self.kitsu.all_tasks_for_person(raw_user)
         except Exception as error:  # noqa: BLE001
             print(f"[ProductionService] Error fetching artist tasks: {error}")
             return []
 
-        status_targets = ["Todo", "Work In Progress", "Waiting For Approval", "Retake", "Ready To Start"]
-        tasks = [
-            task
-            for task in all_tasks
-            if task.get("task_status_name") in status_targets
-            or (task.get("task_status") or {}).get("name") in status_targets
-        ]
+        try:
+            done_tasks = self.kitsu.all_done_tasks_for_person(raw_user)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Warning: failed to fetch done tasks: {error}")
+            done_tasks = []
+
+        # Merge open + done, keeping the first occurrence of each task id.
+        tasks: List[dict] = []
+        seen_ids: set = set()
+        for task in list(open_tasks) + list(done_tasks):
+            task_id = str(task.get("id", "") or "")
+            if task_id and task_id in seen_ids:
+                continue
+            if task_id:
+                seen_ids.add(task_id)
+            tasks.append(task)
+
+        self._backfill_task_statuses(tasks)
 
         for task in tasks:
             entity_type = (task.get("entity_type_name") or task.get("entity_type") or "").lower()
@@ -100,6 +111,228 @@ class ProductionService:
                     print(f"[ProductionService] Warning: failed to enrich asset: {inner_error}")
 
         return tasks
+
+    def _backfill_task_statuses(self, tasks: List[dict]) -> None:
+        """Fill missing status labels using the global status list.
+
+        Some Kitsu payloads (notably finished tasks) only carry a
+        ``task_status_id``; without a name the UI would fall back to a
+        placeholder. Failures here are non-fatal.
+        """
+        if not any(
+            not (task.get("task_status_name") or (task.get("task_status") or {}).get("name"))
+            for task in tasks
+        ):
+            return
+        try:
+            statuses = self.kitsu.all_task_statuses()
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Warning: failed to fetch task statuses: {error}")
+            return
+
+        by_id = {str(status.get("id", "") or ""): status for status in statuses}
+        for task in tasks:
+            if task.get("task_status_name") or (task.get("task_status") or {}).get("name"):
+                continue
+            status = by_id.get(str(task.get("task_status_id", "") or ""))
+            if not status:
+                continue
+            task["task_status_name"] = status.get("name", "")
+            task["task_status_color"] = status.get("color", "")
+            task["task_status_short_name"] = status.get("short_name", "")
+
+    def get_project_task_statuses(self, project_id: str) -> List[dict]:
+        """Task statuses available to a project (global list for ``ALL``).
+
+        Kitsu links a subset of the studio's global task statuses to each
+        production. When no specific project is selected we fall back to the
+        full global list so the artist can still filter globally.
+        """
+        try:
+            if not project_id or str(project_id).upper() == "ALL":
+                return self.kitsu.all_task_statuses()
+            project = self.kitsu.get_project(project_id)
+            if not project:
+                return []
+            return self.kitsu.all_task_statuses_for_project(project)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching task statuses: {error}")
+            return []
+
+    # ------------------------------------------------------------------
+    # Task comments, people and assignment
+    # ------------------------------------------------------------------
+    def get_task_comments(self, task) -> List[dict]:
+        # Let failures propagate so the comment drawer can show the real error.
+        return self.kitsu.all_comments_for_task(task)
+
+    def get_project_comments(self, project_id: str) -> List[dict]:
+        # Let failures propagate so the caller can fall back to task comments.
+        return self.kitsu.all_comments_for_project(project_id)
+
+    def add_task_comment(self, task, task_status, text: str) -> dict:
+        """Post a comment; Kitsu requires the task status alongside the text."""
+        return self.kitsu.add_comment(task, task_status, comment=text)
+
+    def update_comment_checklist(self, comment_id: str, checklist: list) -> dict:
+        """Persist a comment's checklist (assigned artists and managers may)."""
+        return self.kitsu.update_comment_checklist(comment_id, checklist)
+
+    def get_task_status(self, task_data: dict) -> Optional[dict]:
+        status = (task_data or {}).get("task_status")
+        if isinstance(status, dict) and status.get("id"):
+            return status
+        status_id = (task_data or {}).get("task_status_id")
+        if not status_id:
+            return None
+        try:
+            return self.kitsu.get_task_status(status_id)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching task status: {error}")
+            return None
+
+    def list_persons(self) -> List[dict]:
+        try:
+            return self.kitsu.all_persons()
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error listing persons: {error}")
+            return []
+
+    def get_project_task_board(self, project_id: str) -> List[dict]:
+        """Flat, presentation-ready task rows for a project (PM/TD board)."""
+        try:
+            tasks = self.kitsu.all_tasks_for_project(project_id)
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Error fetching project tasks: {error}")
+            return []
+
+        by_person = {str(p.get("id", "")): p for p in self.list_persons()}
+        entity_names: Dict[tuple, str] = {}
+        if any(not task.get("entity_name") for task in tasks or []):
+            entity_names = self._project_entity_names(project_id)
+
+        task_types: Dict[str, dict] = {}
+        try:
+            task_types = {str(t.get("id", "")): t for t in self.kitsu.all_task_types()}
+        except Exception as error:  # noqa: BLE001
+            print(f"[ProductionService] Warning: failed to fetch task types: {error}")
+
+        statuses: Dict[str, dict] = {}
+        try:
+            statuses = {
+                str(s.get("id", "")): s
+                for s in self.kitsu.all_task_statuses_for_project(project_id)
+            }
+        except Exception:  # noqa: BLE001 - fall back to the global status list
+            try:
+                statuses = {str(s.get("id", "")): s for s in self.kitsu.all_task_statuses()}
+            except Exception as error:  # noqa: BLE001
+                print(f"[ProductionService] Warning: failed to fetch task statuses: {error}")
+
+        rows: List[dict] = []
+        for task in tasks or []:
+            row = dict(task)
+            if not row.get("task_type_name"):
+                task_type = task_types.get(str(row.get("task_type_id", "")))
+                if task_type:
+                    row["task_type_name"] = task_type.get("name", "")
+            if not (row.get("task_status") or {}).get("name"):
+                status = statuses.get(str(row.get("task_status_id", "")))
+                if status:
+                    row["task_status"] = status
+            row["assignees"] = self._normalize_assignees(row.get("assignees"), by_person)
+            if not row.get("entity_name"):
+                row["entity_name"] = self._resolve_entity_name(row, entity_names)
+            if not row.get("entity_type_name"):
+                row["entity_type_name"] = row.get("entity_type") or ""
+            rows.append(row)
+        return rows
+
+    def _project_entity_names(self, project_id: str) -> Dict[tuple, str]:
+        """Map ``(entity_type, entity_id)`` to the project entity name."""
+        names: Dict[tuple, str] = {}
+        getters = (
+            ("shot", self.kitsu.all_shots_for_project),
+            ("asset", self.kitsu.all_assets_for_project),
+            ("sequence", self.kitsu.all_sequences_for_project),
+            ("edit", self.kitsu.all_edits_for_project),
+            ("episode", self.kitsu.all_episodes_for_project),
+        )
+        for type_name, getter in getters:
+            try:
+                entities = getter(project_id) or []
+            except Exception as error:  # noqa: BLE001
+                print(
+                    f"[ProductionService] Warning: failed to fetch {type_name}s: {error}"
+                )
+                continue
+            for entity in entities:
+                entity_id = str(entity.get("id", "") or "")
+                name = entity.get("name") or entity.get("full_name") or ""
+                if entity_id and name:
+                    names[(type_name, entity_id)] = str(name)
+        return names
+
+    @staticmethod
+    def _resolve_entity_name(row: dict, names: Dict[tuple, str]) -> str:
+        entity = row.get("entity")
+        if isinstance(entity, dict) and entity.get("name"):
+            return str(entity["name"])
+
+        entity_id = str(row.get("entity_id", "") or "")
+        entity_type = str(
+            row.get("entity_type_name") or row.get("entity_type") or ""
+        ).strip().lower()
+        if entity_id:
+            if entity_type:
+                name = names.get((entity_type, entity_id))
+                if name:
+                    return name
+            for (_type_name, candidate_id), name in names.items():
+                if candidate_id == entity_id:
+                    return name
+
+        return "—"
+
+    @staticmethod
+    def _normalize_assignees(assignees, by_person: Dict[str, dict]) -> List[dict]:
+        result: List[dict] = []
+        for entry in assignees or []:
+            if isinstance(entry, dict):
+                result.append(entry)
+                continue
+            person = by_person.get(str(entry))
+            result.append(person or {"id": str(entry), "full_name": str(entry)})
+        return result
+
+    def apply_task_assignees(
+        self, task: dict, add_ids: List[str], remove_ids: List[str]
+    ) -> List[dict]:
+        """Add/remove assignees and return the refreshed assignee list.
+
+        New assignees are applied before removals so a failure cannot leave the
+        task with no responsible person.
+        """
+        by_person = {str(p.get("id", "")): p for p in self.list_persons()}
+        add = {str(pid) for pid in add_ids or []}
+        remove = {str(pid) for pid in remove_ids or []}
+
+        for person_id in add - remove:
+            self.kitsu.assign_task(task, by_person.get(person_id) or {"id": person_id})
+        for person_id in remove - add:
+            self.kitsu.clear_task_assignations(task, by_person.get(person_id) or {"id": person_id})
+
+        try:
+            refreshed = self.kitsu.get_task(str(task.get("id", "")))
+            return self._normalize_assignees(refreshed.get("assignees"), by_person)
+        except Exception:  # noqa: BLE001 - fall back to the locally computed set
+            current = self._normalize_assignees(task.get("assignees"), by_person)
+            current_ids = {str(person.get("id", "")) for person in current}
+            current_ids = (current_ids - remove) | add
+            return [
+                by_person.get(person_id) or {"id": person_id, "full_name": person_id}
+                for person_id in current_ids
+            ]
 
     def list_all_projects(self) -> List[dict]:
         """Return all projects (open + closed) for the project grid."""
@@ -137,10 +370,16 @@ class ProductionService:
                 project_task_types.add(tt_name)
 
                 task_data = task.get("data") or {}
-                kitsu_filepath = task_data.get("filepath")
+                kitsu_filepath = task_data.get("filepath") or ""
                 has_file = bool(kitsu_filepath) and (project_root / vfs_svn / kitsu_filepath).exists()
 
-                shot_tasks_data[tt_name] = {"task_id": task["id"], "has_file": has_file, "raw_task": task}
+                shot_tasks_data[tt_name] = {
+                    "task_id": task["id"],
+                    "has_file": has_file,
+                    "filepath": kitsu_filepath,
+                    "linked": bool(kitsu_filepath),
+                    "raw_task": task,
+                }
                 if not has_file:
                     shot_has_all_files = False
 
@@ -168,24 +407,53 @@ class ProductionService:
         return result
 
     def audit_assets(self, project_id: str, project_root: Path, vfs_svn: str) -> List[dict]:
-        """Audit assets against physical files and normalize dirty names in Kitsu."""
+        """Audit each asset *task* against its physical file.
+
+        Mirrors :meth:`audit_shots`: one ``tasks[task_type_name]`` entry per task
+        with its linked ``filepath`` and ``has_file`` state, plus an aggregate
+        ``has_file`` that is true only when every task has its file on disk.
+        """
         assets = self.kitsu.all_assets_for_project(project_id)
         asset_types_map = {at["id"]: at for at in self.kitsu.all_asset_types()}
+        task_types_map = {tt["id"]: tt.get("name", "Unknown") for tt in self.kitsu.all_task_types()}
 
         result = []
         for asset in assets:
             raw_name = asset.get("name", "Unknown")
             clean_name = NamingPolicy.sanitize_name(raw_name)
 
-            has_file = False
-            asset_data = asset.get("data") or {}
-            kitsu_filepath = asset_data.get("filepath")
-            if kitsu_filepath:
-                physical_path = project_root / vfs_svn / kitsu_filepath
-                has_file = physical_path.exists()
-                if not has_file:
-                    print(f"[AUDITORIA ASSETS] ⚠️ Ruta registrada en Kitsu, pero no existe en disco: {physical_path}")
+            # 1. Per-task file mapping (the canonical link lives on the task).
+            tasks_data: Dict[str, dict] = {}
+            try:
+                asset_tasks = self.kitsu.all_tasks_for_asset(asset)
+            except Exception as error:  # noqa: BLE001
+                print(f"[AUDITORIA ASSETS] Error fetching tasks for '{raw_name}': {error}")
+                asset_tasks = []
 
+            has_all_files = bool(asset_tasks)
+            for task in asset_tasks:
+                tt_name = (
+                    task.get("task_type_name")
+                    or task_types_map.get(task.get("task_type_id"), "")
+                    or "Unknown"
+                )
+                task_data = task.get("data") or {}
+                kitsu_filepath = task_data.get("filepath") or ""
+                has_file = bool(kitsu_filepath) and (project_root / vfs_svn / kitsu_filepath).exists()
+                if kitsu_filepath and not has_file:
+                    print(f"[AUDITORIA ASSETS] ⚠️ Ruta registrada en Kitsu, pero no existe en disco: {kitsu_filepath}")
+
+                tasks_data[tt_name] = {
+                    "task_id": task.get("id", ""),
+                    "has_file": has_file,
+                    "filepath": kitsu_filepath,
+                    "linked": bool(kitsu_filepath),
+                    "raw_task": task,
+                }
+                if not has_file:
+                    has_all_files = False
+
+            # 2. Asset type enrichment.
             type_id = asset.get("entity_type_id")
             if type_id and type_id in asset_types_map:
                 asset["asset_type_id"] = type_id
@@ -194,8 +462,9 @@ class ProductionService:
                 asset["asset_type_id"] = ""
                 asset["asset_type_name"] = ""
 
+            # 3. Dirty-name normalization only while nothing is mapped on disk.
             final_name = raw_name
-            if not has_file and raw_name != clean_name:
+            if not has_all_files and raw_name != clean_name:
                 try:
                     asset["name"] = clean_name
                     self.kitsu.update_asset(asset)
@@ -208,7 +477,14 @@ class ProductionService:
                 "id": asset["id"],
                 "name": final_name,
                 "type": asset["asset_type_name"],
-                "has_file": has_file,
+                # Forward the Kitsu asset type so the headless builder can stamp
+                # it onto the scene (``build_new_asset`` requires both type + asset).
+                "asset_type_id": asset["asset_type_id"],
+                "asset_type_name": asset["asset_type_name"],
+                "parent": "N/A",
+                "frame_in": 0,
+                "tasks": tasks_data,
+                "has_file": has_all_files,
                 "raw_data": asset,
             })
 
@@ -237,11 +513,18 @@ class ProductionService:
         version = "N/A"
 
         if edit_dir.exists():
-            blend_files = [f for f in glob.glob(str(edit_dir / "*.blend")) if "blend1" not in f]
+            blend_files = [f for f in edit_dir.glob("*.blend") if "blend1" not in f.name]
             if blend_files:
                 has_file = True
-                blend_files.sort()
-                latest_file = Path(blend_files[-1])
+
+                def _edit_sort_key(path: Path) -> tuple:
+                    match = re.search(r"-v(\d+)\.blend$", path.name, re.IGNORECASE)
+                    version = int(match.group(1)) if match else -1
+                    # Prefer the canonical lower-case name when versions tie.
+                    return (version, path.name == path.name.lower())
+
+                # Prefer the versioned DCC master over any un-versioned stray.
+                latest_file = max(blend_files, key=_edit_sort_key)
                 file_name = latest_file.name
                 match = re.search(r"(v\d+)", file_name, re.IGNORECASE)
                 if match:
@@ -268,6 +551,10 @@ class ProductionService:
     # ------------------------------------------------------------------
     def set_host(self, host_url: str) -> None:
         self.kitsu.set_host(host_url)
+
+    def check_health(self, timeout: float = 5.0) -> Tuple[bool, str]:
+        """Pre-flight reachability probe against the Kitsu server."""
+        return self.kitsu.check_health(timeout=timeout)
 
     def list_templates(self) -> list:
         try:

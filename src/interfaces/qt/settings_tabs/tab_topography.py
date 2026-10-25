@@ -22,12 +22,12 @@ class TabTopography(QWidget):
 
     def _build_ui(self) -> None:
         layout = QFormLayout(self)
-        layout.setContentsMargins(30, 20, 30, 20)
-        layout.setSpacing(15)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         lbl_desc = QLabel(self.tr("Map Blender Studio Tool's core logic to your custom naming conventions.\nThe Hub relies on VFS Keys, allowing you to use numerical prefixes safely."))
-        lbl_desc.setStyleSheet("color: #94A3B8; font-size: 12px; margin-bottom: 10px;")
+        lbl_desc.setObjectName("HintLabel")
         layout.addRow("", lbl_desc)
 
         self.entry_topo_svn = self._create_input(self.tr("e.g. 02_production (Maps to 'svn')"))
@@ -41,7 +41,7 @@ class TabTopography(QWidget):
         layout.addRow(self._styled_label(self.tr("Hub Database [vfs_pipeline]:")), self.entry_topo_pipeline)
 
         lbl_custom = QLabel(self.tr("Additional Organization Folders (NAS Only)"))
-        lbl_custom.setStyleSheet("color: #F8FAFC; font-weight: bold; margin-top: 15px; margin-bottom: 5px;")
+        lbl_custom.setObjectName("SectionTitle")
         layout.addRow("", lbl_custom)
 
         self.entry_topo_custom1 = self._create_input(self.tr("e.g. 01_Brief_and_Refs"))
@@ -59,7 +59,7 @@ class TabTopography(QWidget):
 
     def _styled_label(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 13px;")
+        label.setObjectName("InputLabel")
         return label
 
     def _connect_signals(self) -> None:

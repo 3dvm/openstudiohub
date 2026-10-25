@@ -16,6 +16,7 @@ from pathlib import Path
 from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
+from src.application.services.notification_service import NotificationService
 from src.application.services.production_service import ProductionService
 from src.application.services.project_audit_service import ProjectAuditService
 from src.application.services.project_creation_service import ProjectCreationService
@@ -26,7 +27,9 @@ from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.nas_manager import NasManager
 from src.infrastructure.session_repository import FileSessionRepository
 from src.infrastructure.vault_manifest_repository import FileVaultManifestRepository
+from src.infrastructure.vcs.vcs_audit import VcsAuditLogger
 from src.interfaces.qt.viewmodels.base_viewmodel import StatusSink
+from src.interfaces.qt.viewmodels.notifications_viewmodel import NotificationsViewModel
 from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
 
@@ -40,19 +43,47 @@ class AppContext:
         self.production_service = ProductionService(self.kitsu)
 
         self.vault_service = VaultService(FileVaultManifestRepository(None, self.config_factory))
-        self.installation_service = InstallationService(self.config_factory, self.config_factory.get_vault_path())
-        self.project_creation_service = ProjectCreationService(self.config_factory)
 
+        # RAM-only credentials must exist before the VCS-backed services are built.
         self.credential_vault = CredentialVault()
+
+        self.installation_service = InstallationService(
+            self.config_factory,
+            self.config_factory.get_vault_path(),
+            credential_vault=self.credential_vault,
+        )
+        self.project_creation_service = ProjectCreationService(
+            self.config_factory,
+            credential_vault=self.credential_vault,
+        )
 
         self.nas_manager = NasManager(config_factory=self.config_factory)
 
         # Application services for the future audit/repair use cases.
-        self.audit_service = ProjectAuditService(self.nas_manager, self.kitsu)
-        self.repair_service = ProjectRepairService(self.kitsu, self.nas_manager, self.config_factory)
+        self.audit_service = ProjectAuditService(self.nas_manager, self.kitsu, self.installation_service)
+        self.repair_service = ProjectRepairService(
+            self.kitsu,
+            self.nas_manager,
+            self.config_factory,
+            credential_vault=self.credential_vault,
+        )
 
         # Shared status channel for the dashboard ViewModels.
         self.status_sink = StatusSink()
+
+        self.notification_service = NotificationService(
+            audit_logger=VcsAuditLogger(),
+            user_id_provider=lambda: str(
+                getattr(self.auth_service.current_user, "id", "") or ""
+            ),
+            role_provider=lambda: getattr(
+                self.auth_service.current_role(), "value", ""
+            ),
+        )
+        self.notifications_vm = NotificationsViewModel(
+            self.notification_service,
+            status_sink=self.status_sink,
+        )
 
         # ViewModels for the upcoming audit/repair features (Phase 2 wiring).
         self.audit_viewmodel = ProjectAuditViewModel(self.audit_service, self.status_sink)

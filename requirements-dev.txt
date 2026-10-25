@@ -4,6 +4,3 @@
 # Testing (unit + Qt integration via pytest-qt)
 pytest>=8.0
 pytest-qt>=4.4
-
-# Dev tool: SSH-based SVN provisioning (tests/dev_tools/seed_svn_ssh.py)
-paramiko>=2.12

@@ -20,6 +20,7 @@ from PySide6.QtCore import Signal
 from src.application.services.project_audit_service import ProjectAuditService
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.project_audit_workers import ProjectAuditWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class ProjectAuditViewModel(BaseViewModel):
@@ -35,12 +36,12 @@ class ProjectAuditViewModel(BaseViewModel):
     ) -> None:
         super().__init__(status_sink, parent)
         self.service = service
-        self._worker = None
+        self.workers = WorkerManager(self)
         self._queued = None
 
     def is_busy(self) -> bool:
         """True while an audit worker is running."""
-        return self._worker is not None and self._worker.isRunning()
+        return self.workers.is_running("audit")
 
     def audit_projects(self, projects_data: list, token: int = 0) -> None:
         """Audit a batch of raw project dicts, emitting results incrementally.
@@ -58,16 +59,11 @@ class ProjectAuditViewModel(BaseViewModel):
         self.audit_projects([{"name": project_name, "id": kitsu_id}])
 
     def _start(self, projects_data: list, token: int) -> None:
-        self._worker = ProjectAuditWorker(self.service, projects_data, token)
-        self._worker.project_audited.connect(self.audit_completed)
-        self._worker.finished.connect(self._on_worker_finished)
-        self._worker.start()
+        worker = ProjectAuditWorker(self.service, projects_data, token)
+        worker.project_audited.connect(self.audit_completed)
+        self.workers.start("audit", worker, on_finished=self._on_worker_finished)
 
     def _on_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._worker = None
         self.audit_finished.emit()
 
         if self._queued is not None:

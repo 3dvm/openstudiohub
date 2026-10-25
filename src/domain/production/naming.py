@@ -17,8 +17,11 @@ Conventions (unified):
   * storyboard -> edit/storyboards/<sequence>-storyboard.blend
   * edit    -> edit/<project>-edit.blend
 
-Names are slugified (lowercase, spaces -> underscores). This intentionally
-unifies the previously inconsistent per-module casing/separator behavior.
+Names are slugified (lowercase, spaces -> underscores/dashes). This
+intentionally unifies the previously inconsistent per-module casing/separator
+behavior. The Blender Kitsu add-on derives the edit master name from the Kitsu
+project name (which may be mixed case); the headless builder normalizes it to
+lower case on creation so every generated file is lower-cased.
 """
 
 import re

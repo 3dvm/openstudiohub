@@ -98,6 +98,14 @@ class ProductionRepository(ABC):
     def create_task(self, entity_id: str, task_type_name: str) -> Optional[Task]:
         """Create a task of the given type on an entity."""
 
+    @abstractmethod
+    def all_tasks_for_asset(self, asset) -> List[Task]:
+        """Return all tasks attached to an asset."""
+
+    @abstractmethod
+    def update_task_data(self, task_id: str, data: dict) -> bool:
+        """Persist the custom metadata (data) of a task."""
+
     # --- Metadata ---
     @abstractmethod
     def update_entity_data(self, entity_id: str, data: dict) -> bool:

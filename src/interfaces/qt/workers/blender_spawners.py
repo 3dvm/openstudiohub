@@ -1,13 +1,17 @@
 import subprocess
 import os
+from collections import deque
 from pathlib import Path
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Signal
 
+from src.infrastructure.qt_worker import ManagedWorker
+
+from src.domain.production.naming import NamingPolicy
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
 
 
-class BatchCreationWorker(QThread):
+class BatchCreationWorker(ManagedWorker):
     progress_updated = Signal(int, str)
     log_stream = Signal(str)
     finished_batch = Signal(bool, str)
@@ -36,28 +40,34 @@ class BatchCreationWorker(QThread):
             blender_bin = BlenderLocator.resolve(base_blender_dir)
 
             vfs_svn = self.config.get_vfs_svn_name()
+            failures = []
 
             for idx, entity in enumerate(self.entities):
                 e_name = entity.get("name", "Unknown")
                 e_id = entity.get("id", "")
+                # For assets ``type`` holds the asset type name (e.g. "Character");
+                # only shots route to the dedicated SHOT builder. Asset files are
+                # always forged by the generic ASSET builder, with the Kitsu asset
+                # type forwarded separately via ``kitsu_asset_type_id``.
                 e_type = entity.get("type", "Asset").upper()
-                
-                # --- NEW TASK FILTERING LOGIC ---
+                build_target = "SHOT" if e_type == "SHOT" else "ASSET"
+
+                # --- TASK FILTERING LOGIC ---
+                # Spawn only the task types the PM selected, and only when the
+                # task has no physical file yet. Entities with no Kitsu tasks are
+                # gated out in the UI (no blank-file fallback here).
+                selected = set(self.task_types or [])
                 tasks_to_spawn = []
-                if e_type == "SHOT":
-                    tasks_dict = entity.get("tasks", {})
-                    for t_name in self.task_types:
-                        # Only spawn if the shot has this task in Kitsu and it has no file
-                        task_info = tasks_dict.get(t_name)
-                        if task_info and not task_info.get("has_file"):
-                            tasks_to_spawn.append(t_name)
-                else:
-                    # Assets keep iterating once for now
-                    tasks_to_spawn = [""] 
+                tasks_dict = entity.get("tasks", {})
+                for t_name, task_info in tasks_dict.items():
+                    if selected and t_name not in selected:
+                        continue
+                    if not task_info.get("has_file"):
+                        tasks_to_spawn.append((t_name, task_info))
                 # -------------------------------------------
                 
                 # Nested loop to iterate each missing task of the entity
-                for t_idx, t_name in enumerate(tasks_to_spawn):
+                for t_idx, (t_name, task_info) in enumerate(tasks_to_spawn):
                     
                     display_name = f"{e_name} [{t_name}]" if t_name else e_name
                     base_progress = 10 + int((idx / total_ents) * 90)
@@ -65,16 +75,30 @@ class BatchCreationWorker(QThread):
                     
                     self.log_stream.emit(f"\n[{display_name}] Spawning physical file via Headless Engine...")
                     
+                    raw_data = entity.get("raw_data") or {}
+                    asset_type_id = (
+                        entity.get("asset_type_id")
+                        or raw_data.get("asset_type_id")
+                        or raw_data.get("entity_type_id")
+                        or ""
+                    )
+                    asset_type_name = (
+                        entity.get("asset_type_name")
+                        or raw_data.get("asset_type_name")
+                        or ""
+                    )
+
                     sandbox = SandboxEnvironment(
-                        build_target=e_type,
+                        build_target=build_target,
                         project_root=str(project_root),
                         production_folder=vfs_svn,
                         blender_user_resources=str(project_root / vfs_local / "blender_data"),
+                        blender_user_scripts=str(project_root / vfs_local / "blender_data" / "scripts"),
                         kitsu_project_id=str(self.project_id),
                         target_entity_id=str(e_id),
                         kitsu_entity_name=str(e_name),
-                        kitsu_asset_type_id=str(entity.get("asset_type_id", "")),
-                        kitsu_asset_type_name=str(entity.get("asset_type_name", "")),
+                        kitsu_asset_type_id=str(asset_type_id),
+                        kitsu_asset_type_name=str(asset_type_name),
                         kitsu_host=self.config.get_kitsu_api_url(),
                         kitsu_user=os.environ.get("OPENSTUDIO_KITSU_USER", ""),
                         kitsu_pwd=os.environ.get("OPENSTUDIO_KITSU_PWD", ""),
@@ -82,6 +106,17 @@ class BatchCreationWorker(QThread):
                     if e_type == "SHOT":
                         sandbox.kitsu_sequence_name = str(entity.get("parent", ""))
                         sandbox.kitsu_task_type_name = str(t_name)
+                    else:
+                        # Assets: forge at the task's linked/suggested path.
+                        sandbox.kitsu_task_type_name = str(t_name)
+                        relative_path = (task_info or {}).get("filepath", "")
+                        if not relative_path and t_name:
+                            asset_type = entity.get("asset_type_name") or entity.get("type") or "props"
+                            try:
+                                relative_path = str(NamingPolicy.asset_path(asset_type, e_name, t_name))
+                            except Exception:  # noqa: BLE001
+                                relative_path = ""
+                        sandbox.task_file_path = relative_path
 
                     env = os.environ.copy()
                     env.update(sandbox.to_os_environ())
@@ -95,17 +130,29 @@ class BatchCreationWorker(QThread):
                     proceso.wait()
                     
                     if proceso.returncode != 0:
+                        failures.append(display_name)
                         self.log_stream.emit(f"[{display_name}] ❌ ERROR: Blender Headless failed.")
                     else:
                         self.log_stream.emit(f"[{display_name}] ✓ Physical file spawned.")
 
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
-            self.finished_batch.emit(True, f"{total_ents} entities processed successfully.")
+            if failures:
+                self.finished_batch.emit(
+                    False,
+                    self.tr("Failed to forge {count} file(s): {names}").format(
+                        count=len(failures), names=", ".join(failures)
+                    ),
+                )
+            else:
+                self.finished_batch.emit(True, f"{total_ents} entities processed successfully.")
             
-        except Exception as e:
-            self.finished_batch.emit(False, str(e))
+        except Exception as e:  # noqa: BLE001
+            error_message = f"{type(e).__name__}: {e}"
+            print(f"[{self.__class__.__name__}] {error_message}")
+            self.log_stream.emit(f"❌ {error_message}")
+            self.finished_batch.emit(False, error_message)
 
-class MasterSpawningWorker(QThread):
+class MasterSpawningWorker(ManagedWorker):
     progress_updated = Signal(int, str)
     log_stream = Signal(str)
     finished_spawn = Signal(bool, str)
@@ -134,6 +181,7 @@ class MasterSpawningWorker(QThread):
                 project_root=str(project_root),
                 production_folder=self.config.get_vfs_svn_name(),
                 blender_user_resources=str(project_root / vfs_local / "blender_data"),
+                blender_user_scripts=str(project_root / vfs_local / "blender_data" / "scripts"),
                 kitsu_project_id=str(self.project_id),
                 kitsu_host=self.config.get_kitsu_api_url(),
                 kitsu_user=os.environ.get("OPENSTUDIO_KITSU_USER", ""),
@@ -147,30 +195,59 @@ class MasterSpawningWorker(QThread):
             self.progress_updated.emit(30, self.tr("Booting Blender Engine..."))
             cmd = [str(blender_bin), "-b", "--python", str(script_path)]
             proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-            
+
+            # Track the headless build result instead of trusting the exit code
+            # alone: the builder always used to exit 0, even on failure.
+            tail = deque(maxlen=15)
+            saw_ok = False
+            saw_failure = False
+            created_path = ""
+
             for line in proceso.stdout:
                 line_clean = line.strip()
                 if not line_clean: continue
                 self.log_stream.emit(line_clean)
-                
-                if "Cargando App-Template" in line_clean:
+                tail.append(line_clean)
+
+                if "RESULT: OK" in line_clean:
+                    saw_ok = True
+                elif "RESULT: FAILED" in line_clean:
+                    saw_failure = True
+
+                if "EXITOSO EN:" in line_clean or "creado en:" in line_clean:
+                    self.progress_updated.emit(90, self.tr("Writing physical file..."))
+                    for marker in ("EXITOSO EN:", "creado en:"):
+                        if marker in line_clean:
+                            created_path = line_clean.split(marker, 1)[-1].strip()
+                            break
+                elif "Cargando App-Template" in line_clean:
                     self.progress_updated.emit(50, self.tr("Loading UI Template..."))
                 elif "Restaurando contexto Kitsu" in line_clean:
                     self.progress_updated.emit(70, self.tr("Authenticating with server..."))
-                elif "GUARDADO FORZADO EXITOSO" in line_clean:
-                    self.progress_updated.emit(90, self.tr("Writing physical file..."))
-            
-            proceso.wait()
-            if proceso.returncode == 0:
-                self.progress_updated.emit(100, self.tr("Master File Forged Successfully!"))
-                self.finished_spawn.emit(True, f"{self.build_target} created.")
-            else:
-                raise RuntimeError(f"Blender crashed with return code {proceso.returncode}")
-                
-        except Exception as e:
-            self.finished_spawn.emit(False, str(e))
 
-class StoryboardBatchWorker(QThread):
+            proceso.wait()
+            if proceso.returncode == 0 and saw_ok and not saw_failure:
+                self.progress_updated.emit(100, self.tr("Master File Forged Successfully!"))
+                message = f"{self.build_target} created."
+                if created_path:
+                    message = f"{self.build_target} created: {created_path}"
+                self.finished_spawn.emit(True, message)
+            else:
+                details = "\n".join(tail)
+                reason = (
+                    "The headless builder reported a failure."
+                    if saw_failure
+                    else f"Blender exited with code {proceso.returncode} without a result marker."
+                )
+                self.finished_spawn.emit(False, f"{reason}\n{details}".strip())
+
+        except Exception as e:  # noqa: BLE001
+            error_message = f"{type(e).__name__}: {e}"
+            print(f"[{self.__class__.__name__}] {error_message}")
+            self.log_stream.emit(f"❌ {error_message}")
+            self.finished_spawn.emit(False, error_message)
+
+class StoryboardBatchWorker(ManagedWorker):
     progress_updated = Signal(int, str)
     log_stream = Signal(str)
     finished_batch = Signal(bool, str)
@@ -220,6 +297,7 @@ class StoryboardBatchWorker(QThread):
                     project_root=str(project_root),
                     production_folder=vfs_svn,
                     blender_user_resources=str(project_root / vfs_local / "blender_data"),
+                    blender_user_scripts=str(project_root / vfs_local / "blender_data" / "scripts"),
                     target_sequence=seq_name,
                     kitsu_project_id=str(self.project_id),
                     kitsu_host=self.config.get_kitsu_api_url(),
@@ -245,5 +323,8 @@ class StoryboardBatchWorker(QThread):
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
             self.finished_batch.emit(True, f"{total_seqs} Storyboard sequences processed successfully.")
             
-        except Exception as e:
-            self.finished_batch.emit(False, str(e))
+        except Exception as e:  # noqa: BLE001
+            error_message = f"{type(e).__name__}: {e}"
+            print(f"[{self.__class__.__name__}] {error_message}")
+            self.log_stream.emit(f"❌ {error_message}")
+            self.finished_batch.emit(False, error_message)

@@ -12,7 +12,9 @@ hydration (load_data) and payload extraction (identity_payload) methods.
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -27,7 +29,7 @@ from src.application.services.auth_service import AuthService
 from src.application.services.production_service import ProductionService
 
 
-class SyncIdentityWorker(QThread):
+class SyncIdentityWorker(ManagedWorker):
     """Fetches the organisation metadata from Kitsu asynchronously."""
 
     finished_sync = Signal(dict)
@@ -59,8 +61,8 @@ class TabIdentity(QWidget):
 
     def _build_ui(self) -> None:
         layout = QFormLayout(self)
-        layout.setContentsMargins(30, 30, 30, 30)
-        layout.setSpacing(20)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
         layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         name_layout = QHBoxLayout()
@@ -100,7 +102,7 @@ class TabIdentity(QWidget):
 
     def _styled_label(self, text: str) -> QLabel:
         label = QLabel(text)
-        label.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 13px;")
+        label.setObjectName("InputLabel")
         return label
 
     def _connect_signals(self) -> None:

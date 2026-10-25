@@ -13,6 +13,7 @@ collects the form inputs and forwards them here for the heavy I/O.
 from PySide6.QtCore import Signal
 
 from src.application.credential_vault import CredentialVault
+from src.application.services.creation_saga import CreationOutcome
 from src.application.services.project_creation_service import ProjectCreationService
 from src.application.services.production_service import ProductionService
 from src.application.services.vault_service import VaultService
@@ -24,13 +25,17 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
 )
 from src.interfaces.qt.workers.new_project_workers import (
     FetchKitsuTemplatesWorker,
+    ProjectCreationRetryWorker,
     ProjectCreationWorker,
+    ProjectRollbackWorker,
 )
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class NewProjectViewModel(BaseViewModel):
     templates_loaded = Signal(list)
-    creation_finished = Signal(bool, str)
+    creation_finished = Signal(object)
+    rollback_finished = Signal(bool, str)
 
     def __init__(
         self,
@@ -40,44 +45,39 @@ class NewProjectViewModel(BaseViewModel):
         status_sink: StatusSink | None = None,
         credential_vault: CredentialVault | None = None,
         vcs_prompt: VcsPrompt | None = None,
+        project_creation_service: ProjectCreationService | None = None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.config_factory = config_factory
         self.production_service = production_service
-        self.project_creation_service = ProjectCreationService(config_factory)
-        self.vault_data = vault_service.load_inventory()
         self.credential_vault = credential_vault
+        # Reuse the composition root's wired service so the creation saga shares
+        # the RAM credential vault (otherwise the SSH passphrase never reaches
+        # the runner and encrypted keys fail with "Permission denied (publickey)").
+        self.project_creation_service = project_creation_service or ProjectCreationService(
+            config_factory, credential_vault=credential_vault
+        )
+        self.vault_data = vault_service.load_inventory()
         self.vcs_prompt = vcs_prompt
 
-        self._worker = None
+        self.workers = WorkerManager(self)
+        self._last_outcome: CreationOutcome | None = None
 
-    def resolve_vcs_credentials(self) -> tuple[str, str]:
+    def resolve_vcs_credentials(self, server_id: str = "") -> tuple[str, str]:
         user, pwd = "", ""
-        if self.credential_vault is not None:
-            user, pwd = self.credential_vault.get_svn_credentials()
+        if self.credential_vault is not None and server_id:
+            user, pwd = self.credential_vault.get_server_credentials(server_id)
         return user or "", pwd or ""
 
     def load_templates(self) -> None:
-        self._templates_worker = FetchKitsuTemplatesWorker(self.production_service)
-        self._templates_worker.data_ready.connect(self.templates_loaded.emit)
-        self._templates_worker.finished.connect(self._on_templates_worker_finished)
-        self._templates_worker.start()
-
-    def _on_templates_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self._templates_worker = None
+        worker = FetchKitsuTemplatesWorker(self.production_service)
+        worker.data_ready.connect(self.templates_loaded.emit)
+        self.workers.start("templates", worker)
 
     def active_workers(self) -> list:
         """Return the currently running workers so callers can defer teardown."""
-        workers = []
-        if self._templates_worker is not None and self._templates_worker.isRunning():
-            workers.append(self._templates_worker)
-        if self._worker is not None and self._worker.isRunning():
-            workers.append(self._worker)
-        return workers
+        return self.workers.active()
 
     def create_project(
         self,
@@ -89,22 +89,40 @@ class NewProjectViewModel(BaseViewModel):
         vcs_user: str,
         vcs_pwd: str,
         vcs_enabled: bool = True,
+        addon_configuration: dict | None = None,
+        server_id: str = "",
     ) -> None:
-        required = vcs_enabled and vcs_requires_credentials(self.config_factory)
+        server = None
+        if server_id:
+            getter = getattr(self.config_factory, "get_server", None)
+            if callable(getter):
+                server = getter(server_id)
+        required = vcs_enabled and vcs_requires_credentials(self.config_factory, server=server)
         creds = ensure_vcs_credentials(
             required=required,
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
             credential_vault=self.credential_vault,
             prompt=self.vcs_prompt,
             report_status=self.report_status,
         )
         if creds is None:
-            self.creation_finished.emit(False, self.tr("VCS credentials are required to create the project."))
+            outcome = CreationOutcome(
+                success=False,
+                message=self.tr("VCS credentials are required to create the project."),
+                failed_step="credentials",
+                can_retry=False,
+                can_rollback=False,
+            )
+            self._last_outcome = outcome
+            self.creation_finished.emit(outcome)
             return
         if required:
             vcs_user, vcs_pwd = creds
 
         self.set_busy(True)
-        self._worker = ProjectCreationWorker(
+        worker = ProjectCreationWorker(
             self.project_creation_service,
             name,
             version,
@@ -114,11 +132,43 @@ class NewProjectViewModel(BaseViewModel):
             vcs_user,
             vcs_pwd,
             vcs_enabled=vcs_enabled,
+            addon_configuration=addon_configuration,
+            server_id=server_id,
         )
-        self._worker.result.connect(self._on_creation_finished)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+        worker.result.connect(self._on_creation_finished)
+        self.workers.start("creation", worker, critical=True)
 
-    def _on_creation_finished(self, success: bool, message: str) -> None:
+    def retry_creation(self) -> None:
+        """Resume the last failed creation from its recorded context."""
+        outcome = self._last_outcome
+        if outcome is None or not outcome.can_retry or outcome.context is None:
+            return
+
+        self.set_busy(True)
+        worker = ProjectCreationRetryWorker(
+            self.project_creation_service, outcome.context
+        )
+        worker.result.connect(self._on_creation_finished)
+        self.workers.start("retry", worker, critical=True)
+
+    def rollback_creation(self) -> None:
+        """Delete everything created by the last failed project creation."""
+        outcome = self._last_outcome
+        if outcome is None or outcome.context is None:
+            return
+
+        self.set_busy(True)
+        worker = ProjectRollbackWorker(
+            self.project_creation_service, outcome.context
+        )
+        worker.result.connect(self._on_rollback_finished)
+        self.workers.start("rollback", worker, critical=True)
+
+    def _on_creation_finished(self, outcome: CreationOutcome) -> None:
         self.set_busy(False)
-        self.creation_finished.emit(success, message)
+        self._last_outcome = outcome
+        self.creation_finished.emit(outcome)
+
+    def _on_rollback_finished(self, success: bool, message: str) -> None:
+        self.set_busy(False)
+        self.rollback_finished.emit(success, message)

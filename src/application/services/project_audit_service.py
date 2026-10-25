@@ -14,9 +14,10 @@ from src.domain.workspace.entities import HubProject, ProjectHealth
 from src.domain.workspace.blueprint import ProjectBlueprint
 
 class ProjectAuditService:
-    def __init__(self, nas_manager, kitsu_manager):
+    def __init__(self, nas_manager, kitsu_manager, installation_service=None):
         self.nas_manager = nas_manager
         self.kitsu_manager = kitsu_manager
+        self.installation_service = installation_service
 
     def audit_project(self, project_name: str, kitsu_id: str = "") -> HubProject:
 
@@ -53,9 +54,9 @@ class ProjectAuditService:
 
                 print(f"[ProjectAuditService] parsed blueprint.to_dict() = {hub_project.blueprint.to_dict()}")
 
-                # Check Local Install based on the blueprint's topography
+                # Check Local Install based on the blueprint's topography.
                 local_dir = project_dir / hub_project.blueprint.topography.vfs_local
-                health.is_installed_locally = local_dir.exists()
+                health.is_installed_locally = self._is_installed_locally(project_dir, local_dir)
 
                 print(f"[ProjectAuditService] vfs_local -> {local_dir} exists={local_dir.exists()}")
 
@@ -73,6 +74,19 @@ class ProjectAuditService:
 
         hub_project.health = health
         return hub_project
+
+    def _is_installed_locally(self, project_dir: Path, local_dir: Path) -> bool:
+        """True when the workspace (config + SVN + Blender) is fully installed.
+
+        Falls back to the legacy ``local`` folder check when no installation
+        service was injected (keeps lightweight unit tests working).
+        """
+        if self.installation_service is None:
+            return local_dir.exists()
+        try:
+            return self.installation_service.verify_installation(project_dir)
+        except Exception:  # noqa: BLE001
+            return local_dir.exists()
 
     def _debug_dump_tree(self, project_dir: Path) -> None:
         print(f"[ProjectAuditService] Files found under {project_dir}:")

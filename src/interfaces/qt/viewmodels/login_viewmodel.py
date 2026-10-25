@@ -17,14 +17,18 @@ from PySide6.QtCore import Signal
 
 from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
+from src.application.services.initial_setup_service import InitialSetupService
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.auth_workers import LoginWorker
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class LoginViewModel(BaseViewModel):
     error_message = Signal(str)
     login_succeeded = Signal()
     config_state_changed = Signal(bool)  # True when a host is already configured
+    setup_state_changed = Signal(bool)  # True when the machine needs initial setup
+    setup_status_ready = Signal(object)  # InitialSetupStatus
     host_set = Signal(str)
 
     def __init__(
@@ -34,14 +38,17 @@ class LoginViewModel(BaseViewModel):
         config_factory,
         status_sink: StatusSink | None = None,
         parent=None,
+        initial_setup_service: InitialSetupService | None = None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.auth_service = auth_service
         self.credential_vault = credential_vault
         self.config_factory = config_factory
-        self._worker = None
+        self.initial_setup_service = initial_setup_service or InitialSetupService(config_factory)
+        self.workers = WorkerManager(self)
         self._temp_email = ""
         self._temp_password = ""
+        self._setup_status = None
 
     # ------------------------------------------------------------------
     # Configuration state (Day 0 vs Day 1+)
@@ -53,11 +60,26 @@ class LoginViewModel(BaseViewModel):
             self.host_set.emit(kitsu_url)
         self.config_state_changed.emit(has_config)
 
+        try:
+            self._setup_status = self.initial_setup_service.status()
+        except Exception as error:  # noqa: BLE001 - startup must never be blocked
+            print(f"[LoginViewModel] Initial setup check failed: {error}")
+            self._setup_status = None
+        self.setup_status_ready.emit(self._setup_status)
+        self.setup_state_changed.emit(self.setup_required())
+
+    def setup_required(self) -> bool:
+        """True when this machine still needs the initial setup wizard."""
+        return bool(self._setup_status is not None and self._setup_status.needs_setup)
+
     def import_seed(self, seed_path: Path, projects_dir: Path | None = None) -> None:
         ok = self.config_factory.import_seed(seed_path)
         if ok and projects_dir is not None:
             self.config_factory.set_local_workspace_root(projects_dir)
         if ok:
+            # Rebind the vault to this machine (portable, relative to the workspace
+            # root) and drop any absolute path inherited from a legacy seed.
+            self.config_factory.set_vault_dir(self.config_factory.get_vault_dir())
             self.load_config_state()
             self.report_status("✓ Configuration imported successfully. You can now log in.", "green")
         else:
@@ -81,11 +103,10 @@ class LoginViewModel(BaseViewModel):
         self.set_busy(True)
         self.report_status("SYSTEM: AUTHENTICATING... PLEASE WAIT.", "yellow")
 
-        self._worker = LoginWorker(self.auth_service, email, password, host)
-        self._worker.success.connect(self._on_login_success)
-        self._worker.error.connect(self._on_login_error)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker.start()
+        worker = LoginWorker(self.auth_service, email, password, host)
+        worker.success.connect(self._on_login_success)
+        worker.error.connect(self._on_login_error)
+        self.workers.start("login", worker, skip_if_running=False)
 
     def _on_login_success(self) -> None:
         self.set_busy(False)

@@ -29,7 +29,9 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QScrollArea, QFrame, QLineEdit, 
                                QFileDialog, QCheckBox, QProgressBar, QComboBox,
                                QMessageBox)
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.infrastructure.file_downloader import FileDownloaderWorker
 from src.infrastructure.manifest_manager import ManifestManager
@@ -42,7 +44,7 @@ from src.infrastructure.provisioning_workers import StudioToolsFetchWorker
 
 MACUARE_LTS_VERSIONS = ("2.83", "2.93", "3.3", "3.6", "4.2", "4.5", "5.2")
 
-class BlenderBaseScraper(QThread):
+class BlenderBaseScraper(ManagedWorker):
     data_ready = Signal(list)
     error_occurred = Signal(str)
 
@@ -57,7 +59,7 @@ class BlenderBaseScraper(QThread):
         except Exception as e:
             self.error_occurred.emit(f"Base connection failed: {str(e)}")
 
-class SubversionScraper(QThread):
+class SubversionScraper(ManagedWorker):
     data_ready = Signal(dict)
     error_occurred = Signal(str)
 
@@ -122,12 +124,12 @@ class SoftwareProvisioningWidget(QWidget):
         # --- LEFT PANEL: Blender Scraper ---
         scraper_frame = QFrame(self)
         scraper_frame.setObjectName("FloatingCard")
-        scraper_frame.setStyleSheet("QFrame#FloatingCard { border: 1px solid #334155; border-radius: 8px; background: #0F172A; }")
+        scraper_frame.setObjectName("WellFrame")
         scraper_layout = QVBoxLayout(scraper_frame)
         
         remote_header = QHBoxLayout()
         lbl_remote = QLabel(self.tr("Remote Index (Blender.org)"))
-        lbl_remote.setStyleSheet("color: #F8FAFC; font-size: 14px; font-weight: bold;")
+        lbl_remote.setObjectName("SectionTitle")
         remote_header.addWidget(lbl_remote)
         remote_header.addStretch()
         
@@ -140,7 +142,7 @@ class SoftwareProvisioningWidget(QWidget):
 
         os_layout = QHBoxLayout()
         lbl_os = QLabel(self.tr("Target OS:"))
-        lbl_os.setStyleSheet("color: #64748B; font-weight: bold; font-size: 12px;")
+        lbl_os.setObjectName("InputLabel")
         os_layout.addWidget(lbl_os)
         
         self.chk_win = QCheckBox("Win")
@@ -149,14 +151,13 @@ class SoftwareProvisioningWidget(QWidget):
         self.chk_mac = QCheckBox("Mac")
         
         for chk in [self.chk_win, self.chk_lin, self.chk_mac]:
-            chk.setStyleSheet("color: #94A3B8; font-size: 12px; margin-left: 5px;")
             os_layout.addWidget(chk)
         os_layout.addStretch()
         scraper_layout.addLayout(os_layout)
 
         self.remote_scroll = QScrollArea()
         self.remote_scroll.setWidgetResizable(True)
-        self.remote_scroll.setStyleSheet("border: none; background: transparent; margin-top: 10px;")
+        self.remote_scroll.setObjectName("InvisibleScrollArea")
         
         self.remote_widget = QWidget()
         self.remote_list_layout = QVBoxLayout(self.remote_widget)
@@ -169,32 +170,32 @@ class SoftwareProvisioningWidget(QWidget):
         # --- RIGHT PANEL: Manifest Wizard ---
         wizard_frame = QFrame(self)
         wizard_frame.setObjectName("FloatingCard")
-        wizard_frame.setStyleSheet("QFrame#FloatingCard { border: 1px solid #334155; border-radius: 8px; background: #0F172A; }")
+        wizard_frame.setObjectName("WellFrame")
         wizard_layout = QVBoxLayout(wizard_frame)
 
         lbl_wizard = QLabel(self.tr("Vault Manifest Wizard"))
-        lbl_wizard.setStyleSheet("color: #F8FAFC; font-size: 14px; font-weight: bold;")
+        lbl_wizard.setObjectName("SectionTitle")
         wizard_layout.addWidget(lbl_wizard)
         
         lbl_desc = QLabel(self.tr("Map required add-ons to local Blender binaries."))
-        lbl_desc.setStyleSheet("color: #64748B; font-size: 11px; margin-bottom: 10px;")
+        lbl_desc.setObjectName("HintLabel")
         wizard_layout.addWidget(lbl_desc)
 
         # Version Selector
         select_layout = QHBoxLayout()
         lbl_sel = QLabel(self.tr("Blender Version:"))
-        lbl_sel.setStyleSheet("color: #94A3B8; font-weight: bold; font-size: 12px;")
+        lbl_sel.setObjectName("InputLabel")
         select_layout.addWidget(lbl_sel)
         
         self.combo_versions = QComboBox()
         self.combo_versions.setFixedHeight(30)
-        self.combo_versions.setStyleSheet("background-color: #1E293B; border: 1px solid #475569; color: white; border-radius: 4px;")
+        self.combo_versions.setObjectName("StandardComboBox")
         self.combo_versions.currentIndexChanged.connect(self._render_mapped_addons)
         select_layout.addWidget(self.combo_versions, stretch=1)
         
         self.btn_refresh = QPushButton("↻")
         self.btn_refresh.setFixedSize(30, 30)
-        self.btn_refresh.setStyleSheet("background-color: #334155; color: white; border-radius: 4px;")
+        self.btn_refresh.setObjectName("SecondaryButton")
         self.btn_refresh.clicked.connect(self._refresh_manifest_ui)
         select_layout.addWidget(self.btn_refresh)
         wizard_layout.addLayout(select_layout)
@@ -202,7 +203,7 @@ class SoftwareProvisioningWidget(QWidget):
         # Add-on List
         self.addons_scroll = QScrollArea()
         self.addons_scroll.setWidgetResizable(True)
-        self.addons_scroll.setStyleSheet("border: 1px solid #1E293B; border-radius: 4px; background: #0F172A; margin-top: 10px;")
+        self.addons_scroll.setObjectName("DataScroll")
         
         self.addons_widget = QWidget()
         self.addons_layout = QVBoxLayout(self.addons_widget)
@@ -234,10 +235,7 @@ class SoftwareProvisioningWidget(QWidget):
         self.progress_bar = QProgressBar(self)
         self.progress_bar.setFixedHeight(6)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar { border: none; background-color: #1E293B; border-radius: 3px; }
-            QProgressBar::chunk { background-color: #10B981; border-radius: 3px; }
-        """)
+        self.progress_bar.setObjectName("SuccessProgress")
         self.progress_bar.hide()
         main_layout.addWidget(self.progress_bar)
 
@@ -261,12 +259,12 @@ class SoftwareProvisioningWidget(QWidget):
         for v in versiones:
             row = QHBoxLayout()
             lbl = QLabel(f"Blender {v}")
-            lbl.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 13px;")
+            lbl.setObjectName("BoardName")
             row.addWidget(lbl)
             
             if v in MACUARE_LTS_VERSIONS:
                 lts = QLabel("LTS")
-                lts.setStyleSheet("background-color: #3B82F6; color: white; padding: 2px 6px; border-radius: 4px; font-size: 9px; font-weight: bold;")
+                lts.setObjectName("BadgeBlue")
                 row.addWidget(lts)
             
             row.addStretch()
@@ -281,7 +279,7 @@ class SoftwareProvisioningWidget(QWidget):
     def _obtener_subversiones(self, base_version: str):
         self._limpiar_layout(self.remote_list_layout)
         lbl_loading = QLabel(self.tr("Scanning packages for v{0}...").format(base_version))
-        lbl_loading.setStyleSheet("color: #F59E0B; font-style: italic;")
+        lbl_loading.setObjectName("WarningLabel")
         self.remote_list_layout.addWidget(lbl_loading)
         
         self.scraper_sub = SubversionScraper(base_version)
@@ -298,7 +296,7 @@ class SoftwareProvisioningWidget(QWidget):
         for sub_v in sorted(data.keys(), reverse=True):
             row = QHBoxLayout()
             lbl = QLabel(f"v{sub_v}")
-            lbl.setStyleSheet("color: #F8FAFC; font-weight: bold; font-size: 12px;")
+            lbl.setObjectName("BoardName")
             row.addWidget(lbl)
             
             os_map = data[sub_v]
@@ -316,7 +314,7 @@ class SoftwareProvisioningWidget(QWidget):
             row.addStretch()
             
             btn = QPushButton(self.tr("↓ Queue"))
-            btn.setStyleSheet("background-color: #4F46E5; color: white; border-radius: 4px; font-size: 11px; padding: 4px 8px;")
+            btn.setObjectName("InfoButton")
             btn.clicked.connect(lambda _, v=sub_v, om=os_map: self._procesar_descarga(om))
             row.addWidget(btn)
             
@@ -324,7 +322,7 @@ class SoftwareProvisioningWidget(QWidget):
 
     def _wrap_in_frame(self, layout):
         frame = QFrame()
-        frame.setStyleSheet("background-color: #1E293B; border-radius: 6px; padding: 2px;")
+        frame.setObjectName("RowFrame")
         frame.setLayout(layout)
         return frame
 
@@ -414,18 +412,18 @@ class SoftwareProvisioningWidget(QWidget):
         addons = self.manifest_manager.get_addons_for_version(current_version)
         if not addons:
             lbl = QLabel(self.tr("No add-ons registered for this version."))
-            lbl.setStyleSheet("color: #64748B; font-style: italic;")
+            lbl.setObjectName("HintLabel")
             self.addons_layout.addWidget(lbl)
             return
             
         for addon in addons:
             row = QHBoxLayout()
             lbl_n = QLabel(f"📦 {addon.get('name', 'Unknown')}")
-            lbl_n.setStyleSheet("color: #10B981; font-weight: bold; font-size: 13px;")
+            lbl_n.setObjectName("SuccessLabel")
             row.addWidget(lbl_n)
             
             lbl_v = QLabel(f"v{addon.get('version', '?.?')}")
-            lbl_v.setStyleSheet("color: #94A3B8; font-size: 11px;")
+            lbl_v.setObjectName("MutedLabel")
             row.addWidget(lbl_v)
             row.addStretch()
             

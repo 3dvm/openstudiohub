@@ -29,11 +29,11 @@ class TabSoftware(QWidget):
 
     def _build_ui(self) -> None:
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(15, 15, 15, 15)
-        main_layout.setSpacing(20)
+        main_layout.setContentsMargins(24, 24, 24, 24)
+        main_layout.setSpacing(16)
 
         split_layout = QHBoxLayout()
-        split_layout.setSpacing(20)
+        split_layout.setSpacing(16)
 
         self.remote_explorer = RemoteExplorerWidget(self, self.vault_service, self.status_callback)
         split_layout.addWidget(self.remote_explorer, stretch=1)

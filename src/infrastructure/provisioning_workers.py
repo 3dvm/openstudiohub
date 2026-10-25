@@ -18,7 +18,9 @@ import os
 
 from pathlib import Path
 from html.parser import HTMLParser
-from PySide6.QtCore import Signal, QThread
+from PySide6.QtCore import Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.provisioning_service import ProvisioningService
 from src.infrastructure.manifest_manager import ManifestManager
@@ -35,7 +37,7 @@ class ApacheIndexParser(HTMLParser):
                 if attr == 'href':
                     self.links.append(value)
 
-class RepoFolderFetcherWorker(QThread):
+class RepoFolderFetcherWorker(ManagedWorker):
     folders_ready = Signal(list)
     status = Signal(str, str)
 
@@ -54,7 +56,7 @@ class RepoFolderFetcherWorker(QThread):
             self.status.emit(f"✗ Failed to reach remote repository: {str(e)}", "red")
             self.folders_ready.emit([])
 
-class RepoFileFetcherWorker(QThread):
+class RepoFileFetcherWorker(ManagedWorker):
     files_ready = Signal(list)
     status = Signal(str, str)
 
@@ -78,7 +80,7 @@ class RepoFileFetcherWorker(QThread):
             self.status.emit(f"✗ Failed to fetch binaries: {str(e)}", "red")
             self.files_ready.emit([])
 
-class BlenderDirectDownloadWorker(QThread):
+class BlenderDirectDownloadWorker(ManagedWorker):
     progress = Signal(int)
     status = Signal(str, str)
     finished = Signal(bool, str)
@@ -130,7 +132,28 @@ class BlenderDirectDownloadWorker(QThread):
             self.status.emit(f"✗ Archive transfer failed: {str(e)}", "red")
             self.finished.emit(False, "")
 
-class StudioToolsFetchWorker(QThread):
+class VaultIntegrityWorker(ManagedWorker):
+    """Audits the on-disk vault against the manifest off the UI thread."""
+
+    report_ready = Signal(object)
+    error_occurred = Signal(str)
+
+    def __init__(self, vault_root: Path, manifest_versions: dict):
+        super().__init__()
+        self.vault_root = vault_root
+        self.manifest_versions = manifest_versions
+
+    def run(self):
+        try:
+            from src.domain.vault.integrity import VaultIntegrityAuditor
+
+            report = VaultIntegrityAuditor(self.vault_root).audit(self.manifest_versions)
+            self.report_ready.emit(report)
+        except Exception as e:  # noqa: BLE001
+            self.error_occurred.emit(str(e))
+
+
+class StudioToolsFetchWorker(ManagedWorker):
     """
     Descarga la release oficial de Studio Tools, detecta las carpetas internas,
     las re-empaqueta en archivos .zip dinámicamente según la barrera de Blender 4.2,

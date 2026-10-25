@@ -14,7 +14,9 @@ injected callbacks provided by the parent ViewModel.
 from pathlib import Path
 from typing import Callable, Optional
 
-from PySide6.QtCore import QSize, Qt, QThread, Signal
+from PySide6.QtCore import QSize, Qt, Signal
+
+from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtGui import QColor, QCursor, QIcon, QImage, QPixmap
 from PySide6.QtWidgets import (
     QDialog,
@@ -32,10 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.interfaces.qt.workers.worker_keepalive import keep_worker_alive
-
-
-class ProjectThumbnailWorker(QThread):
+class ProjectThumbnailWorker(ManagedWorker):
     """Background thread for downloading project thumbnails over HTTP."""
 
     image_downloaded = Signal(bytes)
@@ -73,11 +72,11 @@ class DeleteProjectDialog(QDialog):
 
         lbl_warn = QLabel(self.tr("You are about to permanently delete the project:\n<b>{0}</b>\n\nThis action will destroy Kitsu data, the SVN repository, and local files.").format(self.project_name))
         lbl_warn.setWordWrap(True)
-        lbl_warn.setStyleSheet("color: #EF4444; font-size: 13px;")
+        lbl_warn.setObjectName("ErrorLabel")
         layout.addWidget(lbl_warn)
 
         lbl_instruct = QLabel(self.tr("To confirm, type <b>{0}</b> below:").format(self.project_name))
-        lbl_instruct.setStyleSheet("color: #94A3B8;")
+        lbl_instruct.setObjectName("MutedLabel")
         layout.addWidget(lbl_instruct)
 
         self.entry_confirm = QLineEdit()
@@ -93,7 +92,7 @@ class DeleteProjectDialog(QDialog):
         self.btn_cancel.clicked.connect(self.reject)
 
         self.btn_delete = QPushButton(self.tr("Permanently Delete"))
-        self.btn_delete.setStyleSheet("background-color: #EF4444; color: white; font-weight: bold; border-radius: 6px;")
+        self.btn_delete.setObjectName("DangerButton")
         self.btn_delete.setFixedHeight(35)
         self.btn_delete.setEnabled(False)
         self.btn_delete.clicked.connect(self.accept)
@@ -123,7 +122,15 @@ class ProjectCard(QFrame):
         on_watchtower: Callable,
         on_open_wizard: Optional[Callable] = None,
         on_repair: Optional[Callable] = None,
-
+        on_migrate: Optional[Callable] = None,
+        on_export: Optional[Callable] = None,
+        on_publish: Optional[Callable] = None,
+        on_reset: Optional[Callable] = None,
+        on_apply_policy: Optional[Callable] = None,
+        on_manage_locks: Optional[Callable] = None,
+        on_configure: Optional[Callable] = None,
+        on_open_tasks: Optional[Callable] = None,
+        tasks_only: bool = False,
     ) -> None:
         super().__init__(parent)
 
@@ -132,6 +139,8 @@ class ProjectCard(QFrame):
         self.token = token
         self.host = host
         self.thumbnail_fetcher = thumbnail_fetcher
+        self.on_open_tasks = on_open_tasks
+        self.tasks_only = tasks_only
 
         self.on_install = on_install
         self.on_launch = on_launch
@@ -140,6 +149,13 @@ class ProjectCard(QFrame):
         self.on_watchtower = on_watchtower
         self.on_open_wizard = on_open_wizard
         self.on_repair = on_repair
+        self.on_migrate = on_migrate
+        self.on_export = on_export
+        self.on_publish = on_publish
+        self.on_reset = on_reset
+        self.on_apply_policy = on_apply_policy
+        self.on_manage_locks = on_manage_locks
+        self.on_configure = on_configure
 
         self.status = dict(status) if status else {}
         self.project_dir = self.status.get("project_dir")
@@ -148,16 +164,16 @@ class ProjectCard(QFrame):
         self.setObjectName("FloatingCard")
         self.setFixedSize(320, 330)
 
-        self.setStyleSheet("""
-            QFrame#FloatingCard { background-color: #1E293B; border-radius: 12px; border: 1px solid #334155; }
-            QFrame#FloatingCard:hover { border: 1px solid #3B82F6; }
-        """)
-
         self._build_ui()
         if status is not None:
             self.apply_status(status)
+        elif self.tasks_only and self.on_open_tasks is not None:
+            self.btn_primary_action.setText(self.tr("Open Tasks"))
+            self.btn_primary_action.setEnabled(True)
         else:
             self.btn_primary_action.setEnabled(False)
+        if self.tasks_only:
+            self.setCursor(Qt.PointingHandCursor)
         self._load_thumbnail()
 
     def _build_ui(self) -> None:
@@ -169,32 +185,41 @@ class ProjectCard(QFrame):
         header_layout.setContentsMargins(0, 0, 0, 0)
 
         lbl_status = QLabel(self.project_data.get("project_status_name", self.tr("Active Project")))
-        lbl_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
+        lbl_status.setObjectName("MutedLabel")
         header_layout.addWidget(lbl_status)
 
         header_layout.addStretch()
 
         self.btn_options = QToolButton()
+        self.btn_options.setObjectName("CardMenuButton")
         self.btn_options.setText("⋮")
         self.btn_options.setCursor(QCursor(Qt.PointingHandCursor))
-        self.btn_options.setStyleSheet("""
-            QToolButton { background: transparent; color: #94A3B8; font-size: 20px; font-weight: bold; border: none; padding-bottom: 5px; }
-            QToolButton:hover { color: #F8FAFC; }
-            QToolButton::menu-indicator { image: none; }
-        """)
         self.btn_options.setPopupMode(QToolButton.InstantPopup)
 
         self.options_menu = QMenu(self)
-        self.options_menu.setStyleSheet("""
-            QMenu { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; }
-            QMenu::item { padding: 8px 25px; }
-            QMenu::item:selected { background-color: #3B82F6; }
-        """)
-
         action_config = self.options_menu.addAction(self.tr("⚙️ Configure Project"))
-        action_config.triggered.connect(lambda: self.on_open_kitsu("/production-settings"))
+        action_config.triggered.connect(self._on_configure_requested)
+        action_config.setEnabled(self.on_configure is not None)
+
+        if self.on_open_tasks is not None and not self.tasks_only:
+            action_tasks = self.options_menu.addAction(self.tr("📋 View Tasks"))
+            action_tasks.triggered.connect(self._on_open_tasks_requested)
+            self.options_menu.addSeparator()
 
         if self.user_role == "td":
+            self.options_menu.addSeparator()
+            action_export = self.options_menu.addAction(self.tr("📤 Export Kitsu Project…"))
+            action_export.triggered.connect(self._on_export_requested)
+            action_publish = self.options_menu.addAction(self.tr("⬆️ Publish Files to VCS…"))
+            action_publish.triggered.connect(self._on_publish_requested)
+            action_reset = self.options_menu.addAction(self.tr("♻️ Reset VCS Working Copy…"))
+            action_reset.triggered.connect(self._on_reset_requested)
+            action_policy = self.options_menu.addAction(self.tr("Apply VCS Lock Policy…"))
+            action_policy.triggered.connect(self._on_apply_policy_requested)
+            action_locks = self.options_menu.addAction(self.tr("Manage VCS Locks…"))
+            action_locks.triggered.connect(self._on_manage_locks_requested)
+            action_migrate = self.options_menu.addAction(self.tr("🚚 Migrate VCS…"))
+            action_migrate.triggered.connect(self._on_migrate_requested)
             self.options_menu.addSeparator()
             self.options_menu.addAction(self.tr("📦 Archive Project"))
             self.options_menu.addSeparator()
@@ -205,23 +230,23 @@ class ProjectCard(QFrame):
             action_delete.triggered.connect(self._on_delete_requested)
 
         self.btn_options.setMenu(self.options_menu)
+        self.btn_options.setVisible(not self.tasks_only)
         header_layout.addWidget(self.btn_options)
         main_layout.addLayout(header_layout)
 
         self.thumb_stack = QStackedWidget()
         self.thumb_stack.setFixedHeight(130)
-        self.thumb_stack.setStyleSheet("QStackedWidget { background-color: #0F172A; border-radius: 8px; border: 1px solid #1E293B; }")
+        self.thumb_stack.setObjectName("ThumbnailFrame")
 
         self.page_placeholder = QWidget()
         placeholder_layout = QVBoxLayout(self.page_placeholder)
         placeholder_layout.setAlignment(Qt.AlignCenter)
         self.lbl_placeholder_text = QLabel(self.tr("AWESOME PROJECT"))
-        self.lbl_placeholder_text.setStyleSheet("color: #64748B; font-size: 10px; font-weight: bold;")
+        self.lbl_placeholder_text.setObjectName("PlaceholderText")
         placeholder_layout.addWidget(self.lbl_placeholder_text)
 
         self.thumb_label = QLabel()
         self.thumb_label.setAlignment(Qt.AlignCenter)
-        self.thumb_label.setStyleSheet("border-radius: 8px; background-color: transparent;")
 
         self.thumb_stack.addWidget(self.page_placeholder)
         self.thumb_stack.addWidget(self.thumb_label)
@@ -230,18 +255,18 @@ class ProjectCard(QFrame):
         title_layout = QHBoxLayout()
         self.project_name = self.project_data.get("name", self.tr("Unknown Project"))
         self.lbl_title = QLabel(self.project_name)
-        self.lbl_title.setStyleSheet("color: #F8FAFC; font-size: 15px; font-weight: bold;")
+        self.lbl_title.setObjectName("CardTitleSmall")
         title_layout.addWidget(self.lbl_title)
         title_layout.addStretch()
 
         self.lbl_badge = QLabel(self.tr("Checking..."))
         self.lbl_badge.setAlignment(Qt.AlignCenter)
-        self.lbl_badge.setStyleSheet("background-color: #0F172A; color: #94A3B8; border: 1px solid #334155; border-radius: 6px; padding: 2px 8px; font-size: 10px; font-weight: bold;")
+        self.lbl_badge.setObjectName("CardBadge")
         title_layout.addWidget(self.lbl_badge)
         main_layout.addLayout(title_layout)
 
         self.lbl_sync_status = QLabel(self.tr("🗄️ Checking..."))
-        self.lbl_sync_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
+        self.lbl_sync_status.setObjectName("StatusLabel")
         main_layout.addWidget(self.lbl_sync_status)
 
         self.actions_layout = QHBoxLayout()
@@ -255,11 +280,12 @@ class ProjectCard(QFrame):
         self.btn_kitsu_dropdown.setFixedHeight(35)
 
         kitsu_menu = QMenu(self)
-        kitsu_menu.setStyleSheet("QMenu { background-color: #0F172A; color: #F8FAFC; border: 1px solid #334155; border-radius: 6px; } QMenu::item { padding: 8px 25px; } QMenu::item:selected { background-color: #3B82F6; }")
         kitsu_menu.addAction("To: Assets", lambda: self.on_open_kitsu("/assets"))
         kitsu_menu.addAction("To: Shots", lambda: self.on_open_kitsu("/shots"))
         kitsu_menu.addAction("To: Sequences", lambda: self.on_open_kitsu("/sequences"))
         kitsu_menu.addAction("To: Edit", lambda: self.on_open_kitsu("/edits"))
+        kitsu_menu.addSeparator()
+        kitsu_menu.addAction(self.tr("⚙️ Production Settings"), lambda: self.on_open_kitsu("/production-settings"))
         self.btn_kitsu_dropdown.setMenu(kitsu_menu)
 
         self.btn_watchtower = QPushButton("")
@@ -288,17 +314,10 @@ class ProjectCard(QFrame):
 
         if self.user_role == "td":
             self.btn_kitsu_dropdown.setText("Open in Kitsu ▼")
-            self.btn_kitsu_dropdown.setStyleSheet("""
-                QToolButton { background-color: #F97316; color: white; font-weight: bold; border-radius: 6px; padding: 0 15px; }
-                QToolButton:hover { background-color: #EA580C; }
-                QToolButton::menu-indicator { image: none; }
-            """)
+            self.btn_kitsu_dropdown.setObjectName("CardPrimaryToolButton")
             self.btn_kitsu_dropdown.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-            self.btn_watchtower.setStyleSheet("""
-                QPushButton { background: transparent; border: 1px solid #334155; border-radius: 6px; font-size: 16px;}
-                QPushButton:hover { background-color: #334155; }
-            """)
+            self.btn_watchtower.setObjectName("CardIconButton")
 
             self.actions_layout.addWidget(self.btn_kitsu_dropdown)
             self.actions_layout.addWidget(self.btn_watchtower)
@@ -322,20 +341,13 @@ class ProjectCard(QFrame):
             else:
                 self.btn_kitsu_dropdown.setText("🎬 ▼")
 
-            self.btn_kitsu_dropdown.setStyleSheet("""
-                QToolButton { background: transparent; color: #F97316; border: 1px solid #334155; border-radius: 6px; padding: 0 10px; font-weight: bold;}
-                QToolButton:hover { background-color: rgba(249, 115, 22, 0.1); border-color: #F97316; }
-                QToolButton::menu-indicator { image: none; }
-            """)
+            self.btn_kitsu_dropdown.setObjectName("CardOutlineToolButton")
 
             self.actions_layout.addWidget(self.btn_primary_action, stretch=1)
             self.actions_layout.addWidget(self.btn_kitsu_dropdown)
 
             if self.user_role == "manager":
-                self.btn_watchtower.setStyleSheet("""
-                    QPushButton { background: transparent; border: 1px solid #334155; border-radius: 6px; font-size: 16px;}
-                    QPushButton:hover { background-color: #334155; }
-                """)
+                self.btn_watchtower.setObjectName("CardIconButton")
                 self.actions_layout.addWidget(self.btn_watchtower)
             else:
                 self.btn_watchtower.hide()
@@ -351,6 +363,15 @@ class ProjectCard(QFrame):
         self.project_dir = status.get("project_dir")
         self.is_installed = status.get("is_installed", False)
 
+        if self.tasks_only:
+            self.lbl_sync_status.setText(status.get("sync_text", ""))
+            self.lbl_sync_status.setObjectName("StatusLabel")
+            self.lbl_badge.setText(status.get("badge_text", ""))
+            self.btn_primary_action.setText(self.tr("Open Tasks"))
+            self.btn_primary_action.setObjectName("InfoButton")
+            self.btn_primary_action.setEnabled(self.on_open_tasks is not None)
+            return
+
         if status.get("is_corrupted"):
             error_msg = status.get("error_type", "Unknown Error")
             self.lbl_sync_status.setText(self.tr(f"Corrupted: {error_msg}"))
@@ -360,9 +381,7 @@ class ProjectCard(QFrame):
             if self.user_role == "td" and self.on_repair:
                 self._show_primary_action()
                 self.btn_primary_action.setEnabled(True)
-                self.btn_primary_action.setStyleSheet(
-                    "background-color: #EF4444; color: white; font-weight: bold; border-radius: 6px; border: none;"
-                )
+                self.btn_primary_action.setObjectName("DangerButton")
             else:
                 self.btn_primary_action.setEnabled(False)
 
@@ -372,23 +391,22 @@ class ProjectCard(QFrame):
 
         if status.get("is_installed") and self.project_dir:
             self.lbl_sync_status.setText(self.tr("🗄️ 🟢 Ready on Disk"))
-            self.lbl_sync_status.setStyleSheet("color: #10B981; font-size: 12px; font-weight: bold;")
             self.lbl_badge.setText(status.get("badge_text", ""))
 
             if self.user_role == "manager":
                 self.btn_primary_action.setText(self.tr("Pipeline Wizard"))
-                self.btn_primary_action.setStyleSheet("background-color: #F59E0B; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
+                self.btn_primary_action.setObjectName("WarningButton")
             elif self.user_role != "td":
                 self.btn_primary_action.setText(self.tr("Launch Project"))
-                self.btn_primary_action.setStyleSheet("background-color: #3B82F6; color: white; font-weight: bold; border-radius: 6px; border: none;")
+                self.btn_primary_action.setObjectName("InfoButton")
         else:
             self.lbl_sync_status.setText(self.tr("🗄️ ⚪ Cloud Only"))
-            self.lbl_sync_status.setStyleSheet("color: #94A3B8; font-size: 12px; font-weight: bold;")
+            self.lbl_sync_status.setObjectName("StatusLabel")
             self.lbl_badge.setText(self.tr("Not Mounted"))
 
             if self.user_role != "td":
                 self.btn_primary_action.setText(self.tr("Install Workspace ↓"))
-                self.btn_primary_action.setStyleSheet("background-color: #10B981; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
+                self.btn_primary_action.setObjectName("SuccessButton")
 
     def _show_primary_action(self) -> None:
         """Ensure the primary action button is part of the TD actions layout."""
@@ -396,8 +414,27 @@ class ProjectCard(QFrame):
             self.actions_layout.addWidget(self.btn_primary_action)
         self.btn_primary_action.show()
 
+    def mousePressEvent(self, event) -> None:  # noqa: D102 (Qt override)
+        if (
+            self.tasks_only
+            and self.on_open_tasks is not None
+            and event.button() == Qt.LeftButton
+        ):
+            self._on_open_tasks_requested()
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def _on_open_tasks_requested(self) -> None:
+        if self.on_open_tasks is not None:
+            self.on_open_tasks(self.project_data.get("id", ""))
+
     def _on_primary_action(self) -> None:
         """Dispatch the primary button click based on the latest audited status."""
+        if self.tasks_only and self.on_open_tasks is not None:
+            self._on_open_tasks_requested()
+            return
+
         if self.status.get("is_corrupted"):
             if self.on_repair:
                 self.on_repair(
@@ -421,7 +458,7 @@ class ProjectCard(QFrame):
     def _request_install(self, project_dir) -> None:
         self.btn_primary_action.setEnabled(False)
         self.btn_primary_action.setText(self.tr("Installing..."))
-        self.btn_primary_action.setStyleSheet("background-color: #94A3B8; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
+        self.btn_primary_action.setObjectName("MutedButton")
         self.on_install(project_dir)
 
     def set_install_result(self, success: bool, message: str) -> None:
@@ -429,7 +466,7 @@ class ProjectCard(QFrame):
         if not success:
             self.btn_primary_action.setEnabled(True)
             self.btn_primary_action.setText(self.tr("Retry Install ↓"))
-            self.btn_primary_action.setStyleSheet("background-color: #10B981; color: #0F172A; font-weight: bold; border-radius: 6px; border: none;")
+            self.btn_primary_action.setObjectName("SuccessButton")
 
     def _on_watchtower_clicked(self) -> None:
         if self.project_dir:
@@ -442,13 +479,50 @@ class ProjectCard(QFrame):
         if dialog.exec() == QDialog.Accepted:
             self.on_delete(self.project_name)
 
+    def _on_migrate_requested(self) -> None:
+        if not self.on_migrate:
+            return
+        self.on_migrate(self.project_name, self.project_dir)
+
+    def _on_export_requested(self) -> None:
+        if not self.on_export:
+            return
+        self.on_export(self.project_name, self.project_data.get("id", ""))
+
+    def _on_publish_requested(self) -> None:
+        if not self.on_publish:
+            return
+        self.on_publish(self.project_name, self.project_data.get("id", ""))
+
+    def _on_reset_requested(self) -> None:
+        if not self.on_reset:
+            return
+        self.on_reset(self.project_name, self.project_data.get("id", ""))
+
+    def _on_apply_policy_requested(self) -> None:
+        if not self.on_apply_policy:
+            return
+        self.on_apply_policy(self.project_name, self.project_data.get("id", ""))
+
+    def _on_manage_locks_requested(self) -> None:
+        if not self.on_manage_locks:
+            return
+        self.on_manage_locks(self.project_name, self.project_data.get("id", ""))
+
+    def _on_configure_requested(self) -> None:
+        if not self.on_configure:
+            return
+        self.on_configure(self.project_name, self.project_data.get("id", ""), self.project_dir)
+
     def _load_thumbnail(self) -> None:
         project_id = self.project_data.get("id")
+        if not project_id or not self.token or not self.host:
+            self._on_thumbnail_error("No thumbnail available")
+            return
         self.worker = ProjectThumbnailWorker(self.thumbnail_fetcher, project_id, self.token, self.host)
         self.worker.image_downloaded.connect(self._on_thumbnail_ready)
         self.worker.error_occurred.connect(self._on_thumbnail_error)
         self.worker.finished.connect(self.worker.deleteLater)
-        keep_worker_alive(self.worker)
         self.worker.start()
 
     def _on_thumbnail_ready(self, img_bytes: bytes) -> None:

@@ -16,13 +16,19 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 
 from src.application.services.production_service import ProductionService
+from src.application.services.vcs_migration_service import VCSMigrationService
 from src.infrastructure.dev_defaults import (
     DEV_KITSU_DB_PASSWORD,
     DEV_KITSU_INDEXER_KEY,
     DEV_KITSU_SECRET_KEY,
 )
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
-from src.interfaces.qt.workers.infrastructure_workers import DockerWorker, KitsuSeederWorker
+from src.interfaces.qt.workers.infrastructure_workers import (
+    DockerWorker,
+    KitsuSeederWorker,
+    RemoteServerTestWorker,
+)
+from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
 class InfrastructureViewModel(BaseViewModel):
@@ -33,17 +39,89 @@ class InfrastructureViewModel(BaseViewModel):
         config_factory,
         production_service: ProductionService,
         status_sink: StatusSink | None = None,
+        credential_vault=None,
+        ssh_passphrase_prompt=None,
         parent=None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.config_factory = config_factory
         self.production_service = production_service
+        self.credential_vault = credential_vault
+        self.ssh_passphrase_prompt = ssh_passphrase_prompt
+        self.migration_service = VCSMigrationService(
+            config_factory,
+            credential_vault=credential_vault,
+            status_callback=self.report_status,
+        )
 
         self.infra_dir = self.config_factory.get_workspace_root() / ".openstudio_infra"
         self.infra_dir.mkdir(parents=True, exist_ok=True)
 
-        self.seeder_worker = None
-        self.worker = None
+        self.workers = WorkerManager(self)
+
+    # ------------------------------------------------------------------
+    # VCS server registry
+    # ------------------------------------------------------------------
+    def list_servers(self) -> list:
+        registry = self.config_factory.get_vcs_servers()
+        return [
+            {**server.to_dict(), "is_default": server.id == registry.default_server_id}
+            for server in registry.servers
+        ]
+
+    def empty_server(self) -> dict:
+        from src.domain.workspace.vcs_server import VCSServer
+
+        return VCSServer(id="", name="", adapter="svn").to_dict()
+
+    def make_server_id(self, name: str) -> str:
+        return self.config_factory.make_server_id(name)
+
+    def save_server(self, payload: dict) -> bool:
+        if not (payload.get("id") or "").strip():
+            payload = dict(payload)
+            payload["id"] = self.config_factory.make_server_id(payload.get("name") or "Server")
+        ok = self.config_factory.save_vcs_server(payload)
+        message = "VCS server saved." if ok else "Failed to save the VCS server."
+        self.operation_finished.emit(ok, message)
+        return ok
+
+    def remove_server(self, server_id: str) -> bool:
+        ok = self.config_factory.remove_vcs_server(server_id)
+        message = "VCS server removed." if ok else "Failed to remove the VCS server."
+        self.operation_finished.emit(ok, message)
+        return ok
+
+    def set_default_server(self, server_id: str) -> bool:
+        ok = self.config_factory.set_default_server(server_id)
+        message = "Default VCS server updated." if ok else "Failed to set the default VCS server."
+        self.operation_finished.emit(ok, message)
+        return ok
+
+    def test_server(self, server_id: str, target: str = "ssh", verbose: bool = False) -> None:
+        if self.workers.is_running("remote_test"):
+            self.report_status("A connection test is already running...", "red")
+            return
+        server = self.config_factory.get_server(server_id)
+        if server is None:
+            self.report_status("Select a saved VCS server before testing.", "red")
+            return
+        if (
+            server.is_remote
+            and target == "ssh"
+            and self.credential_vault is not None
+            and not self.credential_vault.has_ssh_passphrase(server_id)
+            and self.ssh_passphrase_prompt is not None
+        ):
+            passphrase = self.ssh_passphrase_prompt(server.name)
+            if passphrase:
+                self.credential_vault.save_ssh_passphrase(server_id, passphrase)
+        self.report_status(f"Testing {server.name} {target.upper()} connection...", "yellow")
+        worker = RemoteServerTestWorker(
+            self.migration_service, target, server=server, verbose=verbose
+        )
+        worker.finished_signal.connect(self._on_worker_finished)
+        self.workers.start("remote_test", worker)
 
     # ------------------------------------------------------------------
     # SVN lifecycle
@@ -117,35 +195,21 @@ SECRET_KEY={DEV_KITSU_SECRET_KEY}
     # Database seeders
     # ------------------------------------------------------------------
     def run_seeder(self, action: str) -> None:
-        if self.seeder_worker is not None and self.seeder_worker.isRunning():
+        if self.workers.is_running("seeder"):
             self.report_status("A seeder is already running...", "red")
             return
         self.report_status("Running Seeder against the Database...", "yellow")
-        self.seeder_worker = KitsuSeederWorker(self.production_service, action)
-        self.seeder_worker.finished_signal.connect(self._on_worker_finished)
-        self.seeder_worker.finished.connect(self._on_seeder_worker_finished)
-        self.seeder_worker.start()
-
-    def _on_seeder_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self.seeder_worker = None
+        worker = KitsuSeederWorker(self.production_service, action)
+        worker.finished_signal.connect(self._on_worker_finished)
+        self.workers.start("seeder", worker, critical=True)
 
     def _run_docker_worker(self, command: list, cwd: Path | None = None) -> None:
-        if self.worker is not None and self.worker.isRunning():
+        if self.workers.is_running("docker"):
             self.report_status("A docker operation is already running...", "red")
             return
-        self.worker = DockerWorker(command, cwd)
-        self.worker.finished_signal.connect(self._on_worker_finished)
-        self.worker.finished.connect(self._on_docker_worker_finished)
-        self.worker.start()
-
-    def _on_docker_worker_finished(self) -> None:
-        worker = self.sender()
-        if worker is not None:
-            worker.deleteLater()
-        self.worker = None
+        worker = DockerWorker(command, cwd)
+        worker.finished_signal.connect(self._on_worker_finished)
+        self.workers.start("docker", worker, critical=True)
 
     def _on_worker_finished(self, success: bool, message: str) -> None:
         color = "green" if success else "red"
