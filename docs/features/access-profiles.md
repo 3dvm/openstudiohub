@@ -18,9 +18,10 @@ support can be added later without changing the profile model.
 
 ## Switching views
 
-When an account has more than one profile, a selector appears next to the user
-name in the top bar. Selecting another profile rebuilds the dashboard with that
-profile's visible capabilities:
+The top bar always shows the active profile text (`TD`, `PM`, `Editor` or
+`Artist`). When an account has more than one profile, that text opens a selector
+menu. Selecting another profile rebuilds the dashboard with that profile's
+visible capabilities:
 
 - a TD viewing the Artist profile sees the artist workflow, not TD-only actions;
 - a PM viewing the Artist profile sees the artist workflow;

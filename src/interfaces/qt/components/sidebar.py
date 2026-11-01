@@ -16,11 +16,19 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
 
+from src.interfaces.qt.components.remote_images import (
+    RemoteImageWorker,
+    pixmap_from_bytes,
+    thumbnail_url,
+)
+
 
 class Sidebar(QFrame):
-    def __init__(self, parent, config_factory) -> None:
+    def __init__(self, parent, config_factory, auth_service=None) -> None:
         super().__init__(parent)
         self.config_factory = config_factory
+        self.auth = auth_service
+        self._logo_worker = None
         self.setObjectName("SidebarFrame")
         self.setFixedWidth(240)
         self.sidebar_buttons = {}
@@ -53,9 +61,13 @@ class Sidebar(QFrame):
         self.branding_layout.setSpacing(12)
 
         self.logo_icon = QLabel()
+        self._fallback_logo = None
         logo_path = Path("assets/logo_topbar.png")
         if logo_path.exists():
-            self.logo_icon.setPixmap(QPixmap(str(logo_path)).scaledToHeight(32, Qt.SmoothTransformation))
+            self._fallback_logo = QPixmap(str(logo_path))
+            self.logo_icon.setPixmap(
+                self._fallback_logo.scaledToHeight(32, Qt.SmoothTransformation)
+            )
         self.branding_layout.addWidget(self.logo_icon)
 
         studio_name = self.config_factory.get_studio_name() or "OpenStudio"
@@ -66,6 +78,27 @@ class Sidebar(QFrame):
 
         self.branding_layout.addStretch()
         self.main_layout.addLayout(self.branding_layout)
+        self._load_kitsu_logo()
+
+    def _load_kitsu_logo(self) -> None:
+        if self.auth is None:
+            return
+        organisation = getattr(self.auth, "organisation", None) or {}
+        organisation_id = str((organisation or {}).get("id") or "")
+        if not organisation_id or not bool((organisation or {}).get("has_avatar")):
+            return
+        url = thumbnail_url(getattr(self.auth, "host", ""), "organisations", organisation_id)
+        if not url:
+            return
+        worker = RemoteImageWorker(url, getattr(self.auth, "access_token", lambda: "")())
+        worker.image_ready.connect(self._on_logo_ready)
+        self._logo_worker = worker
+        worker.start()
+
+    def _on_logo_ready(self, data: bytes) -> None:
+        pixmap = pixmap_from_bytes(data)
+        if pixmap is not None:
+            self.logo_icon.setPixmap(pixmap.scaledToHeight(32, Qt.SmoothTransformation))
 
     def add_button(self, btn_id: str, text: str, emoji: str, icon_name: str, callback, active: bool = False) -> None:
         self._add_button(

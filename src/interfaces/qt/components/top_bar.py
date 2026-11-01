@@ -27,6 +27,11 @@ from PySide6.QtWidgets import (
 from src.application.services.auth_service import AuthService
 from src.domain.identity.value_objects import Role, ViewProfile
 from src.interfaces.qt.components.notification_panel import NotificationPanel
+from src.interfaces.qt.components.remote_images import (
+    RemoteImageWorker,
+    circular_icon,
+    thumbnail_url,
+)
 
 
 class TopBar(QFrame):
@@ -55,6 +60,7 @@ class TopBar(QFrame):
         self.active_profile = str(active_profile or "")
         self.profile_labels = dict(profile_labels or {})
         self.notification_panel = None
+        self._avatar_worker = None
 
         self.setObjectName("TopBar")
         self.setFixedHeight(65)
@@ -116,6 +122,7 @@ class TopBar(QFrame):
         self.btn_profile.setObjectName("TopBarProfileButton")
         self.btn_profile.setCursor(Qt.PointingHandCursor)
         self.btn_profile.setFixedHeight(30)
+        self.btn_profile.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self._configure_profile_button(role)
         layout.addWidget(self.btn_profile)
 
@@ -129,6 +136,7 @@ class TopBar(QFrame):
         else:
             self.btn_avatar.setText("👤")
         layout.addWidget(self.btn_avatar)
+        self._load_kitsu_avatar()
 
         bell_container = QWidget()
         bell_grid = QGridLayout(bell_container)
@@ -190,7 +198,6 @@ class TopBar(QFrame):
 
         if len(profiles) <= 1 or not callable(self.on_profile_selected):
             self.btn_profile.setPopupMode(QToolButton.ToolButtonPopupMode.DelayedPopup)
-            self.btn_profile.setArrowType(Qt.NoArrow)
             return
 
         menu = QMenu(self.btn_profile)
@@ -203,7 +210,28 @@ class TopBar(QFrame):
             )
         self.btn_profile.setMenu(menu)
         self.btn_profile.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.btn_profile.setArrowType(Qt.DownArrow)
+
+    def _load_kitsu_avatar(self) -> None:
+        if self.auth is None:
+            return
+        raw = getattr(self.auth, "raw_user_data", None) or {}
+        user = getattr(self.auth, "current_user", None)
+        user_id = str((raw or {}).get("id") or getattr(user, "id", "") or "")
+        if not user_id or not bool((raw or {}).get("has_avatar")):
+            return
+        url = thumbnail_url(getattr(self.auth, "host", ""), "persons", user_id)
+        if not url:
+            return
+        worker = RemoteImageWorker(url, getattr(self.auth, "access_token", lambda: "")())
+        worker.image_ready.connect(self._on_avatar_ready)
+        self._avatar_worker = worker
+        worker.start()
+
+    def _on_avatar_ready(self, data: bytes) -> None:
+        icon = circular_icon(data, 28)
+        if icon is not None:
+            self.btn_avatar.setIcon(icon)
+            self.btn_avatar.setIconSize(QSize(28, 28))
 
     def _on_unread_count(self, count: int) -> None:
         if count <= 0:

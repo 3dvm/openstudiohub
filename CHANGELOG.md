@@ -37,6 +37,13 @@ releases may include larger UI or workflow changes.
   - project integrity marks the workspace as needing an update.
 - `openstudio_toolkit` 0.6.0, with self-contained QA rules so it loads from the
   Blender extension sandbox.
+- Kitsu-backed shell identity:
+  - the top bar shows the active profile name (TD, PM, Editor or Artist)
+    instead of a second dropdown arrow;
+  - the user avatar is downloaded from Kitsu and falls back to the local user
+    icon;
+  - the sidebar branding downloads the studio logo from Kitsu and falls back to
+    the bundled logo.
 - Per-project Blender preferences:
   - Temporary Files points to `<vfs_local>/blender-tmp/`;
   - Undo Steps is set to 256;

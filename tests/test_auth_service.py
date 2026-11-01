@@ -35,6 +35,9 @@ class FakeKitsu:
     def get_current_user(self):
         return self.user
 
+    def get_organisation(self):
+        return {"id": "org-1", "name": "Studio", "has_avatar": True}
+
     def set_tokens(self, tokens):
         self.tokens = tokens or {}
 
@@ -83,6 +86,7 @@ def test_login_success():
     assert msg == "Login successful."
     assert svc.current_role() is Role.TD
     assert svc.current_user.email == "ada@studio.com"
+    assert svc.organisation == {"id": "org-1", "name": "Studio", "has_avatar": True}
     assert svc.host == "http://localhost:8080/api"
     assert repo.session is not None
     assert repo.session.tokens["access_token"] == "tok-123"

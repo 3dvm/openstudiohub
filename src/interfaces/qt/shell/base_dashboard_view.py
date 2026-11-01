@@ -69,7 +69,7 @@ class BaseDashboardView(QWidget):
         self.main_layout.setSpacing(0)
 
         # 1. SIDEBAR (full height, includes branding)
-        self.sidebar = Sidebar(self, self.config_factory)
+        self.sidebar = Sidebar(self, self.config_factory, auth_service=self.auth)
         self.main_layout.addWidget(self.sidebar)
 
         # 2. RIGHT PANEL (fluid container)

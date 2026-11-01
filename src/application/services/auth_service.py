@@ -35,6 +35,7 @@ class AuthService:
         self.bus = bus or MessageBus()
         self._user: Optional[User] = None
         self._raw_user_data: Optional[dict] = None
+        self._organisation: Optional[dict] = None
         self._host: str = ""
 
     # ------------------------------------------------------------------
@@ -48,6 +49,11 @@ class AuthService:
     def raw_user_data(self) -> Optional[dict]:
         """Raw Kitsu person dict, kept only for backward-compatible UI reads."""
         return self._raw_user_data
+
+    @property
+    def organisation(self) -> Optional[dict]:
+        """Raw Kitsu organisation data (name, has_avatar, id...)."""
+        return self._organisation
 
     @property
     def host(self) -> str:
@@ -78,6 +84,7 @@ class AuthService:
                 return False, "Your account does not have access to OpenStudio Hub."
             self._raw_user_data = raw
             self._user = user
+            self._organisation = self._fetch_organisation()
             self.session_repository.save(Session(host=self._host, tokens=tokens))
             self.bus.publish(UserAuthenticated(user_id=user.id or ""))
             return True, "Login successful."
@@ -100,11 +107,13 @@ class AuthService:
                 return False
             self._raw_user_data = raw
             self._user = user
+            self._organisation = self._fetch_organisation()
             return True
         except Exception:  # noqa: BLE001 - stale/corrupt session
             self.session_repository.delete()
             self._user = None
             self._raw_user_data = None
+            self._organisation = None
             return False
 
     def logout(self) -> None:
@@ -115,6 +124,7 @@ class AuthService:
             print(f"[AuthService] Warning: server logout failed: {error}")
         self._user = None
         self._raw_user_data = None
+        self._organisation = None
         self.session_repository.delete()
         self.bus.publish(UserLoggedOut(user_id=user_id))
 
@@ -139,6 +149,13 @@ class AuthService:
         if session is not None:
             return session.tokens.get("refresh_token", "")
         return ""
+
+    def _fetch_organisation(self) -> Optional[dict]:
+        try:
+            organisation = self.kitsu.get_organisation()
+        except Exception:  # noqa: BLE001 - identity data is optional
+            return None
+        return organisation if isinstance(organisation, dict) else None
 
     @staticmethod
     def _classify_login_error(error: Exception) -> str:

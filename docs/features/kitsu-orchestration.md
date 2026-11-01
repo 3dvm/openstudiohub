@@ -27,7 +27,12 @@ Kitsu is also the communication layer. The Hub reads and writes task comments th
 * **Unread state:** Kitsu does not expose a per-user read flag, so the Hub tracks the last-seen comment per task and user locally in `~/.openstudio/state/task_comments_seen.json`. Badges are recalculated on load/refresh and cleared when a thread is opened; the number displayed is always the total comment count, with new activity indicated by the highlight.
 * **Permissions:** only the **manager (PM)** role can change responsibles; TDs and artists see them read-only.
 
-### 5. Embedded Kitsu & Watchtower
+### 5. Kitsu Identity in the Shell
+The top bar downloads the signed-in person's avatar from Kitsu and falls back to
+the local user icon when no avatar is available. The sidebar does the same for
+the studio logo and keeps the bundled logo as the fallback.
+
+### 6. Embedded Kitsu & Watchtower
 Kitsu and Watchtower open **inside the Hub's content area**, so the sidebar, top bar and status bar stay visible. The embedded browser uses a dedicated off-the-record profile (tokens stay in RAM) and bridges the current Kitsu session by setting the JWT access/refresh cookies plus an `Authorization: Bearer` fallback for `/api/` requests. This works with a **remote Kitsu server** over HTTPS; the host and API URL come from `settings.json`.
 
 Task links are built from the task's `entity_type_name` (`sequences`, `shots`, `assets`, `edits`), so a task on a sequence opens the sequence task page instead of always landing on `shots`. Kitsu/Watchtower navigation stays embedded; links to any other domain open in the OS browser.
