@@ -184,6 +184,7 @@ def _guardar_entidad_forjada(filepath_str: str, debug_label: str = "ENTIDAD"):
         raise RuntimeError(f"save_mainfile did not write '{out_path}'")
 
     print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO DE {debug_label} EXITOSO EN: {out_path}")
+    print(f"[OPENSTUDIO_FILE_CREATED] {out_path}")
     return out_path
 
 
@@ -217,6 +218,7 @@ def forge_storyboard():
         bpy.ops.wm.save_mainfile(filepath=str(out_path), relative_remap=True)
 
         print(f"[HeadlessBuilder DEBUG] 💾 GUARDADO FORZADO EXITOSO EN: {out_path}")
+        print(f"[OPENSTUDIO_FILE_CREATED] {out_path}")
         return True
 
     except Exception as error:  # noqa: BLE001

@@ -58,6 +58,24 @@ def _apply_persistent_overrides(dummy=None):
             bpy.types.OPENSTUDIO_OT_override_sanity.poll = poll_restringido
 
 
+def _apply_prop_timeline():
+    """Keep prop tasks at two frames; shots and other entities are untouched."""
+    entity_type = (_ENV.kitsu_entity_type or "").strip().upper()
+    if entity_type != "ASSET":
+        return
+    asset_type = (_ENV.kitsu_asset_type_name or "").strip().lower()
+    if asset_type not in ("prop", "props"):
+        return
+    try:
+        scene = bpy.context.scene
+        if scene.frame_start != 1 or scene.frame_end != 2:
+            scene.frame_start = 1
+            scene.frame_end = 2
+            print("[OPENSTUDIO HUB] Prop task timeline set to 2 frames (1-2).")
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HUB] Could not adjust the prop timeline: {error}")
+
+
 # =================================================================
 # 2. SECUENCIA DE ARRANQUE INICIAL (One-Shot Timer)
 # =================================================================
@@ -102,6 +120,8 @@ def _startup_sequence():
                 print(f"[OPENSTUDIO HUB] Fallo al abrir archivo: {error}")
         else:
             print(f"[OPENSTUDIO HUB] ADVERTENCIA: Archivo base inexistente en {target_file}")
+
+        _apply_prop_timeline()
 
         print("=" * 50 + "\n")
         return None  # Destruye el timer para evitar ejecuciones repetidas

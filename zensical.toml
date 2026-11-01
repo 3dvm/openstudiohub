@@ -13,6 +13,7 @@ repo_url = "https://github.com/3dvm/openstudiohub"
 nav = [
   { "Get started" = "index.md" },
   { "Features" = [
+      { "Access Profiles & View Switching" = "features/access-profiles.md" },
       { "Automated QA & Auto-Fixing" = "features/automated-qa.md" },
       { "Vendor Jailing & Sparse Checkout" = "features/vendor-jailing.md" },
       { "VCS Client, Locks and Audit" = "features/vcs-client.md" },

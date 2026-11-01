@@ -26,10 +26,10 @@ class FakeConfigFactory:
 
 
 class FakeProcess:
-    def __init__(self, env, returncode=0):
+    def __init__(self, env, returncode=0, lines=None):
         self.env = env
         self.returncode = returncode
-        self.stdout = iter([])
+        self.stdout = iter(lines or [])
 
     def wait(self):
         return self.returncode
@@ -38,12 +38,13 @@ class FakeProcess:
 class FakePopenFactory:
     """Records the environment of every spawned subprocess."""
 
-    def __init__(self, returncode: int = 0):
+    def __init__(self, returncode: int = 0, lines=None):
         self.returncode = returncode
+        self.lines = lines or []
         self.calls = []
 
     def __call__(self, cmd, env=None, stdout=None, stderr=None, text=None, **kwargs):
-        process = FakeProcess(env or {}, returncode=self.returncode)
+        process = FakeProcess(env or {}, returncode=self.returncode, lines=self.lines)
         self.calls.append(process)
         return process
 
@@ -162,3 +163,42 @@ def test_failed_subprocess_reports_failure(monkeypatch, tmp_path, qapp):
     success, message = finished[0]
     assert success is False
     assert "hero [Modeling]" in message
+
+
+def test_created_files_are_registered_and_committed_once(monkeypatch, tmp_path, qapp):
+    config = FakeConfigFactory(tmp_path)
+    project_root = tmp_path / "mideq_promo"
+    blend = project_root / "svn" / "pro" / "assets" / "character" / "hero" / "hero-model.blend"
+    blend.parent.mkdir(parents=True)
+    blend.write_bytes(b"")
+
+    monkeypatch.setattr(
+        blender_spawners.BlenderLocator,
+        "resolve",
+        staticmethod(lambda _p: "/usr/bin/blender"),
+    )
+    popen = FakePopenFactory(
+        lines=[f"[OPENSTUDIO_FILE_CREATED] {blend}\n", "RESULT: OK\n"]
+    )
+    monkeypatch.setattr(blender_spawners.subprocess, "Popen", popen)
+
+    calls = []
+
+    class FakeSync:
+        def __init__(self, _config):
+            pass
+
+        def commit_spawned_files(self, root, relative, user, pwd, message):
+            calls.append((root, list(relative), user, pwd, message))
+            return True, "Committed 1 spawned file(s) to the VCS."
+
+    monkeypatch.setattr(blender_spawners, "TaskFileSyncService", FakeSync)
+
+    finished = _run(_worker(config, [_asset()], ["Modeling"]))
+
+    assert finished == [(True, "1 entities processed successfully.")]
+    assert len(calls) == 1
+    root, relative, _user, _pwd, message = calls[0]
+    assert root == project_root
+    assert relative == ["pro/assets/character/hero/hero-model.blend"]
+    assert message.startswith("OpenStudioHub: first spawn (1 file(s))")

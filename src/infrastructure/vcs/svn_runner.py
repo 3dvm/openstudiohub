@@ -210,6 +210,7 @@ class SvnCommandRunner:
         check: bool = True,
         non_interactive: bool = True,
         extra_env: Optional[dict[str, str]] = None,
+        audit: bool = True,
     ) -> SvnResult:
         """Run ``svn`` with ``args`` and return its decoded result.
 
@@ -256,13 +257,15 @@ class SvnCommandRunner:
         try:
             process = subprocess.Popen(command, **popen_kwargs)
         except FileNotFoundError as error:
-            self._audit_failure(raw_args, str(error), cwd, returncode=-1)
+            if audit:
+                self._audit_failure(raw_args, str(error), cwd, returncode=-1)
             raise VcsError(
                 f"The '{self.svn_path}' command was not found.",
                 command=tuple(command),
             ) from error
         except OSError as error:
-            self._audit_failure(raw_args, str(error), cwd, returncode=-1)
+            if audit:
+                self._audit_failure(raw_args, str(error), cwd, returncode=-1)
             raise VcsError(
                 f"Could not start the Subversion client: {error}",
                 command=tuple(command),
@@ -281,7 +284,8 @@ class SvnCommandRunner:
             stdout_bytes, stderr_bytes = process.communicate()
             duration = time.monotonic() - started
             message = f"Subversion command timed out after {effective_timeout:.0f} seconds."
-            self._audit_failure(raw_args, message, cwd, returncode=-1)
+            if audit:
+                self._audit_failure(raw_args, message, cwd, returncode=-1)
             raise VcsError(
                 message,
                 raw=_decode(stderr_bytes),
@@ -310,7 +314,8 @@ class SvnCommandRunner:
             stderr.strip()[:400],
         )
 
-        self._audit_result(raw_args, result, cwd)
+        if audit:
+            self._audit_result(raw_args, result, cwd)
         if check and not result.ok:
             raise classify_svn_error(stderr, result.returncode, command)
         return result

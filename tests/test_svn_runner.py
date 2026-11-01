@@ -43,3 +43,20 @@ def test_auth_args_use_stdin_for_the_password():
     assert "--password-from-stdin" in args
     assert "secret" not in args
     assert stdin_text == "secret"
+
+
+def test_runner_can_skip_audit_for_expected_probes(tmp_path):
+    from src.infrastructure.vcs.vcs_audit import VcsAuditLogger
+
+    logger = VcsAuditLogger(tmp_path / "audit.jsonl")
+    runner = SvnCommandRunner("/bin/sh", audit=logger)
+
+    result = runner.run(
+        ["-c", "echo 'svn: W155010: not found' >&2; exit 1"],
+        non_interactive=False,
+        check=False,
+        audit=False,
+    )
+
+    assert result.ok is False
+    assert logger.read_recent() == []

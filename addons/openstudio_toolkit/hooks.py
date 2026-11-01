@@ -7,10 +7,10 @@
 # Licencia: GNU General Public License v3.0 (GPLv3)
 #
 # Autor: Ernesto Del Valle Macuare
-# Versión del archivo: 0.5.0
+# Versión del archivo: 0.6.0
 # =========================================================================================
 
-"""Blender load handlers for project context (splash and task timeline)."""
+"""Blender load handlers for the project splash screen."""
 
 import bpy
 import os
@@ -33,39 +33,12 @@ def inyectar_splash_corporativo(dummy=None):
         print(f"Error al insertar el splash screen: {e}")
         return False
 
-_PROP_ASSET_TYPES = {"prop", "props"}
-
-
-def ajustar_linea_tiempo_prop(dummy=None):
-    """Keep prop tasks at two frames so playblasts are not hundreds of duplicates."""
-    entity_type = os.environ.get("OPENSTUDIO_KITSU_ENTITY_TYPE", "").strip().upper()
-    if entity_type != "ASSET":
-        return
-
-    asset_type = os.environ.get("OPENSTUDIO_KITSU_ASSET_TYPE_NAME", "").strip().lower()
-    if asset_type not in _PROP_ASSET_TYPES:
-        return
-
-    try:
-        scene = bpy.context.scene
-        if scene.frame_start != 1 or scene.frame_end != 2:
-            scene.frame_start = 1
-            scene.frame_end = 2
-            print("[OPENSTUDIO HOOK] Prop task timeline set to 2 frames (1-2).")
-    except Exception as error:  # noqa: BLE001
-        print(f"[OPENSTUDIO HOOK] Could not adjust the prop timeline: {error}")
-
-
 def register():
     # This module exposes pure handlers; no bpy classes need registration.
     if inyectar_splash_corporativo not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(inyectar_splash_corporativo)
-    if ajustar_linea_tiempo_prop not in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.append(ajustar_linea_tiempo_prop)
 
 
 def unregister():
     if inyectar_splash_corporativo in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(inyectar_splash_corporativo)
-    if ajustar_linea_tiempo_prop in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(ajustar_linea_tiempo_prop)

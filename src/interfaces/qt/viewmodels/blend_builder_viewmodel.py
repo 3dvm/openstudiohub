@@ -141,6 +141,14 @@ class BlendBuilderViewModel(BaseViewModel):
         )
         return creds is not None
 
+    def _vcs_credentials(self) -> tuple[str, str]:
+        server = self._resolve_server()
+        server_id = server.id if server is not None else ""
+        if self.credential_vault is None:
+            return "", ""
+        user, pwd = self.credential_vault.get_server_credentials(server_id)
+        return user or "", pwd or ""
+
     # ------------------------------------------------------------------
     # Project loading
     # ------------------------------------------------------------------
@@ -333,9 +341,16 @@ class BlendBuilderViewModel(BaseViewModel):
             return
         self.report_status("Spawning Storyboard sequences...", "yellow")
         self.inject_credentials()
+        vcs_user, vcs_pwd = self._vcs_credentials()
 
         worker = StoryboardBatchWorker(
-            self.pm_core, self.config_factory, self.current_project_id, self.current_project_name, sequence_names
+            self.pm_core,
+            self.config_factory,
+            self.current_project_id,
+            self.current_project_name,
+            sequence_names,
+            vcs_user=vcs_user,
+            vcs_pwd=vcs_pwd,
         )
         worker.progress_updated.connect(self.spawn_progress.emit)
         worker.log_stream.connect(self.spawn_log.emit)
@@ -349,8 +364,14 @@ class BlendBuilderViewModel(BaseViewModel):
         if not self._ensure_vcs_credentials():
             return
         self.inject_credentials()
+        vcs_user, vcs_pwd = self._vcs_credentials()
         worker = MasterSpawningWorker(
-            self.config_factory, self.current_project_name, "EDIT", self.current_project_id
+            self.config_factory,
+            self.current_project_name,
+            "EDIT",
+            self.current_project_id,
+            vcs_user=vcs_user,
+            vcs_pwd=vcs_pwd,
         )
         worker.progress_updated.connect(self.spawn_progress.emit)
         worker.log_stream.connect(self.spawn_log.emit)
@@ -364,6 +385,7 @@ class BlendBuilderViewModel(BaseViewModel):
         if not self._ensure_vcs_credentials():
             return
         self.inject_credentials()
+        vcs_user, vcs_pwd = self._vcs_credentials()
         worker = BatchCreationWorker(
             pm_core=self.pm_core,
             config_factory=self.config_factory,
@@ -371,6 +393,8 @@ class BlendBuilderViewModel(BaseViewModel):
             project_name=self.current_project_name,
             entities=entities,
             task_types=task_types,
+            vcs_user=vcs_user,
+            vcs_pwd=vcs_pwd,
         )
         worker.progress_updated.connect(self.spawn_progress.emit)
         worker.log_stream.connect(self.spawn_log.emit)

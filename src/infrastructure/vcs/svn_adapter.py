@@ -177,6 +177,8 @@ class SVNAdapter(AbstractVCS):
         cmd: List[str],
         cwd: Optional[Path] = None,
         return_stderr: bool = False,
+        check: bool = True,
+        audit: bool = True,
     ) -> str | Tuple[str, str]:
         """Run svn through the shared runner with timeout and typed errors."""
         args = list(cmd)
@@ -194,8 +196,9 @@ class SVNAdapter(AbstractVCS):
             args,
             cwd=cwd,
             stdin_text=stdin_text,
-            check=True,
+            check=check,
             non_interactive=False,
+            audit=audit,
         )
         if return_stderr:
             return result.stdout, result.stderr
@@ -327,8 +330,19 @@ class SVNAdapter(AbstractVCS):
         return True
 
     def get_lock_info(self, path: str) -> Optional[Dict[str, str]]:
-        """Return lock metadata for ``path`` (``svn info`` on the working copy)."""
-        output = self._run_subprocess(["svn", "info", path], cwd=self.workspace_dir)
+        """Return lock metadata for ``path`` (``svn info`` on the working copy).
+
+        Missing or unversioned paths are a normal result for lock badges: they
+        have no lock. The probe must not be audited as a failed VCS operation.
+        """
+        output = self._run_subprocess(
+            ["svn", "info", path],
+            cwd=self.workspace_dir,
+            check=False,
+            audit=False,
+        )
+        if not str(output or "").strip():
+            return None
         info: Dict[str, str] = {}
         for line in output.splitlines():
             key, separator, value = line.partition(":")

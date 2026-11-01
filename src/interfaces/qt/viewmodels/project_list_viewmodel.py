@@ -55,6 +55,7 @@ from src.interfaces.qt.workers.artist_workers import (
     PublishVcsChangesWorker,
 )
 from src.interfaces.qt.workers.project_list_workers import (
+    BackfillSpawnedFilesWorker,
     ProjectGridWorker,
     ResetWorkingCopyWorker,
 )
@@ -99,6 +100,9 @@ class ProjectListViewModel(BaseViewModel):
 
     # Reset VCS working copy (project card)
     reset_finished = Signal(str, bool, str)  # (project_name, success, message)
+
+    # Backfill spawned files that predate VCS tracking
+    backfill_finished = Signal(str, bool, str)  # (project_name, success, message)
 
     # Kitsu project import
     import_plan_ready = Signal(object, list)  # (ImportPlan, target persons)
@@ -700,6 +704,46 @@ class ProjectListViewModel(BaseViewModel):
 
         self.refresh_requested.emit()
         return True, f"Project configuration saved.{splash_note}{update_note}"
+
+    def backfill_spawned_files(self, project_name: str, project_id: str = "") -> None:
+        """Register and commit task files that were spawned without VCS tracking."""
+        if self.workers.is_running("backfill"):
+            self.report_status("A VCS backfill is already running...", "yellow")
+            return
+        project_root = self.nas_manager.resolve_project_dir(project_name)
+        if not project_root or not project_id:
+            self.report_status("Cannot backfill: project folder or Kitsu ID is missing.", "red")
+            return
+        creds = self._ensure_vcs_credentials(project_root)
+        if creds is None:
+            return
+        vcs_user, vcs_pwd = creds
+
+        self.report_status("Scanning task files for VCS registration...", "yellow")
+        worker = BackfillSpawnedFilesWorker(
+            self.sync_service,
+            self.production_service,
+            project_id,
+            project_root,
+            vcs_user,
+            vcs_pwd,
+        )
+        worker.finished_backfill.connect(
+            lambda pid, ok, message, name=project_name: self._on_backfill_finished(
+                name, pid, ok, message
+            )
+        )
+        self.workers.start("backfill", worker, critical=True)
+
+    def _on_backfill_finished(
+        self, project_name: str, project_id: str, success: bool, message: str
+    ) -> None:
+        self.report_status(
+            ("✓ " if success else "✗ ") + message, "green" if success else "red"
+        )
+        self.backfill_finished.emit(project_name, success, message)
+        if success:
+            self.refresh_requested.emit()
 
     def migrate_project(self, project_name: str, project_dir: Path | None = None, target_server_id: str = "") -> None:
         """Migrate a single project's VCS repository to the chosen server."""

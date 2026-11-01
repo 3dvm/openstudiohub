@@ -96,3 +96,12 @@ def test_addon_inspector_shim(tmp_path):
     assert inspected["name"] == "a"
     assert inspected["blender_min"] == (4, 2, 0)
     assert AddonInspector.is_compatible((4, 2, 0), "4.3.0") is True
+
+
+def test_parse_toml_ignores_schema_version():
+    meta = vault_addon.parse_toml(
+        'schema_version = "1.0.0"\nid = "openstudio_toolkit"\n'
+        'version = "0.6.0"\nblender_version_min = "5.0.0"\n'
+    )
+    assert meta.version == "0.6.0"
+    assert meta.min_blender_version == "5.0.0"

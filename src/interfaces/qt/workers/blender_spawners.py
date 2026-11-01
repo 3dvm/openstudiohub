@@ -9,6 +9,34 @@ from src.infrastructure.qt_worker import ManagedWorker
 from src.domain.production.naming import NamingPolicy
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
+from src.application.services.task_file_sync_service import TaskFileSyncService
+
+
+
+
+_CREATED_MARKER = "[OPENSTUDIO_FILE_CREATED]"
+
+
+def _created_path(line: str) -> str:
+    text = (line or "").strip()
+    if not text.startswith(_CREATED_MARKER):
+        return ""
+    return text[len(_CREATED_MARKER):].strip()
+
+
+def _relative_paths(project_root: Path, vfs_svn: str, created_paths: list) -> list:
+    workspace = (project_root / vfs_svn).resolve()
+    relative = []
+    seen = set()
+    for raw in created_paths:
+        try:
+            path = Path(str(raw)).resolve().relative_to(workspace).as_posix()
+        except (OSError, ValueError):
+            continue
+        if path and path not in seen:
+            seen.add(path)
+            relative.append(path)
+    return relative
 
 
 class BatchCreationWorker(ManagedWorker):
@@ -16,7 +44,17 @@ class BatchCreationWorker(ManagedWorker):
     log_stream = Signal(str)
     finished_batch = Signal(bool, str)
 
-    def __init__(self, pm_core, config_factory, project_id: str, project_name: str, entities: list, task_types: list):
+    def __init__(
+        self,
+        pm_core,
+        config_factory,
+        project_id: str,
+        project_name: str,
+        entities: list,
+        task_types: list,
+        vcs_user: str = "",
+        vcs_pwd: str = "",
+    ):
         super().__init__()
         self.pm_core = pm_core
         self.config = config_factory
@@ -24,6 +62,27 @@ class BatchCreationWorker(ManagedWorker):
         self.project_name = project_name
         self.entities = entities # Lista de dicts crudos
         self.task_types = task_types
+        self.vcs_user = vcs_user
+        self.vcs_pwd = vcs_pwd
+        self._created_paths = []
+
+    def _commit_spawned(self, project_root: Path, vfs_svn: str) -> None:
+        relative = _relative_paths(project_root, vfs_svn, self._created_paths)
+        if not relative:
+            return
+        message = (
+            f"OpenStudioHub: first spawn ({len(relative)} file(s)) "
+            f"for {self.project_name}."
+        )
+        try:
+            service = TaskFileSyncService(self.config)
+            ok, result = service.commit_spawned_files(
+                project_root, relative, self.vcs_user, self.vcs_pwd, message
+            )
+            prefix = "✓" if ok else "⚠️"
+        except Exception as error:  # noqa: BLE001 - spawn already succeeded
+            prefix, result = "⚠️", f"VCS spawn registration failed: {error}"
+        self.log_stream.emit(f"{prefix} VCS spawn registration: {result}")
 
     def run(self):
         try:
@@ -41,6 +100,7 @@ class BatchCreationWorker(ManagedWorker):
 
             vfs_svn = self.config.get_vfs_svn_name()
             failures = []
+            self._created_paths = []
 
             for idx, entity in enumerate(self.entities):
                 e_name = entity.get("name", "Unknown")
@@ -126,7 +186,11 @@ class BatchCreationWorker(ManagedWorker):
                     
                     proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                     for line in proceso.stdout:
-                        if line.strip(): self.log_stream.emit(f"    ↳ {line.strip()}")
+                        if line.strip():
+                            self.log_stream.emit(f"    ↳ {line.strip()}")
+                            created = _created_path(line)
+                            if created:
+                                self._created_paths.append(created)
                     proceso.wait()
                     
                     if proceso.returncode != 0:
@@ -135,6 +199,7 @@ class BatchCreationWorker(ManagedWorker):
                     else:
                         self.log_stream.emit(f"[{display_name}] ✓ Physical file spawned.")
 
+            self._commit_spawned(project_root, vfs_svn)
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
             if failures:
                 self.finished_batch.emit(
@@ -157,12 +222,41 @@ class MasterSpawningWorker(ManagedWorker):
     log_stream = Signal(str)
     finished_spawn = Signal(bool, str)
 
-    def __init__(self, config_factory, project_name, build_target, project_id=""):
+    def __init__(
+        self,
+        config_factory,
+        project_name,
+        build_target,
+        project_id="",
+        vcs_user: str = "",
+        vcs_pwd: str = "",
+    ):
         super().__init__()
         self.config = config_factory
         self.project_name = project_name
         self.build_target = build_target
         self.project_id = project_id
+        self.vcs_user = vcs_user
+        self.vcs_pwd = vcs_pwd
+        self._created_paths = []
+
+    def _commit_spawned(self, project_root: Path, vfs_svn: str) -> None:
+        relative = _relative_paths(project_root, vfs_svn, self._created_paths)
+        if not relative:
+            return
+        message = (
+            f"OpenStudioHub: first spawn ({len(relative)} file(s)) "
+            f"for {self.project_name}."
+        )
+        try:
+            service = TaskFileSyncService(self.config)
+            ok, result = service.commit_spawned_files(
+                project_root, relative, self.vcs_user, self.vcs_pwd, message
+            )
+            prefix = "✓" if ok else "⚠️"
+        except Exception as error:  # noqa: BLE001 - spawn already succeeded
+            prefix, result = "⚠️", f"VCS spawn registration failed: {error}"
+        self.log_stream.emit(f"{prefix} VCS spawn registration: {result}")
 
     def run(self):
         try:
@@ -208,6 +302,9 @@ class MasterSpawningWorker(ManagedWorker):
                 if not line_clean: continue
                 self.log_stream.emit(line_clean)
                 tail.append(line_clean)
+                created = _created_path(line_clean)
+                if created:
+                    self._created_paths.append(created)
 
                 if "RESULT: OK" in line_clean:
                     saw_ok = True
@@ -226,6 +323,8 @@ class MasterSpawningWorker(ManagedWorker):
                     self.progress_updated.emit(70, self.tr("Authenticating with server..."))
 
             proceso.wait()
+            vfs_svn = self.config.get_vfs_svn_name()
+            self._commit_spawned(project_root, vfs_svn)
             if proceso.returncode == 0 and saw_ok and not saw_failure:
                 self.progress_updated.emit(100, self.tr("Master File Forged Successfully!"))
                 message = f"{self.build_target} created."
@@ -252,13 +351,43 @@ class StoryboardBatchWorker(ManagedWorker):
     log_stream = Signal(str)
     finished_batch = Signal(bool, str)
 
-    def __init__(self, pm_core, config_factory, project_id: str, project_name: str, sequence_names: list):
+    def __init__(
+        self,
+        pm_core,
+        config_factory,
+        project_id: str,
+        project_name: str,
+        sequence_names: list,
+        vcs_user: str = "",
+        vcs_pwd: str = "",
+    ):
         super().__init__()
         self.pm_core = pm_core
         self.config = config_factory
         self.project_id = project_id
         self.project_name = project_name
         self.sequence_names = sequence_names
+        self.vcs_user = vcs_user
+        self.vcs_pwd = vcs_pwd
+        self._created_paths = []
+
+    def _commit_spawned(self, project_root: Path, vfs_svn: str) -> None:
+        relative = _relative_paths(project_root, vfs_svn, self._created_paths)
+        if not relative:
+            return
+        message = (
+            f"OpenStudioHub: first spawn ({len(relative)} file(s)) "
+            f"for {self.project_name}."
+        )
+        try:
+            service = TaskFileSyncService(self.config)
+            ok, result = service.commit_spawned_files(
+                project_root, relative, self.vcs_user, self.vcs_pwd, message
+            )
+            prefix = "✓" if ok else "⚠️"
+        except Exception as error:  # noqa: BLE001 - spawn already succeeded
+            prefix, result = "⚠️", f"VCS spawn registration failed: {error}"
+        self.log_stream.emit(f"{prefix} VCS spawn registration: {result}")
 
     def run(self):
         try:
@@ -278,11 +407,12 @@ class StoryboardBatchWorker(ManagedWorker):
             base_blender_dir = project_root / vfs_local / "blender-build"
             blender_bin = BlenderLocator.resolve(base_blender_dir)
 
+            self._created_paths = []
+            vfs_svn = self.config.get_vfs_svn_name()
             for idx, seq_name in enumerate(self.sequence_names):
                 base_progress = 10 + int((idx / total_seqs) * 90)
                 self.progress_updated.emit(base_progress, self.tr(f"Processing Sequence: {seq_name} ({idx+1}/{total_seqs})"))
                 
-                vfs_svn = self.config.get_vfs_svn_name()
                 self.log_stream.emit(f"\n[{seq_name}] Registering Entity and Task in Kitsu API...")
                 seq = self.pm_core.register_storyboard_sequence(self.project_id, seq_name, tt_id, vfs_svn)
                 if seq:
@@ -312,7 +442,11 @@ class StoryboardBatchWorker(ManagedWorker):
                 
                 proceso = subprocess.Popen(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 for line in proceso.stdout:
-                    if line.strip(): self.log_stream.emit(f"    ↳ {line.strip()}")
+                    if line.strip():
+                        self.log_stream.emit(f"    ↳ {line.strip()}")
+                        created = _created_path(line)
+                        if created:
+                            self._created_paths.append(created)
                 proceso.wait()
                 
                 if proceso.returncode != 0:
@@ -320,6 +454,7 @@ class StoryboardBatchWorker(ManagedWorker):
                 else:
                     self.log_stream.emit(f"[{seq_name}] ✓ Physical file spawned.")
 
+            self._commit_spawned(project_root, vfs_svn)
             self.progress_updated.emit(100, self.tr("Batch Creation Complete!"))
             self.finished_batch.emit(True, f"{total_seqs} Storyboard sequences processed successfully.")
             

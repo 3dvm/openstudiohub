@@ -11,18 +11,25 @@ template injection -> add-on deployment -> VFS symlinks -> local config
 generation. Extracted from ``LocalInstaller`` (now a thin facade).
 """
 
+import hashlib
 import json
 import platform
+import re
 import shutil
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.application.sparse_manager import SparseManager
+from src.domain.vault.addon import AddonMetadata, parse_directory, parse_zip
+from src.domain.vault.compatibility import CompatibilityPolicy
+from src.domain.vault.integrity import slugify
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
+from src.infrastructure.vault_manifest_repository import FileVaultManifestRepository
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
 
@@ -106,7 +113,9 @@ class InstallationService:
 
         local_version = str(local.get("blender_version") or "")
         blueprint_version = str(blueprint.get("blender_version") or "")
-        return bool(local_version and blueprint_version and local_version != blueprint_version)
+        if local_version and blueprint_version and local_version != blueprint_version:
+            return True
+        return self.addons_need_update(project_root)
 
     def verify_installation(self, project_root: Path) -> bool:
         """Return True when the local workspace matches the project blueprint.
@@ -211,7 +220,9 @@ class InstallationService:
 
             status_callback("Deploying project extensions...", "yellow")
             progress(86)
-            self._sincronizar_addons(project_root, vfs_local, dependencies, status_callback)
+            self._sincronizar_addons(
+                project_root, vfs_local, dependencies, status_callback, blender_version
+            )
             progress(92)
 
             status_callback("Generating add-on startup configuration...", "yellow")
@@ -339,42 +350,288 @@ class InstallationService:
 
         status_callback(f"Blender {version} extracted successfully.", "green")
 
-    def _sincronizar_addons(self, project_root, vfs_local, dependencies, status_callback):
-        extensions_dir = project_root / vfs_local / "blender_data" / "extensions" / "user_default"
-        extensions_dir.mkdir(parents=True, exist_ok=True)
+    @staticmethod
+    def _addon_name_keys(name: str) -> set[str]:
+        normalized = slugify(name)
+        return {
+            key
+            for key in (normalized, re.sub(r"[^a-z0-9]+", "", normalized))
+            if key
+        }
 
+    @staticmethod
+    def _zip_digest(path: Path) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _vault_addon_entries(self, blender_version: str) -> Dict[str, dict]:
+        manifest = FileVaultManifestRepository(self.vault_root).load()
+        return manifest.get_addons(blender_version) or {}
+
+    def _addon_zip_index(self) -> List[dict]:
+        entries = []
+        if self.boveda_addons.exists():
+            for path in sorted(self.boveda_addons.rglob("*.zip")):
+                meta = parse_zip(path)
+                entries.append({"path": path, "meta": meta})
+        return entries
+
+    def _resolve_addon_zip(
+        self,
+        addon_name: str,
+        addon_version: str,
+        entry: Optional[dict],
+        zip_index: List[dict],
+        strict_version: bool,
+    ) -> Tuple[Optional[Path], Optional[AddonMetadata]]:
+        entry = entry or {}
+        declared_path = entry.get("path")
+        if declared_path:
+            candidate = self.vault_root / str(declared_path)
+            if candidate.exists():
+                meta = parse_zip(candidate)
+                if not strict_version or not addon_version or meta.version == str(addon_version):
+                    return candidate, meta
+
+        keys = self._addon_name_keys(addon_name)
+        matches = []
+        for item in zip_index:
+            meta = item["meta"]
+            if not meta.is_valid:
+                continue
+            if not (keys & self._addon_name_keys(meta.name)):
+                continue
+            if strict_version and addon_version and meta.version != str(addon_version):
+                continue
+            matches.append(item)
+        if not matches:
+            return None, None
+
+        def rank(item):
+            meta = item["meta"]
+            exact = 0 if (addon_version and meta.version == str(addon_version)) else 1
+            try:
+                mtime = item["path"].stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            return (exact, -mtime)
+
+        selected = sorted(matches, key=rank)[0]
+        return selected["path"], selected["meta"]
+
+    def _resolve_desired_addons(
+        self, blender_version: str, dependencies: dict
+    ) -> List[dict]:
         if isinstance(dependencies, str):
             try:
                 dependencies = json.loads(dependencies)
             except Exception:
                 dependencies = {}
+        dependencies = dependencies or {}
+        addons = dependencies.get("addons", {}) if isinstance(dependencies, dict) else {}
+        manifest_addons = self._vault_addon_entries(blender_version)
+        zip_index = self._addon_zip_index()
 
-        addons_dict = dependencies.get("addons", {})
+        manifest_by_key = {}
+        for name, entry in manifest_addons.items():
+            if isinstance(entry, dict):
+                for key in self._addon_name_keys(name):
+                    manifest_by_key.setdefault(key, (name, entry))
 
-        for addon_name, addon_version in addons_dict.items():
-            status_callback(f"Buscando extensión: {addon_name} (v{addon_version})...", "yellow")
+        desired = []
+        for addon_name, dependency_version in (addons or {}).items():
+            keys = self._addon_name_keys(addon_name)
+            matched = next((manifest_by_key[key] for key in keys if key in manifest_by_key), None)
+            entry = matched[1] if matched else None
+            desired_version = str(entry.get("version") or dependency_version or "") if entry else str(dependency_version or "")
+            zip_path, meta = self._resolve_addon_zip(
+                addon_name,
+                desired_version,
+                entry,
+                zip_index,
+                strict_version=entry is not None,
+            )
 
-            origen_addon_zip = None
-            if self.boveda_addons.exists():
-                for archivo in self.boveda_addons.rglob("*.zip"):
-                    if addon_name.lower() in archivo.name.lower():
-                        origen_addon_zip = archivo
-                        break
+            error = ""
+            if zip_path is None or meta is None or not meta.is_valid:
+                error = (
+                    f"declared version {desired_version or '?'} is not available in the vault"
+                    if entry is not None
+                    else "no compatible archive was found in the vault"
+                )
+            elif not CompatibilityPolicy.is_compatible(
+                meta.min_blender_version, blender_version or "0.0.0"
+            ):
+                error = (
+                    f"version {meta.version} requires Blender {meta.min_blender_version} "
+                    f"(project uses {blender_version})"
+                )
 
-            if origen_addon_zip and origen_addon_zip.exists():
-                safe_folder_name = addon_name.replace(" ", "_").lower()
-                destino_addon = extensions_dir / safe_folder_name
+            desired.append(
+                {
+                    "name": str(addon_name),
+                    "folder": slugify(addon_name),
+                    "version": str(desired_version),
+                    "zip": zip_path,
+                    "meta": meta,
+                    "error": error,
+                    "declared_in_manifest": entry is not None,
+                }
+            )
+        return desired
 
-                if not destino_addon.exists():
-                    status_callback(f"Desplegando extensión: {addon_name}...", "yellow")
-                    destino_addon.mkdir(parents=True, exist_ok=True)
-                    try:
-                        with zipfile.ZipFile(origen_addon_zip, "r") as zip_ref:
-                            zip_ref.extractall(destino_addon)
-                    except zipfile.BadZipFile:
-                        status_callback(f"Error: Archive {origen_addon_zip.name} is corrupted.", "red")
-            else:
-                status_callback(f"Warning: Extension '{addon_name}' not found in Vault.", "red")
+    def _installed_addon_metadata(self, destino: Path) -> AddonMetadata:
+        if not destino.exists():
+            return AddonMetadata()
+        return parse_directory(destino)
+
+    def _source_marker(self, destino: Path) -> Path:
+        return destino / ".openstudio_addon_source.json"
+
+    def _marker_digest(self, destino: Path) -> str:
+        marker = self._source_marker(destino)
+        if not marker.exists():
+            return ""
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""
+        return str(data.get("sha256", "") or "")
+
+    def _install_addon_zip(
+        self,
+        zip_path: Path,
+        destino: Path,
+        expected_version: str,
+        blender_version: str,
+    ) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix=f".{destino.name}-", dir=str(destino.parent)
+        ) as temp_dir:
+            extract_root = Path(temp_dir) / "payload"
+            extract_root.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                zip_ref.extractall(extract_root)
+
+            root = extract_root
+            if not (root / "blender_manifest.toml").exists():
+                manifests = list(root.rglob("blender_manifest.toml"))
+                if len(manifests) != 1:
+                    raise RuntimeError("archive does not contain a single add-on root")
+                root = manifests[0].parent
+
+            meta = parse_directory(root)
+            if not meta.is_valid:
+                raise RuntimeError("archive does not contain a valid blender_manifest.toml")
+            if expected_version and meta.version != expected_version:
+                raise RuntimeError(
+                    f"archive version {meta.version} does not match manifest {expected_version}"
+                )
+            if not CompatibilityPolicy.is_compatible(meta.min_blender_version, blender_version):
+                raise RuntimeError(
+                    f"add-on requires Blender {meta.min_blender_version}, project uses {blender_version}"
+                )
+
+            if destino.exists():
+                shutil.rmtree(destino)
+            shutil.move(str(root), str(destino))
+            self._source_marker(destino).write_text(
+                json.dumps(
+                    {
+                        "source": zip_path.name,
+                        "sha256": self._zip_digest(zip_path),
+                        "version": meta.version,
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+    def addons_need_update(self, project_root: Path) -> bool:
+        """True when a configured add-on is missing, stale, or not available."""
+        project_root = Path(project_root)
+        local = self.load_local_config(project_root)
+        blueprint = self.load_project_blueprint(project_root)
+        blender_version = str(
+            local.get("blender_version") or blueprint.get("blender_version") or ""
+        )
+        dependencies = local.get("dependencies") or blueprint.get("dependencies") or {}
+        if not blender_version or not dependencies:
+            return False
+
+        addons = dependencies.get("addons") if isinstance(dependencies, dict) else {}
+        if not addons:
+            return False
+
+        vfs_local = str(
+            local.get("vfs_local")
+            or (blueprint.get("topography_signature") or {}).get("vfs_local")
+            or getattr(self.config_factory, "get_vfs_local_name", lambda: "local")()
+        )
+        extensions = project_root / vfs_local / "blender_data" / "extensions" / "user_default"
+        for item in self._resolve_desired_addons(blender_version, dependencies):
+            destino = extensions / item["folder"]
+            installed = self._installed_addon_metadata(destino)
+            if item["error"]:
+                return True
+            if not installed.is_valid or installed.version != item["version"]:
+                return True
+            if item["zip"] is not None and self._marker_digest(destino) != self._zip_digest(item["zip"]):
+                return True
+        return False
+
+    def _sincronizar_addons(
+        self,
+        project_root,
+        vfs_local,
+        dependencies,
+        status_callback,
+        blender_version: str = "",
+    ):
+        extensions_dir = project_root / vfs_local / "blender_data" / "extensions" / "user_default"
+        extensions_dir.mkdir(parents=True, exist_ok=True)
+
+        desired = self._resolve_desired_addons(blender_version, dependencies)
+        for item in desired:
+            addon_name = item["name"]
+            version = item["version"]
+            if item["error"]:
+                status_callback(
+                    f"Add-on '{addon_name}' skipped: {item['error']}.", "red"
+                )
+                continue
+
+            zip_path = item["zip"]
+            destino = extensions_dir / item["folder"]
+            installed = self._installed_addon_metadata(destino)
+            digest = self._zip_digest(zip_path)
+            up_to_date = (
+                installed.is_valid
+                and installed.version == version
+                and self._marker_digest(destino) == digest
+            )
+            if up_to_date:
+                status_callback(
+                    f"Add-on '{addon_name}' v{version} is up to date.", "green"
+                )
+                continue
+
+            status_callback(
+                f"Updating add-on '{addon_name}' to v{version}...", "yellow"
+            )
+            try:
+                self._install_addon_zip(zip_path, destino, version, blender_version)
+            except Exception as error:  # noqa: BLE001
+                status_callback(
+                    f"Could not update add-on '{addon_name}': {error}", "red"
+                )
+                continue
+            status_callback(
+                f"Add-on '{addon_name}' v{version} deployed.", "green"
+            )
 
     def _crear_symlinks(self, project_path, vfs_svn, vfs_shared):
         shared_edit_dir = project_path / vfs_shared / "editorial"

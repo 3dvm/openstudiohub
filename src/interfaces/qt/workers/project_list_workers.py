@@ -15,6 +15,8 @@ from src.infrastructure.qt_worker import ManagedWorker
 
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
+from src.application.services.task_file_resolver import TaskFileResolver
+from src.application.services.task_file_sync_service import TaskFileSyncService
 
 
 class ProjectInstallWorker(ManagedWorker):
@@ -94,6 +96,65 @@ class ResetWorkingCopyWorker(ManagedWorker):
         except Exception as error:  # noqa: BLE001
             success, message = False, f"Reset failed: {error}"
         self.finished_reset.emit(success, message)
+
+
+
+
+class BackfillSpawnedFilesWorker(ManagedWorker):
+    """Registers and commits task files that were spawned before VCS tracking."""
+
+    finished_backfill = Signal(str, bool, str)  # (project_id, success, message)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        production_service: ProductionService,
+        project_id: str,
+        project_root,
+        vcs_user: str,
+        vcs_pwd: str,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.production_service = production_service
+        self.project_id = str(project_id or "")
+        self.project_root = Path(project_root)
+        self.vcs_user = vcs_user
+        self.vcs_pwd = vcs_pwd
+
+    def run(self) -> None:
+        try:
+            tasks = self.production_service.kitsu.all_tasks_for_project(self.project_id) or []
+            resolver = TaskFileResolver(self.sync_service.config_factory)
+            relative_paths = []
+            seen = set()
+            for task in tasks:
+                resolved = resolver.resolve(self.project_root, task)
+                if resolved is None or resolved.relative_path in seen:
+                    continue
+                seen.add(resolved.relative_path)
+                relative_paths.append(resolved.relative_path)
+
+            if not relative_paths:
+                self.finished_backfill.emit(
+                    self.project_id, True, "No task files were found on disk."
+                )
+                return
+
+            message = (
+                f"OpenStudioHub: first spawn backfill "
+                f"({len(relative_paths)} file(s)) for {self.project_root.name}."
+            )
+            ok, result = self.sync_service.commit_spawned_files(
+                self.project_root,
+                relative_paths,
+                self.vcs_user,
+                self.vcs_pwd,
+                message,
+            )
+            self.finished_backfill.emit(self.project_id, ok, result)
+        except Exception as error:  # noqa: BLE001
+            self.finished_backfill.emit(self.project_id, False, str(error))
 
 
 class ProjectGridWorker(ManagedWorker):

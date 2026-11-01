@@ -34,6 +34,7 @@ class FakeAdapter:
         self.full_pull_calls = []
         self.pull_error = None
         self.lock_info = None
+        self.needs_lock_calls = []
 
     def full_pull(self, username=None, password=None):
         self.full_pull_calls.append((username, password))
@@ -72,6 +73,10 @@ class FakeAdapter:
 
     def unlock(self, path, username=None, password=None, force=False):
         self.unlock_calls.append((path, username, password, force))
+        return True
+
+    def set_needs_lock(self, path):
+        self.needs_lock_calls.append(path)
         return True
 
 
@@ -413,3 +418,91 @@ def test_unlock_treats_e195013_as_already_unlocked(tmp_path):
 
     assert ok is True
     assert "already unlocked" in message.lower()
+
+
+def test_register_spawned_files_adds_only_unversioned_blends(tmp_path):
+    from src.infrastructure.vcs.svn_xml import SvnStatusEntry
+
+    service, adapter = _service(tmp_path, {})
+    workspace = tmp_path / "p" / "svn" / "pro" / "shots"
+    workspace.mkdir(parents=True)
+    blend = workspace / "sh010-layout.blend"
+    text = workspace / "notes.txt"
+    blend.write_bytes(b"")
+    text.write_text("x", encoding="utf-8")
+    adapter.entries = [
+        SvnStatusEntry("pro/shots/sh010-layout.blend", item="unversioned"),
+        SvnStatusEntry("pro/shots/notes.txt", item="unversioned"),
+    ]
+
+    ok, message = service.register_spawned_files(
+        tmp_path / "p", ["pro/shots/sh010-layout.blend", "pro/shots/notes.txt"]
+    )
+
+    assert ok is True
+    assert "2" in message
+    assert adapter.add_calls == [["pro/shots/sh010-layout.blend", "pro/shots/notes.txt"]]
+    assert adapter.needs_lock_calls == ["pro/shots/sh010-layout.blend"]
+
+
+def test_commit_spawned_files_commits_the_new_paths_once(tmp_path):
+    from src.infrastructure.vcs.svn_xml import SvnStatusEntry
+
+    service, adapter = _service(tmp_path, {})
+    workspace = tmp_path / "p" / "svn" / "pro"
+    workspace.mkdir(parents=True)
+    (workspace / "a.blend").write_bytes(b"")
+    adapter.entries = [SvnStatusEntry("pro/a.blend", item="unversioned")]
+
+    ok, message = service.commit_spawned_files(
+        tmp_path / "p",
+        ["pro/a.blend"],
+        username="artist",
+        password="secret",
+        message="OpenStudioHub: first spawn (1 file(s)) for P.",
+    )
+
+    assert ok is True
+    assert "Committed 1" in message
+    assert adapter.commit_calls == [
+        ("OpenStudioHub: first spawn (1 file(s)) for P.", ["pro/a.blend"], "artist", "secret")
+    ]
+
+
+def test_already_versioned_spawned_files_are_not_recommitted(tmp_path):
+    from src.infrastructure.vcs.svn_xml import SvnStatusEntry
+
+    service, adapter = _service(tmp_path, {})
+    workspace = tmp_path / "p" / "svn" / "pro"
+    workspace.mkdir(parents=True)
+    (workspace / "a.blend").write_bytes(b"")
+    adapter.entries = [SvnStatusEntry("pro/a.blend", item="normal")]
+
+    ok, message = service.commit_spawned_files(tmp_path / "p", ["pro/a.blend"])
+
+    assert ok is True
+    assert "already versioned" in message.lower()
+    assert adapter.add_calls == []
+    assert adapter.commit_calls == []
+
+
+def test_spawned_files_below_an_unversioned_directory_are_registered(tmp_path):
+    from src.infrastructure.vcs.svn_xml import SvnStatusEntry
+
+    service, adapter = _service(tmp_path, {})
+    workspace = tmp_path / "p" / "svn" / "pro" / "shots" / "sq010" / "sh010"
+    workspace.mkdir(parents=True)
+    (workspace / "sh010-layout.blend").write_bytes(b"")
+    adapter.entries = [SvnStatusEntry("pro/shots/sq010", item="unversioned")]
+
+    ok, message = service.commit_spawned_files(
+        tmp_path / "p",
+        ["pro/shots/sq010/sh010/sh010-layout.blend"],
+        username="artist",
+        password="secret",
+        message="OpenStudioHub: first spawn backfill (1 file(s)) for P.",
+    )
+
+    assert ok is True
+    assert adapter.add_calls == [["pro/shots/sq010/sh010/sh010-layout.blend"]]
+    assert len(adapter.commit_calls) == 1

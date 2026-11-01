@@ -73,6 +73,29 @@ The dialog offers:
 
 Conflicts must be resolved from the task's publish window.
 
+## Spawned files
+
+Files created by the Batch Creation wizard are added to the working copy as
+part of the same job:
+
+1. the headless builder reports each saved path;
+2. the worker runs `svn add --force --parents`;
+3. `.blend` files receive `svn:needs-lock`;
+4. one commit is created for the batch with a `first spawn` message.
+
+If the commit fails, the files remain scheduled for addition locally and the
+publish window can retry. The spawn itself is still reported as successful.
+
+Projects created before this workflow can be repaired from the project card
+with **Register Spawned Files to VCS…**. The backfill resolves the task files
+from Kitsu, adds the unversioned ones, applies the lock property and commits
+them once.
+
+Lock probes are read-only and silent for paths that are missing or not yet
+versioned. Unlocking an already-unlocked file is treated as a successful
+no-op, so committing from another client does not produce `E195013`/`W155010`
+notifications.
+
 ## Publishing files
 
 The publish window separates the working copy into three groups:

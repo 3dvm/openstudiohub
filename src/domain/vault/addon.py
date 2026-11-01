@@ -45,11 +45,18 @@ def _version_tuple(content: str, key: str) -> str:
 
 
 def parse_toml(content: str) -> AddonMetadata:
-    # Prefer the extension "id" (canonical, e.g. "blender_kitsu") over "name".
-    name = _first(content, r'id\s*=\s*"([^"]+)"') or _first(content, r'name\s*=\s*"([^"]+)"') or "unknown_addon"
-    version = _first(content, r'version\s*=\s*"([^"]+)"') or "1.0.0"
-    blender_min = _first(content, r'blender_version_min\s*=\s*"([^"]+)"') or "4.2.0"
-    description = _first(content, r'description\s*=\s*"([^"]+)"')
+    # Anchor each key to its own line: ``schema_version`` must not be mistaken
+    # for the add-on ``version``.
+    name = (
+        _first(content, r'(?m)^\s*id\s*=\s*"([^"]+)"')
+        or _first(content, r'(?m)^\s*name\s*=\s*"([^"]+)"')
+        or "unknown_addon"
+    )
+    version = _first(content, r'(?m)^\s*version\s*=\s*"([^"]+)"') or "1.0.0"
+    blender_min = (
+        _first(content, r'(?m)^\s*blender_version_min\s*=\s*"([^"]+)"') or "4.2.0"
+    )
+    description = _first(content, r'(?m)^\s*description\s*=\s*"([^"]+)"')
     return AddonMetadata(
         name=name,
         version=version,

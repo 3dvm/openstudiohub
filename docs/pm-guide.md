@@ -51,6 +51,13 @@ When you click "Batch Create", the Hub:
 2. Scaffolds the nested directories.
 3. Copies the base `.blend` template to prevent Sparse Checkout deadlocks for Vendors.
 4. Updates the Kitsu task metadata with the relative path to the newly created `.blend` file, allowing artists to launch the files directly from their Hub dashboards.
+5. Adds the new files to the SVN working copy, applies `svn:needs-lock` to every `.blend`, and creates one commit for the batch with a `first spawn` message.
+
+### Repairing older projects
+Projects created before automatic spawn registration can be fixed from the
+project card with **Register Spawned Files to VCS…**. The backfill reads the
+task file paths from Kitsu, finds the files on disk, adds the unversioned ones
+and commits them once.
 
 ## 4. Task Board, Comments & Assignments
 

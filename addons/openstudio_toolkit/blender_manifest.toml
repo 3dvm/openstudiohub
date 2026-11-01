@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "openstudio_toolkit"
-version = "0.5.0"
+version = "0.6.0"
 name = "OpenStudio Toolkit"
 tagline = "QA tools and validation, CVS autoupdate"
 maintainer = "Ernesto Del Valle Macuare"

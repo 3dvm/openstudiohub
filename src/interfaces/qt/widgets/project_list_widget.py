@@ -149,12 +149,17 @@ class ProjectListWidget(QFrame):
         self.vm.migration_phase.connect(self._on_migration_phase)
         self.vm.migration_finished.connect(self._on_migration_finished)
         self.vm.cleanup_finished.connect(lambda name, ok, msg: QMessageBox.information(self, self.tr("VCS Cleanup"), msg))
+        self.vm.backfill_finished.connect(self._on_backfill_finished)
         self.vm.policy_finished.connect(self._on_policy_finished)
         self.vm.vcs_locks_ready.connect(self._on_vcs_locks_ready)
         self.vm.export_uncommitted_found.connect(self._on_export_uncommitted_found)
         self.vm.publish_changes_ready.connect(self._on_publish_changes_ready)
         self.vm.publish_up_to_date.connect(self._on_publish_up_to_date)
         self.audit_vm.audit_completed.connect(self._on_project_audited)
+
+    def _on_backfill_finished(self, project_name: str, success: bool, message: str) -> None:
+        box = QMessageBox.information if success else QMessageBox.warning
+        box(self, self.tr("Register Spawned Files"), message)
 
     def _on_publish_up_to_date(self, project_name: str) -> None:
         QMessageBox.information(
@@ -547,6 +552,7 @@ class ProjectListWidget(QFrame):
                 on_migrate=self._request_migration,
                 on_export=lambda name, pid=project_id: self._request_export(name, pid),
                 on_publish=lambda name, pid=project_id: self.vm.request_project_publish(name),
+                on_backfill=lambda name, pid=project_id: self.vm.backfill_spawned_files(name, pid),
                 on_reset=lambda name, pid=project_id: self._request_reset_working_copy(name),
                 on_apply_policy=lambda name, pid=project_id: self._request_apply_policy(name),
                 on_manage_locks=lambda name, pid=project_id: self._request_manage_locks(name),

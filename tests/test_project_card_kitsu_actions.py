@@ -8,7 +8,7 @@
 from src.interfaces.qt.components.project_card import ProjectCard
 
 
-def _card(on_export, on_configure=None, on_publish=None, on_reset=None):
+def _card(on_export, on_configure=None, on_publish=None, on_reset=None, on_backfill=None):
     noop = lambda *args, **kwargs: None
     return ProjectCard(
         parent=None,
@@ -28,6 +28,7 @@ def _card(on_export, on_configure=None, on_publish=None, on_reset=None):
         on_migrate=noop,
         on_export=on_export,
         on_publish=on_publish,
+        on_backfill=on_backfill,
         on_reset=on_reset,
         on_configure=on_configure,
     )
@@ -89,3 +90,18 @@ def test_td_card_kitsu_menu_exposes_production_settings(qapp):
 
     texts = [a.text() for a in card.btn_kitsu_dropdown.menu().actions()]
     assert any("Production Settings" in text for text in texts)
+
+
+def test_card_backfill_action_forwards(qapp):
+    captured = {}
+    card = _card(
+        lambda *args: None,
+        on_backfill=lambda name, pid: captured.update(name=name, pid=pid),
+    )
+
+    action = next(
+        a for a in card.options_menu.actions() if "Register Spawned Files" in a.text()
+    )
+    action.trigger()
+
+    assert captured == {"name": "Neon", "pid": "p1"}

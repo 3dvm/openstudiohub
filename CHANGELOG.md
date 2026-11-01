@@ -5,6 +5,62 @@ All notable changes to OpenStudioHub are documented here.
 The project follows Semantic Versioning. Before `1.0.0`, minor and patch
 releases may include larger UI or workflow changes.
 
+## [Unreleased]
+
+### Added
+
+- Incremental access profiles with view switching:
+  - `TD` can use the TD, PM and Artist dashboards;
+  - `PM` can use the PM and Artist dashboards;
+  - a PM with the `lead` position (the Editor) uses the Artist dashboard and
+    is labelled `Editor` in the top bar;
+  - `Artist`, `Vendor` and `Lead` use the Artist dashboard only;
+  - `Supervisor`, `Client` and `Guest` are denied access for now.
+- Top-bar profile selector showing the active profile and allowing permitted
+  users to switch dashboards.
+- Project configuration changes are mirrored into `project_config.json` and
+  mark the workspace as requiring an update; the project card and config dialog
+  expose the update action.
+- Shared task-file resolver that handles linked paths, case differences,
+  versioned masters and naming drift. Missing task files are reported on the
+  card and block the launch.
+- Spawned `.blend` files are registered in Subversion as soon as the wizard
+  finishes: `svn add`, `svn:needs-lock`, and one `first spawn` commit per batch.
+- `Register Spawned Files to VCS…` backfill action for projects created before
+  automatic registration.
+- Version-aware add-on deployment:
+  - the vault manifest is authoritative per Blender version;
+  - installed add-ons are refreshed when the manifest declares a compatible
+    newer version or different archive content;
+  - updates fail explicitly when the declared archive is missing or
+    incompatible;
+  - project integrity marks the workspace as needing an update.
+- `openstudio_toolkit` 0.6.0, with self-contained QA rules so it loads from the
+  Blender extension sandbox.
+
+### Changed
+
+- OpenStudio Toolkit actions are now separate operations: `Audit Scene`,
+  `Fix Out-of-Bounds Textures`, `Purge Orphans` and `Save & Commit`.
+- Removed the Toolkit's own Kitsu playblast hook; Blender Kitsu remains the
+  owner of playblast publishing.
+- Prop asset tasks use a two-frame timeline (`1–2`); shots and other entities
+  keep their original frame range.
+- The add-on manifest parser no longer mistakes `schema_version` for the
+  add-on version.
+
+### Fixed
+
+- SVN unlock is idempotent. Files already unlocked by another client no longer
+  produce `E195013` notifications.
+- Lock probes for unversioned or missing paths no longer emit `W155010` audit
+  failures or `Info failed` notifications.
+- `openstudio_toolkit` activates correctly inside the Blender sandbox.
+
+### Tests
+
+- Full suite: 686 passing tests.
+
 ## [0.7.5] - 2026-10-25
 
 ### Added

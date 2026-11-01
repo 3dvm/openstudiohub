@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.domain.addon_inspector import AddonInspector
+from src.domain.vault.addon import parse_directory
 from src.domain.vault.integrity import base_version, register_disk_versions, remove_version, slugify
 from src.application.services.vault_service import VaultService
 from src.infrastructure.provisioning_workers import (
@@ -491,7 +492,13 @@ class ManifestEditorWidget(QFrame):
                         zipf.write(file_path, arcname)
 
             addon_name = "openstudio_toolkit"
-            addon_version = "0.5.0"
+            metadata = parse_directory(source_toolkit)
+            addon_version = metadata.version if metadata.is_valid else "0.0.0"
+            if not metadata.is_valid or addon_version == "0.0.0":
+                self.status_callback(
+                    self.tr("✗ Invalid blender_manifest.toml in openstudio_toolkit."), "red"
+                )
+                return
             addons_dir = self.vault_service.vault_root / "addons"
             addons_dir.mkdir(parents=True, exist_ok=True)
 

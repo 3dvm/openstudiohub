@@ -18,7 +18,7 @@ If the comment includes a checklist, tick the items you have finished. Each chec
 When the task is ready, click the **Launch Project** button.
 
 * **What happens?** The Hub automatically launches your isolated Blender environment and opens your `.blend` file.
-* **Dynamic Creation:** If the file doesn't exist yet, the Hub's Shot Builder dynamically generates it from the studio template so you don't start with an empty canvas.
+* **Missing files:** If the task has no file on disk, the card shows **File Missing on Disk** and the launch is blocked. Ask a PM or TD to create or link the file.
 * **Context Injection:** The interface is pre-navigated to your specific task context, and only the tools you need (like the Flamenco Render Farm for lighting artists) are enabled.
 
 ## 2. Working & Telemetry - TODO
@@ -34,8 +34,14 @@ When you launch a task, the Hub locks the linked file. The lock is released only
 The publish window lists versioned changes and conflicts first. Untracked files are kept in a separate section and are **not published unless you select them**. The commit message is editable and already includes the checklist items you completed in the task comments. Conflicts must be resolved with **Keep mine**, **Take theirs** or **Mark resolved** before publishing.
 
 Use the task card context menu to open **View VCS History…** for the revision log, diffs and a safe export of an older revision.
-When your task is ready for review, hit **Publish**. Before the file is uploaded, the **Gatekeeper** audits your scene.
+When your task is ready for review, run the Toolkit actions from the OpenStudio
+panel in Blender:
 
-* **Silent Cleanup:** It automatically purges orphan data and ignores temporary collections (like `__TEMP__`).
-* **The Concierge Pop-up:** If you accidentally linked a texture or HDRI from your personal `Downloads` folder, the Hub will intercept the publish and show a pop-up. It will ask you to classify the file, and then it will automatically copy it to the correct server folder and fix the paths for you.
-* **Scale Auto-Fix:** If any of your meshes have unapplied rotations or scales, the Gatekeeper will apply them automatically to prevent broken rigs down the line.
+* **Audit Scene** checks dependencies, transforms and naming;
+* **Fix Out-of-Bounds Textures** copies external textures into the project and
+  makes the paths relative;
+* **Purge Orphans** removes unused data blocks and excludes `__TEMP__`;
+* **Save & Commit** saves the file and commits it when the project uses VCS.
+
+Auditing no longer saves or publishes automatically. For prop tasks the scene
+range is set to `1–2`; shot ranges are left untouched.

@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from src.domain.production.value_objects import FileChange
+from src.domain.production.value_objects import FileChange, UNVERSIONED_STATUS_CODE
 from src.infrastructure.vcs.svn_errors import SvnAlreadyLockedError
 from src.infrastructure.vcs.svn_xml import status_code
 from src.infrastructure.vcs.vcs_router import VCSRouter
@@ -348,6 +348,124 @@ class TaskFileSyncService:
         except OSError as error:
             return False, f"Could not save the local ignore: {error}"
         return True, f"Local ignore added for '{pattern}'."
+
+    # ------------------------------------------------------------------
+    # Spawned file registration
+    # ------------------------------------------------------------------
+    def _existing_spawn_paths(
+        self, project_root: Path, relative_paths: List[str]
+    ) -> List[str]:
+        workspace = self.workspace_root(project_root)
+        existing: List[str] = []
+        seen: set[str] = set()
+        for raw in relative_paths or []:
+            candidate = Path(str(raw or ""))
+            if not str(raw or "").strip():
+                continue
+            if candidate.is_absolute():
+                try:
+                    candidate = candidate.resolve().relative_to(workspace.resolve())
+                except (OSError, ValueError):
+                    continue
+            relative = candidate.as_posix()
+            if relative in seen or not (workspace / candidate).is_file():
+                continue
+            seen.add(relative)
+            existing.append(relative)
+        return existing
+
+    def _unversioned_spawn_paths(self, adapter, relative_paths: List[str]) -> List[str]:
+        entries = self._status_entries(adapter)
+        if entries is None:
+            return list(relative_paths)
+
+        status_by_path = {entry.path: status_code(entry) for entry in entries}
+        unversioned = []
+        for path in relative_paths:
+            if status_by_path.get(path) == UNVERSIONED_STATUS_CODE:
+                unversioned.append(path)
+                continue
+            if path in status_by_path:
+                continue
+            # ``svn status`` reports only the top-most unversioned directory,
+            # so a new file below it has no exact entry. Walk the ancestors.
+            parent = Path(path).parent
+            while str(parent) not in ("", "."):
+                if status_by_path.get(parent.as_posix()) == UNVERSIONED_STATUS_CODE:
+                    unversioned.append(path)
+                    break
+                parent = parent.parent
+        return unversioned
+
+    def _register_spawned_files(
+        self, project_root: Path, relative_paths: List[str]
+    ) -> Tuple[bool, str, List[str]]:
+        if not self.is_vcs_enabled(project_root):
+            return True, "Version Control is disabled; nothing to register.", []
+
+        existing = self._existing_spawn_paths(project_root, relative_paths)
+        if not existing:
+            return True, "No spawned files found on disk.", []
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not initialize the VCS adapter: {error}", []
+        if adapter is None:
+            return False, "VCS enabled but no adapter is available.", []
+
+        new_paths = self._unversioned_spawn_paths(adapter, existing)
+        if not new_paths:
+            return True, "All spawned files are already versioned.", []
+
+        try:
+            adapter.add(new_paths)
+            setter = getattr(adapter, "set_needs_lock", None)
+            if callable(setter):
+                for path in new_paths:
+                    if path.lower().endswith(".blend"):
+                        setter(path)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not register spawned files: {error}", []
+
+        return True, f"Registered {len(new_paths)} spawned file(s) in the VCS.", new_paths
+
+    def register_spawned_files(
+        self, project_root: Path, relative_paths: List[str]
+    ) -> Tuple[bool, str]:
+        """Add newly spawned files to the working copy and mark blends for locking."""
+        ok, message, _paths = self._register_spawned_files(project_root, relative_paths)
+        return ok, message
+
+    def commit_spawned_files(
+        self,
+        project_root: Path,
+        relative_paths: List[str],
+        username: Optional[str] = None,
+        password: Optional[str] = None,
+        message: str = "",
+    ) -> Tuple[bool, str]:
+        """Register spawned files and commit the new paths in one revision."""
+        ok, register_message, new_paths = self._register_spawned_files(
+            project_root, relative_paths
+        )
+        if not ok:
+            return False, register_message
+        if not new_paths:
+            return True, register_message
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not initialize the VCS adapter: {error}"
+        if adapter is None:
+            return False, "VCS enabled but no adapter is available."
+
+        try:
+            adapter.commit(message, list(new_paths), username, password)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not commit spawned files: {error}"
+        return True, f"Committed {len(new_paths)} spawned file(s) to the VCS."
 
     # ------------------------------------------------------------------
     # Publish

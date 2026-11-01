@@ -125,6 +125,7 @@ class ProjectCard(QFrame):
         on_migrate: Optional[Callable] = None,
         on_export: Optional[Callable] = None,
         on_publish: Optional[Callable] = None,
+        on_backfill: Optional[Callable] = None,
         on_reset: Optional[Callable] = None,
         on_apply_policy: Optional[Callable] = None,
         on_manage_locks: Optional[Callable] = None,
@@ -152,6 +153,7 @@ class ProjectCard(QFrame):
         self.on_migrate = on_migrate
         self.on_export = on_export
         self.on_publish = on_publish
+        self.on_backfill = on_backfill
         self.on_reset = on_reset
         self.on_apply_policy = on_apply_policy
         self.on_manage_locks = on_manage_locks
@@ -205,6 +207,17 @@ class ProjectCard(QFrame):
             action_tasks = self.options_menu.addAction(self.tr("📋 View Tasks"))
             action_tasks.triggered.connect(self._on_open_tasks_requested)
             self.options_menu.addSeparator()
+
+        if (
+            self.on_backfill is not None
+            and not self.tasks_only
+            and self.user_role in ("td", "manager")
+        ):
+            self.options_menu.addSeparator()
+            action_backfill = self.options_menu.addAction(
+                self.tr("⬆️ Register Spawned Files to VCS…")
+            )
+            action_backfill.triggered.connect(self._on_backfill_requested)
 
         if self.user_role == "td":
             self.options_menu.addSeparator()
@@ -501,6 +514,11 @@ class ProjectCard(QFrame):
         if not self.on_publish:
             return
         self.on_publish(self.project_name, self.project_data.get("id", ""))
+
+    def _on_backfill_requested(self) -> None:
+        if not self.on_backfill:
+            return
+        self.on_backfill(self.project_name, self.project_data.get("id", ""))
 
     def _on_reset_requested(self) -> None:
         if not self.on_reset:
