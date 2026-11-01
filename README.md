@@ -111,6 +111,49 @@ cd openstudiohub
 
 ```
 
+### Branch workflow
+
+OpenStudioHub uses two long-lived branches:
+
+* **`develop`** — integration branch for active development. Features, fixes,
+  add-on updates and documentation changes land here first. Contributors should
+  work from `develop` and open pull requests against it.
+* **`main`** — release branch. It only receives versioned releases from
+  `develop` and is tagged with the corresponding version (for example
+  `v0.7.5`).
+
+Typical flow:
+
+```bash
+git checkout develop
+git pull origin develop
+git checkout -b feature/my-change
+# make and test the change
+git push origin feature/my-change
+# open a pull request targeting develop
+```
+
+When preparing a release:
+
+```bash
+git checkout develop
+git pull origin develop
+git checkout main
+git merge --no-ff develop
+git tag vX.Y.Z
+git push origin main --tags
+```
+
+Rules of thumb:
+
+* Do not develop directly on `main`.
+* Keep `develop` runnable; run the full test suite before merging.
+* Release commits and version bumps belong on `main`.
+* If a hotfix is made on `main`, merge it back into `develop` immediately so
+  the branches do not drift.
+* A workstation that wants the latest add-ons, features and fixes must pull
+  `develop`, not `main`.
+
 2. Create and activate the virtual environment:
 
 ```bash
