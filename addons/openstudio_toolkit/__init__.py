@@ -20,6 +20,7 @@ from . import gatekeeper
 from . import ui_modals
 from . import hooks
 from . import utils_logger
+from . import preferences
 from . import ui_panel
 
 # Importaremos los módulos a medida que los vayamos construyendo en esta Fase
@@ -30,6 +31,7 @@ modules = [
     ui_modals,
     hooks,
     utils_logger,
+    preferences,
     ui_panel,
 ]
 

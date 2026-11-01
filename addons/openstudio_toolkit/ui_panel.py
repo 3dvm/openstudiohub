@@ -65,6 +65,24 @@ class OPENSTUDIO_PT_kitsu_panel(bpy.types.Panel):
             icon='FILE_TICK',
         )
 
+        box_prefs = layout.box()
+        box_prefs.label(text="Project Preferences:", icon='PREFERENCES')
+        box_prefs.operator(
+            "openstudio.save_preferences",
+            text="Save Preferences",
+            icon='FILE_TICK',
+        )
+        box_prefs.operator(
+            "openstudio.import_preferences",
+            text="Import Preferences…",
+            icon='IMPORT',
+        )
+        box_prefs.operator(
+            "openstudio.export_preferences",
+            text="Export Preferences…",
+            icon='EXPORT',
+        )
+
 # =========================================================================================
 # REGISTRATION FUNCTIONS
 # =========================================================================================

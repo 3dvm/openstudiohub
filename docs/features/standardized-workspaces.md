@@ -40,3 +40,26 @@ archive hash so later integrity checks can detect drift.
 When an add-on update is available, project integrity marks the workspace as
 needing an update. Use **Update Workspace** on the project card to refresh the
 add-ons together with the rest of the workspace.
+
+## Per-project Blender preferences
+
+Each project sandbox has its own `userpref.blend` under
+`<vfs_local>/blender_data/config/`. The artist controls it locally; it is not a
+TD/PM setting.
+
+The Hub applies these project policies at every launch:
+
+* **File Paths → Temporary Files** points to
+  `<vfs_local>/blender-tmp/`;
+* **Undo Steps** is set to `256`;
+* **Save Versions** is set to `0` when the project has VCS enabled.
+
+The OpenStudio Toolkit panel adds a separate **Project Preferences** section:
+
+* **Save Preferences** applies the project policy and writes `userpref.blend`;
+* **Import Preferences…** replaces the project preferences from an exported
+  `userpref.blend` and then reapplies the project policy;
+* **Export Preferences…** saves a copy of the project's current preferences.
+
+Import/export are artist actions. A project can start from a studio-provided
+preference template, but after that the local artist remains in control.

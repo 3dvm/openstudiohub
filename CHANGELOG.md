@@ -37,6 +37,11 @@ releases may include larger UI or workflow changes.
   - project integrity marks the workspace as needing an update.
 - `openstudio_toolkit` 0.6.0, with self-contained QA rules so it loads from the
   Blender extension sandbox.
+- Per-project Blender preferences:
+  - Temporary Files points to `<vfs_local>/blender-tmp/`;
+  - Undo Steps is set to 256;
+  - Save Versions is set to 0 when the project uses VCS;
+  - artists can save, import and export `userpref.blend` from the Toolkit panel.
 
 ### Changed
 

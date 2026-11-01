@@ -25,6 +25,7 @@ templates ``templates/addons/cfg_*.py.template`` y se ejecuta a través de
 
 import os
 import sys
+from pathlib import Path
 
 import bpy
 
@@ -58,6 +59,32 @@ def _apply_persistent_overrides(dummy=None):
             bpy.types.OPENSTUDIO_OT_override_sanity.poll = poll_restringido
 
 
+def _apply_project_preferences():
+    """Apply project-local Blender paths and editing limits."""
+    try:
+        prefs = bpy.context.preferences
+        resources = (_ENV.blender_user_resources or "").strip()
+        if resources:
+            local_root = Path(resources).resolve().parent
+            temp_dir = local_root / "blender-tmp"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            prefs.filepaths.temporary_directory = str(temp_dir)
+
+        prefs.edit.undo_steps = 256
+
+        adapter = (_ENV.vcs_adapter or "").strip().lower()
+        if adapter not in ("", "none"):
+            prefs.filepaths.save_version = 0
+        print(
+            "[OPENSTUDIO HUB] Preferences applied "
+            f"(temp={prefs.filepaths.temporary_directory or 'default'}, "
+            f"undo={prefs.edit.undo_steps}, "
+            f"save_versions={prefs.filepaths.save_version})."
+        )
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HUB] Could not apply project preferences: {error}")
+
+
 def _apply_prop_timeline():
     """Keep prop tasks at two frames; shots and other entities are untouched."""
     entity_type = (_ENV.kitsu_entity_type or "").strip().upper()
@@ -87,6 +114,8 @@ def _startup_sequence():
     try:
         print("\n" + "=" * 50)
         print("[OPENSTUDIO HUB] Iniciando Secuencia de Arranque...")
+
+        _apply_project_preferences()
 
         # 1. Delegar la configuración de add-ons a los scripts autogenerados.
         registered = addon_runtime.register_all()
