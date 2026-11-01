@@ -140,6 +140,8 @@ class NotificationService:
             self._seen.add(fingerprint)
             if bool(event.get("ok", True)):
                 continue
+            if self._is_noop_unlock(event):
+                continue
             if self._is_dismissed(fingerprint):
                 continue
             if not self._is_visible_to_current_role(event):
@@ -223,6 +225,15 @@ class NotificationService:
             return True
         operation = str(event.get("operation", "") or "")
         return not operation.startswith("repository.") and operation != "locks.break"
+
+    @staticmethod
+    def _is_noop_unlock(event: dict) -> bool:
+        operation = str(event.get("operation", "") or "").strip().lower()
+        if operation not in ("unlock", "locks.unlock"):
+            return False
+        if str(event.get("error_code", "") or "") == "E195013":
+            return True
+        return "is not locked in this working copy" in str(event.get("message", "") or "")
 
     @staticmethod
     def _fingerprint(event: dict) -> str:

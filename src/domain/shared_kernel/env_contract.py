@@ -71,7 +71,8 @@ class EnvKey:
     TARGET_ENTITY_ID = "OPENSTUDIO_TARGET_ENTITY_ID"
     TARGET_SEQUENCE = "OPENSTUDIO_TARGET_SEQUENCE"
 
-    # VCS credentials (RAM-only, injected for the DCC subprocess)
+    # VCS context (RAM-only, injected for the DCC subprocess)
+    VCS_ADAPTER = "OPENSTUDIO_VCS_ADAPTER"
     SVN_USER = "OPENSTUDIO_SVN_USER"
     SVN_PASSWORD = "OPENSTUDIO_SVN_PASSWORD"
 
@@ -109,6 +110,7 @@ _FIELD_TO_KEY: Dict[str, str] = {
     "build_target": EnvKey.BUILD_TARGET,
     "target_entity_id": EnvKey.TARGET_ENTITY_ID,
     "target_sequence": EnvKey.TARGET_SEQUENCE,
+    "vcs_adapter": EnvKey.VCS_ADAPTER,
     "svn_user": EnvKey.SVN_USER,
     "svn_password": EnvKey.SVN_PASSWORD,
     "blender_user_resources": EnvKey.BLENDER_USER_RESOURCES,
@@ -156,6 +158,7 @@ class SandboxEnvironment:
     target_entity_id: Optional[str] = None
     target_sequence: Optional[str] = None
 
+    vcs_adapter: Optional[str] = None
     svn_user: Optional[str] = None
     svn_password: Optional[str] = None
 

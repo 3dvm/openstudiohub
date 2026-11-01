@@ -45,3 +45,10 @@ def test_full_launch_scenario_keys():
     assert env[EnvKey.KITSU_HOST] == "http://h/api"
     assert env[EnvKey.KITSU_ASSET_TYPE_ID] == "at1"
     assert env[EnvKey.KITSU_ENTITY_TYPE] == "SHOT"
+
+
+def test_vcs_adapter_roundtrip():
+    env = SandboxEnvironment(vcs_adapter="svn").to_os_environ()
+    assert env[EnvKey.VCS_ADAPTER] == "svn"
+    restored = SandboxEnvironment.from_os_environ(env)
+    assert restored.vcs_adapter == "svn"

@@ -5,7 +5,7 @@ from src.application.ports import SessionRepository
 from src.application.services.auth_service import AuthService
 from src.domain.identity.entities import Session
 from src.domain.identity.events import UserAuthenticated, UserLoggedOut
-from src.domain.identity.value_objects import Role
+from src.domain.identity.value_objects import Role, ViewProfile
 from src.infrastructure.kitsu_manager import AuthFailedException
 
 
@@ -150,3 +150,27 @@ def test_logout_is_resilient_when_server_unreachable():
     assert svc.current_role() is Role.GUEST
     assert repo.session is None
     assert isinstance(events[0], UserLoggedOut)
+
+
+def test_login_denies_roles_without_hub_access():
+    svc, kitsu, repo, _events = make_service()
+    kitsu.user["role"] = "supervisor"
+
+    ok, message = svc.login("ada@studio.com", "good", "http://localhost:8080")
+
+    assert ok is False
+    assert "access" in message.lower()
+    assert svc.current_role() is Role.GUEST
+    assert repo.session is None
+
+
+def test_vendor_can_log_in_as_artist():
+    svc, kitsu, repo, _events = make_service()
+    kitsu.user["role"] = "vendor"
+
+    ok, _message = svc.login("vendor@studio.com", "good", "http://localhost:8080")
+
+    assert ok is True
+    assert svc.current_role() is Role.VENDOR
+    assert svc.current_role().default_profile() is ViewProfile.ARTIST
+    assert repo.session is not None

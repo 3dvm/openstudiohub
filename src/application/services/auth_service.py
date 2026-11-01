@@ -68,6 +68,14 @@ class AuthService:
             tokens = self.kitsu.log_in(email, password)
             raw = self.kitsu.get_current_user()
             user = User.from_kitsu_dict(raw or {})
+            if not user.role.has_hub_access():
+                try:
+                    self.kitsu.log_out()
+                except Exception:  # noqa: BLE001 - denial must not fail
+                    pass
+                self._raw_user_data = None
+                self._user = None
+                return False, "Your account does not have access to OpenStudio Hub."
             self._raw_user_data = raw
             self._user = user
             self.session_repository.save(Session(host=self._host, tokens=tokens))
@@ -85,6 +93,11 @@ class AuthService:
             self.kitsu.set_tokens(session.tokens)
             raw = self.kitsu.get_current_user()
             user = User.from_kitsu_dict(raw or {})
+            if not user.role.has_hub_access():
+                self.session_repository.delete()
+                self._user = None
+                self._raw_user_data = None
+                return False
             self._raw_user_data = raw
             self._user = user
             return True

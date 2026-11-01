@@ -335,3 +335,53 @@ def test_reset_working_copy_worker_removes_then_installs(tmp_path, qapp):
     assert results == [(True, "installed")]
     assert not stale.exists()
     assert install.calls and install.calls[0][0] == project_root
+
+
+def test_save_project_config_mirrors_version_and_marks_workspace_update(tmp_path, qapp):
+    nas_dir = tmp_path / "workspace"
+    project = nas_dir / "Neon"
+    (project / "local").mkdir(parents=True)
+    (project / "local" / "project_config.json").write_text(
+        json.dumps({"blender_version": "3.6", "template": "Old"}), encoding="utf-8"
+    )
+    _write_blueprint(project, {
+        "project_name": "Neon",
+        "kitsu_project_id": "p1",
+        "template": "Old",
+        "blender_version": "3.6",
+        "version_locking": {"blender_version": "3.6"},
+        "dependencies": {},
+        "topography_signature": {"vfs_pipeline": "pipeline", "vfs_local": "local"},
+    })
+
+    vm = _make_vm(tmp_path)
+    ok, message = vm.save_project_config(project, "p1", {
+        "server_id": "",
+        "blender_version": "4.2",
+        "template": "New",
+        "dependencies": {},
+        "addon_configuration": {},
+        "splash_source_path": "",
+    })
+
+    assert ok is True
+    assert "update" in message.lower()
+
+    saved = json.loads((project / "pipeline" / "project_init.json").read_text())
+    assert saved["blender_version"] == "4.2"
+    assert saved["version_locking"]["blender_version"] == "4.2"
+
+    local = json.loads((project / "local" / "project_config.json").read_text())
+    assert local["blender_version"] == "4.2"
+    assert local["workspace_update_required"] is True
+
+
+def test_role_override_changes_ui_permissions_but_not_the_account_role(tmp_path, qapp):
+    vm = _make_vm(tmp_path)
+    assert vm.user_role == "artist"
+    assert vm.account_role == "artist"
+
+    vm.set_role_override("td")
+
+    assert vm.user_role == "td"
+    assert vm.account_role == "artist"

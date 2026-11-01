@@ -149,6 +149,7 @@ class ProjectListViewModel(BaseViewModel):
         self.ssh_passphrase_prompt = ssh_passphrase_prompt
         self.export_service = export_service
         self.import_service = import_service
+        self._role_override = ""
 
         self.nas_manager = NasManager(self.nas_dir)
         self.sync_service = TaskFileSyncService(self.config_factory)
@@ -230,8 +231,17 @@ class ProjectListViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Queries
     # ------------------------------------------------------------------
+    def set_role_override(self, role: str) -> None:
+        """Use this role for the visible interface while preserving the real account role."""
+        self._role_override = str(role or "").strip().lower()
+
     @property
     def user_role(self) -> str:
+        return self._role_override or self.auth_service.current_role().value
+
+    @property
+    def account_role(self) -> str:
+        """The authenticated role, used for VCS policies such as vendor sparse checkout."""
         return self.auth_service.current_role().value
 
     @property
@@ -306,9 +316,17 @@ class ProjectListViewModel(BaseViewModel):
         project_dir = self.nas_manager.resolve_project_dir(project_name)
         is_installed = health.is_installed_locally if health.has_valid_blueprint else False
 
+        update_required = False
+        if project_dir and self.installation_service is not None:
+            try:
+                update_required = self.installation_service.workspace_needs_update(project_dir)
+            except Exception:  # noqa: BLE001
+                update_required = False
+
         status = {
             "project_dir": project_dir,
             "is_installed": is_installed,
+            "update_required": update_required,
             "is_corrupted": is_corrupted,
             "error_type": error_type,
             "error_code": error_code,
@@ -389,7 +407,7 @@ class ProjectListViewModel(BaseViewModel):
     def _build_install_worker(self, project_dir: Path, vcs_user: str, vcs_pwd: str):
         from src.interfaces.qt.workers.project_list_workers import ProjectInstallWorker
 
-        return ProjectInstallWorker(self.installation_service, project_dir, vcs_user, vcs_pwd, self.user_role)
+        return ProjectInstallWorker(self.installation_service, project_dir, vcs_user, vcs_pwd, self.account_role)
 
     def _on_install_finished(self, project_dir: Path, success: bool, message: str) -> None:
         self.install_finished.emit(project_dir, success, message)
@@ -418,6 +436,14 @@ class ProjectListViewModel(BaseViewModel):
 
             with open(config_path, "r", encoding="utf-8") as handle:
                 local_config = json.load(handle)
+
+            if bool(local_config.get("workspace_update_required")):
+                self.report_status(
+                    "The project configuration changed. Update the workspace before launching.",
+                    "red",
+                )
+                return
+
             blender_version = local_config.get("blender_version", "")
 
             os_name, _ = self.installation_service._get_os_info()
@@ -500,6 +526,13 @@ class ProjectListViewModel(BaseViewModel):
         except Exception:  # noqa: BLE001
             servers = []
 
+        update_required = False
+        if project_dir and self.installation_service is not None:
+            try:
+                update_required = self.installation_service.workspace_needs_update(project_dir)
+            except Exception:  # noqa: BLE001
+                update_required = False
+
         return {
             "project_name": project_name,
             "project_id": project_id,
@@ -510,6 +543,7 @@ class ProjectListViewModel(BaseViewModel):
             "bound_server_id": server.id if server is not None else "",
             "splash_path": splash_path,
             "vfs_pipeline": vfs_pipeline,
+            "update_required": update_required,
         }
 
     def probe_project_vcs(self, server_id: str, project_name: str) -> tuple[bool, str]:
@@ -551,6 +585,8 @@ class ProjectListViewModel(BaseViewModel):
         if not isinstance(data, dict):
             return False, "The blueprint is not a valid object."
 
+        previous = json.loads(json.dumps(data))
+
         # VCS binding
         server_id = str(payload.get("server_id", "") or "")
         if server_id:
@@ -567,6 +603,9 @@ class ProjectListViewModel(BaseViewModel):
         # Core blueprint fields
         if "blender_version" in payload:
             data["blender_version"] = str(payload.get("blender_version") or "")
+            # Keep the legacy lock in sync so it cannot override the new value.
+            if isinstance(data.get("version_locking"), dict):
+                data["version_locking"]["blender_version"] = data["blender_version"]
         if "template" in payload:
             data["template"] = str(payload.get("template") or "")
         if "dependencies" in payload and isinstance(payload.get("dependencies"), dict):
@@ -574,11 +613,48 @@ class ProjectListViewModel(BaseViewModel):
         if "addon_configuration" in payload and isinstance(payload.get("addon_configuration"), dict):
             data[ADDON_CONFIGURATION_KEY] = payload["addon_configuration"]
 
+        workspace_changed = any(
+            data.get(key) != previous.get(key)
+            for key in (
+                "blender_version",
+                "template",
+                "dependencies",
+                ADDON_CONFIGURATION_KEY,
+            )
+        )
+
         try:
             with open(blueprint_path, "w", encoding="utf-8") as handle:
                 json.dump(data, handle, indent=4)
         except Exception as error:  # noqa: BLE001
             return False, f"Could not write the blueprint: {error}"
+
+        # Mirror the blueprint into the local workspace configuration. The
+        # launch path keeps reading project_config.json; it is not bypassed.
+        update_required = False
+        local_name = (data.get("topography_signature") or {}).get("vfs_local") or (
+            getattr(self.config_factory, "get_vfs_local_name", lambda: "local")()
+        )
+        local_config_path = project_dir / local_name / "project_config.json"
+        if local_config_path.exists():
+            try:
+                local_data = json.loads(local_config_path.read_text(encoding="utf-8"))
+                if not isinstance(local_data, dict):
+                    local_data = {}
+                local_data["blender_version"] = str(data.get("blender_version") or "")
+                local_data["template"] = str(data.get("template") or "")
+                local_data["dependencies"] = data.get("dependencies") or {}
+                if workspace_changed:
+                    local_data["workspace_update_required"] = True
+                update_required = bool(local_data.get("workspace_update_required"))
+                local_config_path.write_text(
+                    json.dumps(local_data, indent=4), encoding="utf-8"
+                )
+            except Exception as error:  # noqa: BLE001
+                self.report_status(
+                    f"Local workspace configuration could not be updated: {error}",
+                    "yellow",
+                )
 
         # Regenerate the add-on config scripts so changes apply on next launch.
         try:
@@ -615,8 +691,15 @@ class ProjectListViewModel(BaseViewModel):
             except Exception as error:  # noqa: BLE001
                 return False, f"Could not update the splash screen: {error}"
 
+        update_note = ""
+        if workspace_changed:
+            if update_required:
+                update_note = " Project changed; update the workspace to apply it."
+            else:
+                update_note = " Project changed; install the workspace to apply it."
+
         self.refresh_requested.emit()
-        return True, f"Project configuration saved.{splash_note}"
+        return True, f"Project configuration saved.{splash_note}{update_note}"
 
     def migrate_project(self, project_name: str, project_dir: Path | None = None, target_server_id: str = "") -> None:
         """Migrate a single project's VCS repository to the chosen server."""
@@ -1067,7 +1150,7 @@ class ProjectListViewModel(BaseViewModel):
             vfs_svn=self.config_factory.get_vfs_svn_name(),
             vcs_user=vcs_user,
             vcs_pwd=vcs_pwd,
-            user_role=self.user_role,
+            user_role=self.account_role,
         )
         worker.finished_reset.connect(
             lambda ok, msg, name=project_name: self._on_reset_finished(name, ok, msg)
@@ -1262,7 +1345,7 @@ class ProjectListViewModel(BaseViewModel):
         vcs_user, vcs_pwd = creds
         self._ensure_target_passphrase(server)
 
-        worker = KitsuCheckoutWorker(self.import_service, report.project_root, vcs_user, vcs_pwd, self.user_role)
+        worker = KitsuCheckoutWorker(self.import_service, report.project_root, vcs_user, vcs_pwd, self.account_role)
         worker.finished_checkout.connect(self._on_checkout_finished)
         self.workers.start("kitsu_checkout", worker, critical=True)
 

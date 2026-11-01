@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from src.application.services.addon_config_generator import AddonConfigGenerator
-from src.domain.path_resolver import PathResolver
+from src.application.services.task_file_resolver import TaskFileResolver
 from src.domain.shared_kernel.env_contract import SandboxEnvironment
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
@@ -59,18 +59,20 @@ class LaunchService:
         with open(config_path, "r", encoding="utf-8") as handle:
             blueprint = json.load(handle)
 
+        self._ensure_workspace_is_current(project_root, blueprint)
+
         template_name = blueprint.get("template", "Macuare_Estudio")
         version = blueprint.get("version_locking", {}).get(
             "blender_version", blueprint.get("blender_version", "5.1.2")
         )
 
-        status_callback(f"Buscando Blender {version} en Sandbox Local...", "yellow")
+        status_callback(f"Looking for Blender {version} in the local sandbox...", "yellow")
 
         base_blender_dir = project_root / vfs_local / "blender-build"
         blender_bin = BlenderLocator.resolve(base_blender_dir, version=version)
 
         status_callback(
-            f"Ejecutable aislado encontrado en: {BlenderLocator.archive_folder_name(version)}", "green"
+            f"Isolated executable found at: {BlenderLocator.archive_folder_name(version)}", "green"
         )
         status_callback("Preparando Sandboxing y Variables de Entorno...", "yellow")
 
@@ -85,6 +87,12 @@ class LaunchService:
         splash_path = project_root / vfs_pipe / "splash.png"
 
         target_file = self._resolve_target_file(project_root, production_folder, task_data, target_file)
+        if target_file is None:
+            raise FileNotFoundError(
+                "Task file not found on disk. Ask a PM/TD to create or link the file."
+            )
+
+        vcs_adapter = self._resolve_vcs_adapter(project_root)
 
         sandbox_env = SandboxEnvironment(
             project_config=str(config_path),
@@ -109,6 +117,7 @@ class LaunchService:
             kitsu_task_type_name=task_type,
             kitsu_asset_type_id=task_data.get("asset_type_id", task_data.get("entity_type_id", "")),
             kitsu_asset_type_name=task_data.get("asset_type_name", ""),
+            vcs_adapter=vcs_adapter,
             svn_user=svn_user,
             svn_password=svn_pwd,
             blender_user_resources=str(sandbox_dir),
@@ -134,6 +143,58 @@ class LaunchService:
         proceso.wait()
         status_callback(f"Sesion de {project_name} terminada.", "green")
 
+    def _resolve_vcs_adapter(self, project_root: Path) -> str:
+        """Return the project's VCS adapter, or an empty string when disabled."""
+        adapter = ""
+        try:
+            getter = getattr(self.config_factory, "get_server_for_project", None)
+            server = getter(project_root) if callable(getter) else None
+            adapter = str(getattr(server, "adapter", "") or "")
+            if not adapter:
+                adapter = str(self.config_factory.get_vcs_adapter_type() or "")
+        except Exception:  # noqa: BLE001
+            adapter = ""
+        adapter = adapter.strip().lower()
+        return "" if adapter in ("", "none") else adapter
+
+    def _ensure_workspace_is_current(self, project_root: Path, local_config: dict) -> None:
+        """Refuse to launch a workspace whose project_init.json changed.
+
+        ``project_config.json`` remains the launch source. The Hub only mirrors
+        project_init.json into it after a project configuration change; if the
+        user edited the blueprint outside the Hub, the workspace must be
+        updated before launching.
+        """
+        if bool(local_config.get("workspace_update_required")):
+            raise RuntimeError(
+                "The project configuration changed. Update the workspace before launching."
+            )
+
+        pipeline_getter = getattr(self.config_factory, "get_vfs_pipeline_name", None)
+        vfs_pipeline = (
+            (local_config.get("topography_signature") or {}).get("vfs_pipeline")
+            or (pipeline_getter() if callable(pipeline_getter) else "pipeline")
+        )
+        init_path = Path(project_root) / vfs_pipeline / "project_init.json"
+        if not init_path.exists():
+            return
+        try:
+            with open(init_path, "r", encoding="utf-8") as handle:
+                init_data = json.load(handle)
+        except Exception:  # noqa: BLE001
+            return
+
+        blueprint_version = str(
+            (init_data or {}).get("blender_version")
+            or ((init_data or {}).get("version_locking") or {}).get("blender_version")
+            or ""
+        )
+        local_version = str(local_config.get("blender_version") or "")
+        if blueprint_version and local_version and blueprint_version != local_version:
+            raise RuntimeError(
+                "The project configuration changed. Update the workspace before launching."
+            )
+
     @staticmethod
     def _resolve_target_file(
         project_root: Path, production_folder: str, task_data: dict, target_file: Optional[Path]
@@ -141,28 +202,10 @@ class LaunchService:
         if target_file:
             return target_file
 
-        # Prefer the explicit per-task link stored in Kitsu custom data.
-        linked_path = (task_data.get("data") or {}).get("filepath")
-        if linked_path:
-            return project_root / production_folder / linked_path
-
-        resolver = PathResolver()
-        resolved_rel_path = resolver.resolve(task_data)
-        if not resolved_rel_path:
-            return None
-
-        base_target = (project_root / production_folder / resolved_rel_path).with_suffix("")
-
-        # The DCC add-on writes versioned masters preserving the project name's
-        # case (e.g. ``MIDEQ_promo-edit-v001.blend``), while the resolved task
-        # name may be lower-cased. Match case-insensitively and pick the newest
-        # version, otherwise fall back to the un-versioned master.
-        versioned = LaunchService._find_latest_versioned(base_target)
-        if versioned is not None:
-            return versioned
-
-        unversioned = LaunchService._find_case_insensitive(base_target.with_suffix(".blend"))
-        return unversioned if unversioned is not None else base_target.with_suffix(".blend")
+        resolved = TaskFileResolver().resolve(
+            project_root, task_data, production_folder=production_folder
+        )
+        return resolved.absolute_path if resolved is not None else None
 
     @staticmethod
     def _find_latest_versioned(base_target: Path) -> Optional[Path]:

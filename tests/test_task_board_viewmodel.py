@@ -113,3 +113,15 @@ def test_comment_panel_width_is_persisted(qapp, tmp_path):
     assert _vm(tmp_path).comment_panel_width() == 420
     vm.set_comment_panel_width(10)
     assert vm.comment_panel_width() == vm.MIN_COMMENT_WIDTH
+
+
+def test_profile_override_controls_assignment_permissions(qapp, tmp_path):
+    vm = TaskBoardViewModel(
+        FakeProduction(),
+        FakeAuth("td"),
+        read_store=CommentReadStore(path=tmp_path / "seen.json"),
+        prefs_store=UiPrefsStore(path=tmp_path / "prefs.json"),
+        role_override="manager",
+    )
+
+    assert vm.assignment_allowed() is True

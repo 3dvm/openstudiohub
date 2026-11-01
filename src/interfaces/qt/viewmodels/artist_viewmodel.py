@@ -21,6 +21,7 @@ from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
 from src.application.services.installation_service import InstallationService
 from src.application.services.production_service import ProductionService
+from src.application.services.task_file_resolver import TaskFileResolver
 from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.domain.identity.value_objects import Role
 from src.domain.production.comments import (
@@ -72,6 +73,7 @@ class ArtistTaskCardModel:
     project_id: str
     project_name: str
     task_file_path: Optional[str] = None
+    file_missing: bool = False
     pending_changes: list = field(default_factory=list)
     vcs_enabled: bool = False
     lock_owner: str = ""
@@ -116,6 +118,7 @@ class ArtistViewModel(BaseViewModel):
         comment_read_store: CommentReadStore | None = None,
         prefs_store: UiPrefsStore | None = None,
         parent=None,
+        role_override: str = "",
     ) -> None:
         super().__init__(status_sink, parent)
         self.production_service = production_service
@@ -125,8 +128,10 @@ class ArtistViewModel(BaseViewModel):
         self.installation_service = installation_service
         self.register_instance = register_instance
         self.vcs_prompt = vcs_prompt
+        self.role_override = str(role_override or "").strip().lower()
 
         self.task_file_sync_service = TaskFileSyncService(config_factory)
+        self.task_file_resolver = TaskFileResolver(config_factory)
         self.comment_read_store = comment_read_store or CommentReadStore()
         self.prefs_store = prefs_store or UiPrefsStore()
         self.comments = TaskCommentsViewModel(
@@ -359,7 +364,17 @@ class ArtistViewModel(BaseViewModel):
 
         config_path = project_root / vfs_local / "project_config.json" if project_root else None
 
-        task_file_path = (task_data.get("data") or {}).get("filepath") or None
+        resolved = (
+            self.task_file_resolver.resolve(project_root, task_data)
+            if project_root is not None
+            else None
+        )
+        task_file_path = (
+            resolved.relative_path
+            if resolved is not None
+            else ((task_data.get("data") or {}).get("filepath") or None)
+        )
+        file_missing = bool(project_root is not None and resolved is None)
 
         return ArtistTaskCardModel(
             task_data=task_data,
@@ -371,6 +386,7 @@ class ArtistViewModel(BaseViewModel):
             project_id=task_data.get("project_id", ""),
             project_name=project_name,
             task_file_path=task_file_path,
+            file_missing=file_missing,
             vcs_enabled=self.task_file_sync_service.is_vcs_enabled(project_root),
         )
 
@@ -448,6 +464,13 @@ class ArtistViewModel(BaseViewModel):
         config_path = card.config_path
         if not config_path or not config_path.exists():
             self.report_status("Config file missing. Reinstall workspace.", "red")
+            return
+
+        if card.file_missing or not card.task_file_path:
+            self.report_status(
+                "Task file not found on disk. Ask a PM/TD to create or link the file.",
+                "red",
+            )
             return
 
         creds = self._ensure_vcs_credentials(card.project_root)
@@ -755,7 +778,9 @@ class ArtistViewModel(BaseViewModel):
         return items
 
     def can_break_foreign_locks(self) -> bool:
-        """Only a TD may break a lock owned by another user."""
+        """Only the TD interface may break a lock owned by another user."""
+        if self.role_override:
+            return self.role_override == "td"
         try:
             return self.auth_service.current_role() is Role.TD
         except Exception:  # noqa: BLE001

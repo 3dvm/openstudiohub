@@ -397,3 +397,19 @@ def test_local_ignore_roundtrip(tmp_path):
 
     assert ok is True and ok2 is True
     assert service.load_local_ignores(tmp_path / "p") == ["cache.tmp"]
+
+
+def test_unlock_treats_e195013_as_already_unlocked(tmp_path):
+    from src.infrastructure.vcs.svn_errors import VcsError
+
+    service, adapter = _service(tmp_path, {})
+
+    def raise_e195013(*_args, **_kwargs):
+        raise VcsError("is not locked in this working copy", code="E195013")
+
+    adapter.unlock = raise_e195013
+
+    ok, message = service.unlock_task_file(tmp_path / "p", "pro/a.blend", "artist", "secret")
+
+    assert ok is True
+    assert "already unlocked" in message.lower()

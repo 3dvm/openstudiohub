@@ -10,43 +10,11 @@
 # Versión del archivo: 0.5.0
 # =========================================================================================
 
-"""
-Módulo de ganchos (Hooks) de integración de terceros.
-Delega procesos complejos a add-ons preexistentes (como Blender Kitsu)
-una vez que el Gatekeeper ha dado luz verde a la sanidad del archivo.
-"""
+"""Blender load handlers for project context (splash and task timeline)."""
 
 import bpy
 import os
 from pathlib import Path
-
-def disparar_playblast_kitsu():
-    """
-    Invoca el operador nativo de Blender Kitsu para renderizar el Playblast
-    y subirlo a la API, cambiando el estado de la tarea en el servidor.
-    """
-    try:
-        # Verificamos si el add-on de Kitsu está habilitado y expone su operador
-        if hasattr(bpy.ops.kitsu, "push_playblast"):
-            # Usamos 'INVOKE_DEFAULT' para levantar la ventana modal de Kitsu,
-            # permitiendo al artista escribir su comentario de entrega.
-            bpy.ops.kitsu.push_playblast('INVOKE_DEFAULT')
-            print("[SYNERGY HOOK] Operador 'push_playblast' de Blender Kitsu invocado exitosamente.")
-            return True
-            
-        # Fallback genérico por si la API de Blender Studio cambia el nombre del operador
-        elif hasattr(bpy.ops.kitsu, "push"):
-            bpy.ops.kitsu.push('INVOKE_DEFAULT')
-            print("[SYNERGY HOOK] Operador 'push' de Blender Kitsu invocado (Fallback).")
-            return True
-            
-        else:
-            print("[SYNERGY HOOK ERROR] No se encontró un operador compatible en el add-on de Kitsu.")
-            return False
-            
-    except Exception as e:
-        print(f"[SYNERGY HOOK FATAL ERROR] Excepción al delegar el evento a Kitsu: {e}")
-        return False
 
 def inyectar_splash_corporativo(dummy=None):
     """Atrapa el inicio de Blender y sobrescribe el logo default con la portada del Hub."""
@@ -65,12 +33,39 @@ def inyectar_splash_corporativo(dummy=None):
         print(f"Error al insertar el splash screen: {e}")
         return False
 
+_PROP_ASSET_TYPES = {"prop", "props"}
+
+
+def ajustar_linea_tiempo_prop(dummy=None):
+    """Keep prop tasks at two frames so playblasts are not hundreds of duplicates."""
+    entity_type = os.environ.get("OPENSTUDIO_KITSU_ENTITY_TYPE", "").strip().upper()
+    if entity_type != "ASSET":
+        return
+
+    asset_type = os.environ.get("OPENSTUDIO_KITSU_ASSET_TYPE_NAME", "").strip().lower()
+    if asset_type not in _PROP_ASSET_TYPES:
+        return
+
+    try:
+        scene = bpy.context.scene
+        if scene.frame_start != 1 or scene.frame_end != 2:
+            scene.frame_start = 1
+            scene.frame_end = 2
+            print("[OPENSTUDIO HOOK] Prop task timeline set to 2 frames (1-2).")
+    except Exception as error:  # noqa: BLE001
+        print(f"[OPENSTUDIO HOOK] Could not adjust the prop timeline: {error}")
+
+
 def register():
-    # Este módulo expone funciones puras, no requiere registrar clases en bpy
-    bpy.app.handlers.load_post.append(inyectar_splash_corporativo)
-    pass
+    # This module exposes pure handlers; no bpy classes need registration.
+    if inyectar_splash_corporativo not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(inyectar_splash_corporativo)
+    if ajustar_linea_tiempo_prop not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(ajustar_linea_tiempo_prop)
+
 
 def unregister():
     if inyectar_splash_corporativo in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(inyectar_splash_corporativo)
-    pass
+    if ajustar_linea_tiempo_prop in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(ajustar_linea_tiempo_prop)

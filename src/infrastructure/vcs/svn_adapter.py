@@ -298,11 +298,32 @@ class SVNAdapter(AbstractVCS):
         password: Optional[str] = None,
         force: bool = False,
     ) -> bool:
+        # Unlock is idempotent: if the file is no longer locked (for example
+        # because it was committed from another client), there is nothing to do.
+        try:
+            info = self.get_lock_info(path)
+        except Exception:  # noqa: BLE001 - missing paths are handled by unlock
+            info = None
+        if not info or not info.get("owner"):
+            return True
+
         cmd = ["svn", "unlock", path]
         if force:
             cmd.append("--force")
         cmd.extend(self._build_auth_args(username, password))
-        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        try:
+            self._run_subprocess(cmd, cwd=self.workspace_dir)
+        except VcsError as error:
+            if error.code == "E195013" or "is not locked in this working copy" in str(error):
+                # Race: another client released the lock between our check and
+                # the unlock command. Treat it as an already-unlocked file.
+                try:
+                    current = self.get_lock_info(path)
+                except Exception:  # noqa: BLE001
+                    current = None
+                if not current or not current.get("owner"):
+                    return True
+            raise
         return True
 
     def get_lock_info(self, path: str) -> Optional[Dict[str, str]]:

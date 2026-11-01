@@ -49,6 +49,7 @@ class ViewTD(BaseDashboardView):
         status_sink: StatusSink | None = None,
         task_board_vm=None,
         notifications_vm=None,
+        effective_role: str = "td",
         **kwargs,
     ) -> None:
         super().__init__(
@@ -71,7 +72,10 @@ class ViewTD(BaseDashboardView):
         self.on_new_project_callback = on_new_project_callback
         self.on_repair_callback = on_repair_callback
         self.task_board_vm = task_board_vm or TaskBoardViewModel(
-            production_service, auth_service, status_sink=status_sink
+            production_service,
+            auth_service,
+            status_sink=status_sink,
+            role_override=effective_role,
         )
         self.vcs_audit_vm = VcsAuditViewModel(status_sink=status_sink)
 

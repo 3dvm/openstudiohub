@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
 )
 
-from src.domain.identity.value_objects import Role
+from src.domain.identity.value_objects import Role, ViewProfile
 from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.qt_worker import active_critical_workers, wait_for_all
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
@@ -50,12 +50,9 @@ from src.interfaces.qt.views.td_view import ViewTD
 
 
 def _select_dashboard(role: Role, position: str) -> str:
-    """Map an authenticated role/position to a dashboard ('td' | 'pm' | 'artist' | 'editor')."""
-    if role is Role.TD:
-        return "td"
-    if role is Role.MANAGER:
-        return "artist" if position == "lead" else "pm"
-    return "artist"
+    """Return the default dashboard profile for an authenticated role."""
+    profile = role.default_profile(position)
+    return profile.value if profile is not None else ""
 
 
 if getattr(sys, "frozen", False):
@@ -175,24 +172,56 @@ class OpenStudioHub(QMainWindow):
     # ------------------------------------------------------------------
     # Dashboards
     # ------------------------------------------------------------------
-    def show_dashboard(self) -> None:
+    def show_dashboard(self, profile: str | None = None) -> None:
         studio_name = self.ctx.config_factory.get_studio_name() or "OpenStudio"
         self.setWindowTitle(f"{studio_name} Hub - v{__version__}")
 
-        self._retire_previous_dashboard()
-
         role = self.ctx.auth_service.current_role()
+        profiles = role.access_profiles()
+        if not profiles:
+            self.show_login()
+            return
+
+        if profile and (self.blender_instances > 0 or active_critical_workers()):
+            QMessageBox.warning(
+                self,
+                self.tr("Cannot Switch Profile"),
+                self.tr(
+                    "Finish the current background operation or close the open "\
+                    "3D session before switching profiles."
+                ),
+            )
+            return
+
         user = self.ctx.auth_service.current_user
         position = user.position if user else ""
         nas_dir = self.ctx.config_factory.get_workspace_root()
 
-        dashboard = _select_dashboard(role, position)
-        if dashboard == "td":
-            self.current_view = self._build_td_view(nas_dir)
-        elif dashboard == "pm":
-            self.current_view = self._build_pm_view(nas_dir)
+        requested = ViewProfile.from_value(profile)
+        active = requested if requested in profiles else role.default_profile(position)
+        if active not in profiles:
+            active = profiles[0]
+
+        self.ctx.active_profile_role = active.value
+        self._active_profile = active
+        profile_labels = {
+            item.value: role.profile_label(item, position) for item in profiles
+        }
+
+        self._retire_previous_dashboard()
+
+        shared = {
+            "profiles": profiles,
+            "active_profile": active.value,
+            "on_profile_selected": self.show_dashboard,
+            "profile_labels": profile_labels,
+        }
+        if active is ViewProfile.TD:
+            self.current_view = self._build_td_view(nas_dir, **shared)
+        elif active is ViewProfile.PM:
+            self.current_view = self._build_pm_view(nas_dir, **shared)
         else:
-            self.current_view = self._build_artist_view(nas_dir)
+            self.current_view = self._build_artist_view(nas_dir, **shared)
 
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.current_view)
@@ -222,8 +251,10 @@ class OpenStudioHub(QMainWindow):
         except RuntimeError:
             pass
 
-    def _build_project_list_vm(self, nas_dir, read_vcs_credentials: bool) -> ProjectListViewModel:
-        return ProjectListViewModel(
+    def _build_project_list_vm(
+        self, nas_dir, read_vcs_credentials: bool, role_override: str
+    ) -> ProjectListViewModel:
+        viewmodel = ProjectListViewModel(
             production_service=self.ctx.production_service,
             auth_service=self.ctx.auth_service,
             audit_service=self.ctx.audit_service,
@@ -239,9 +270,11 @@ class OpenStudioHub(QMainWindow):
             vcs_prompt=self._prompt_vcs_credentials,
             ssh_passphrase_prompt=self._prompt_ssh_passphrase,
         )
+        viewmodel.set_role_override(role_override)
+        return viewmodel
 
-    def _build_td_view(self, nas_dir):
-        project_list_vm = self._build_project_list_vm(nas_dir, True)
+    def _build_td_view(self, nas_dir, **shell_kwargs):
+        project_list_vm = self._build_project_list_vm(nas_dir, True, "td")
         infrastructure_vm = InfrastructureViewModel(
             self.ctx.config_factory,
             self.ctx.production_service,
@@ -272,10 +305,12 @@ class OpenStudioHub(QMainWindow):
             on_repair_callback=self._open_repair_dialog,
             status_sink=self.ctx.status_sink,
             notifications_vm=self.ctx.notifications_vm,
+            effective_role="td",
+            **shell_kwargs,
         )
 
-    def _build_pm_view(self, nas_dir):
-        project_list_vm = self._build_project_list_vm(nas_dir, False)
+    def _build_pm_view(self, nas_dir, **shell_kwargs):
+        project_list_vm = self._build_project_list_vm(nas_dir, False, "manager")
         blend_builder_vm = BlendBuilderViewModel(
             self.ctx.production_service,
             self.ctx.config_factory,
@@ -283,7 +318,7 @@ class OpenStudioHub(QMainWindow):
             self.ctx.status_sink,
             vcs_prompt=self._prompt_vcs_credentials,
             installation_service=self.ctx.installation_service,
-            user_role=self.ctx.auth_service.current_role().value,
+            user_role="manager",
         )
 
         return ViewPM(
@@ -299,9 +334,11 @@ class OpenStudioHub(QMainWindow):
             status_sink=self.ctx.status_sink,
             credential_vault=self.ctx.credential_vault,
             notifications_vm=self.ctx.notifications_vm,
+            effective_role="manager",
+            **shell_kwargs,
         )
 
-    def _build_artist_view(self, nas_dir):
+    def _build_artist_view(self, nas_dir, **shell_kwargs):
         artist_vm = ArtistViewModel(
             production_service=self.ctx.production_service,
             auth_service=self.ctx.auth_service,
@@ -311,6 +348,7 @@ class OpenStudioHub(QMainWindow):
             register_instance=self.register_instance,
             status_sink=self.ctx.status_sink,
             vcs_prompt=self._prompt_vcs_credentials,
+            role_override="artist",
         )
 
         return ViewArtist(
@@ -321,6 +359,7 @@ class OpenStudioHub(QMainWindow):
             on_logout=self.ejecutar_logout,
             status_sink=self.ctx.status_sink,
             notifications_vm=self.ctx.notifications_vm,
+            **shell_kwargs,
         )
 
     def _open_new_project_dialog(self) -> None:

@@ -89,3 +89,29 @@ def test_dialog_saves_through_callback(qapp):
 
     assert captured["blender_version"] == "4.2"
     assert dialog.result() == QDialog.Accepted
+
+
+def test_dialog_shows_update_button_for_a_stale_workspace(qapp):
+    called = []
+
+    def update():
+        called.append(True)
+        return True, "Workspace update started."
+
+    config = _config()
+    config["project_dir"] = "/tmp/project"
+    config["update_required"] = True
+    dialog = HubProjectConfigDialog(
+        None,
+        config,
+        on_probe=lambda server_id, name: (True, "healthy"),
+        on_save=lambda payload: (True, "saved"),
+        vault_service=FakeVaultService(),
+        on_update=update,
+    )
+
+    assert not dialog.btn_update.isHidden()
+    dialog._execute_update()
+
+    assert called == [True]
+    assert dialog.result() == QDialog.Accepted

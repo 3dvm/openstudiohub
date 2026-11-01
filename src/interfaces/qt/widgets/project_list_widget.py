@@ -385,6 +385,10 @@ class ProjectListWidget(QFrame):
                 self.vm.save_project_config(pdir, pid, payload)
             ),
             vault_service=self.vault_service,
+            on_update=lambda pdir=config.get("project_dir"): (
+                self.vm.install_project(pdir),
+                "Workspace update started.",
+            ),
         )
         dialog.exec()
 

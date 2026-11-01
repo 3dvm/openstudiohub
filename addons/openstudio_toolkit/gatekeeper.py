@@ -10,19 +10,13 @@
 # Versión del archivo: 0.5.7
 # =========================================================================================
 
-"""
-Main module of the Gatekeeper.
-Implements Scene Sanity Check, horphan data purge, dependencies validation,
-geometry audit and starts publishing hooks.
-"""
+"""Scene QA and publish operators for the OpenStudio Toolkit add-on."""
 
 import bpy
 import os
 import shutil
 import sys
 from pathlib import Path
-from . import hooks
-
 from .vcs import vcs_factory
 
 # Make the Hub's shared QA kernel importable from the addon (dev checkout).
@@ -30,14 +24,26 @@ _HUB_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(_HUB_ROOT) not in sys.path:
     sys.path.insert(0, str(_HUB_ROOT))
 
-from src.domain.qa.rules import (
-    AUDITABLE_OBJECT_TYPES,
-    FORBIDDEN_PRIMITIVES,
-    asset_name_from_filename,
-    is_dirty_transform,
-    is_out_of_bounds,
-    is_valid_object_name,
-)
+try:
+    # The add-on ships a copy so it also works from the Blender extension
+    # sandbox, where the Hub's ``src`` package is not importable.
+    from .qa_rules import (
+        AUDITABLE_OBJECT_TYPES,
+        FORBIDDEN_PRIMITIVES,
+        asset_name_from_filename,
+        is_dirty_transform,
+        is_out_of_bounds,
+        is_valid_object_name,
+    )
+except ImportError:  # pragma: no cover - development checkout fallback
+    from src.domain.qa.rules import (
+        AUDITABLE_OBJECT_TYPES,
+        FORBIDDEN_PRIMITIVES,
+        asset_name_from_filename,
+        is_dirty_transform,
+        is_out_of_bounds,
+        is_valid_object_name,
+    )
 
 # Backward-compatible aliases (the domain rules are now the single source of truth).
 PRIMITIVAS_PROHIBIDAS = set(FORBIDDEN_PRIMITIVES)
@@ -226,13 +232,27 @@ def auto_fix_nombres(nombres_infractores: list) -> int:
     return fijados
 
 # ---------------------------------------------------------
-# OPERADOR PRINCIPAL: PUSH / PUBLISH
+# OPERATORS
 # ---------------------------------------------------------
 
-class OPENSTUDIO_OT_publish_task(bpy.types.Operator):
-    bl_idname = "openstudio.publish_task"
-    bl_label = "Push / Publish"
-    bl_description = "Purga el archivo, guarda localmente, hace commit en SVN y publica en Kitsu"
+def _audit_issues():
+    return (
+        escanear_out_of_bounds(),
+        escanear_geometria_sucia(),
+        escanear_nombres_sucios(),
+    )
+
+
+def _is_hdri(item: dict) -> bool:
+    path = str(item.get("ruta_actual") or item.get("nombre") or "").lower()
+    name = str(item.get("nombre") or "").lower()
+    return path.endswith((".hdr", ".exr")) or "hdri" in name
+
+
+class OPENSTUDIO_OT_audit_task(bpy.types.Operator):
+    bl_idname = "openstudio.audit_task"
+    bl_label = "Audit Scene"
+    bl_description = "Run the scene quality checks without saving or committing"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -240,83 +260,149 @@ class OPENSTUDIO_OT_publish_task(bpy.types.Operator):
         return context.mode == 'OBJECT'
 
     def execute(self, context):
-        print("\n==================================================")
-        print("[GATEKEEPER] Iniciando Secuencia de Publicación...")
+        print("[GATEKEEPER] Running scene audit...")
+        out_of_bounds, dirty_geometry, dirty_names = _audit_issues()
+        if not (out_of_bounds or dirty_geometry or dirty_names):
+            self.report({'INFO'}, "Audit passed: no issues found.")
+            return {'FINISHED'}
 
-        # 1. SANITY CHECK (Reutilizando tus funciones existentes)
-        if aislar_coleccion_temp():
-            print(" -> Colección '__TEMP__' excluida.")
-        purgados = purgar_huerfanos_recursivo()
-        print(f" -> {purgados} huérfanos purgados.")
+        context.scene.os_geo_infractores = ",".join(dirty_geometry)
+        context.scene.os_nom_infractores = ",".join(dirty_names)
+        try:
+            bpy.ops.openstudio.master_qa_ui('INVOKE_DEFAULT')
+        except AttributeError:
+            self.report({'ERROR'}, "The Master QA UI module is not loaded.")
+            return {'CANCELLED'}
+        self.report({'WARNING'}, "Audit found issues to resolve.")
+        return {'FINISHED'}
 
-        infractores_ext = escanear_out_of_bounds()
-        infractores_geo = escanear_geometria_sucia()
-        infractores_nom = escanear_nombres_sucios()
 
-        hay_errores = bool(infractores_ext or infractores_geo or infractores_nom)
+class OPENSTUDIO_OT_purge_orphans(bpy.types.Operator):
+    bl_idname = "openstudio.purge_orphans"
+    bl_label = "Purge Orphans"
+    bl_description = "Purge unused datablocks and exclude the temporary collection"
+    bl_options = {'REGISTER', 'UNDO'}
 
-        if hay_errores:
-            print("[GATEKEEPER ALERTA] Se detectaron errores. Invocando Modal QA...")
-            context.scene.os_geo_infractores = ",".join(infractores_geo)
-            context.scene.os_nom_infractores = ",".join(infractores_nom)
-            try:
-                bpy.ops.openstudio.master_qa_ui('INVOKE_DEFAULT')
-            except AttributeError:
-                self.report({'ERROR'}, "Módulo UI Maestro no está cargado.")
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        isolated = aislar_coleccion_temp()
+        purged = purgar_huerfanos_recursivo()
+        if isolated:
+            self.report({'INFO'}, f"Temporary collection excluded; {purged} orphan(s) purged.")
+        else:
+            self.report({'INFO'}, f"{purged} orphan(s) purged.")
+        return {'FINISHED'}
+
+
+class OPENSTUDIO_OT_fix_textures(bpy.types.Operator):
+    bl_idname = "openstudio.fix_textures"
+    bl_label = "Fix Out-of-Bounds Textures"
+    bl_description = "Copy external textures into the .blend folder and make paths relative"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        offenders = escanear_out_of_bounds()
+        if not offenders:
+            self.report({'INFO'}, "No out-of-bounds textures found.")
+            return {'FINISHED'}
+
+        categories = {
+            item["nombre"]: ("hdri" if _is_hdri(item) else "textures")
+            for item in offenders
+        }
+        fixed = auto_fix_dependencias(offenders, categories)
+        self.report({'INFO'}, f"Fixed {fixed} out-of-bounds texture path(s).")
+        return {'FINISHED'}
+
+
+class OPENSTUDIO_OT_publish_task(bpy.types.Operator):
+    bl_idname = "openstudio.publish_task"
+    bl_label = "Save & Commit"
+    bl_description = "Save the .blend locally and commit it when the project uses VCS"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        if not bpy.data.filepath:
+            self.report({'ERROR'}, "Save the .blend before publishing.")
             return {'CANCELLED'}
 
-        print(" -> Todos los chequeos superados con éxito.")
-
-        # 2. GUARDADO LOCAL SÍNCRONO
-        self.report({'INFO'}, "Guardando archivo localmente...")
         bpy.ops.wm.save_mainfile()
         filepath = bpy.data.filepath
 
-        # 3. CONEXIÓN AL CONTROL DE VERSIONES (VCS)
+        adapter = (os.environ.get("OPENSTUDIO_VCS_ADAPTER", "") or "").strip().lower()
+        if adapter in ("", "none"):
+            self.report({'INFO'}, "Saved locally; VCS is not in use.")
+            return {'FINISHED'}
+
+        if adapter != "svn":
+            self.report({'ERROR'}, f"Unsupported VCS adapter: {adapter}")
+            return {'CANCELLED'}
+
         project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
-        svn_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+        production_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
         vcs_user = os.environ.get("OPENSTUDIO_SVN_USER", "")
         vcs_pwd = os.environ.get("OPENSTUDIO_SVN_PASSWORD", "")
 
-        # Por ahora lo forzamos a "svn", luego podrías leer esto de las variables de entorno
-        vcs_type = "svn"
+        if not (project_root and vcs_user and vcs_pwd):
+            self.report({'WARNING'}, "Saved locally; VCS credentials are missing.")
+            return {'FINISHED'}
 
-        if project_root and vcs_user and vcs_pwd:
-            workspace_root = os.path.join(project_root, svn_folder)
-            try:
-                self.report({'INFO'}, f"Enviando al servidor {vcs_type.upper()}...")
-                vcs_manager = vcs_factory.get_vcs_manager(vcs_type, workspace_root, vcs_user, vcs_pwd)
-
-                commit_msg = f"Auto-Commit: {bpy.path.basename(filepath)} actualizado vía Hub."
-
-                exito = vcs_manager.commit(commit_msg, filepath)
-                if not exito:
-                    self.report({'ERROR'}, "Fallo al subir a SVN. Revisa la consola.")
-                    return {'CANCELLED'}
-
-                self.report({'INFO'}, "¡Commit SVN exitoso!")
-            except Exception as e:
-                self.report({'ERROR'}, f"Error VCS: {str(e)}")
+        workspace_root = os.path.join(project_root, production_folder)
+        try:
+            self.report({'INFO'}, "Committing to the VCS...")
+            vcs_manager = vcs_factory.get_vcs_manager(
+                adapter, workspace_root, vcs_user, vcs_pwd
+            )
+            if vcs_manager is None:
+                self.report({'ERROR'}, "VCS is enabled but no adapter is available.")
                 return {'CANCELLED'}
-        else:
-            self.report({'WARNING'}, "Sin credenciales SVN detectadas. Solo se guardó local.")
 
-        # 4. THE SYNERGY HOOK (Kitsu)
-        print("[GATEKEEPER] Fase 3: The Synergy Hook (Kitsu)...")
-        self.report({'INFO'}, "Enviando Playblast a Kitsu...")
-        hooks.disparar_playblast_kitsu()
+            message = f"OpenStudio Hub: {bpy.path.basename(filepath)} saved and committed."
+            if not vcs_manager.commit(message, filepath):
+                self.report({'ERROR'}, "Commit failed. Check the console for details.")
+                return {'CANCELLED'}
+            self.report({'INFO'}, "Commit completed.")
+        except Exception as error:  # noqa: BLE001
+            self.report({'ERROR'}, f"VCS error: {error}")
+            return {'CANCELLED'}
 
         return {'FINISHED'}
+
 
 def register():
     bpy.types.Scene.os_geo_infractores = bpy.props.StringProperty()
     bpy.types.Scene.os_nom_infractores = bpy.props.StringProperty()
-    bpy.utils.register_class(OPENSTUDIO_OT_publish_task)
+    for operator in (
+        OPENSTUDIO_OT_audit_task,
+        OPENSTUDIO_OT_purge_orphans,
+        OPENSTUDIO_OT_fix_textures,
+        OPENSTUDIO_OT_publish_task,
+    ):
+        bpy.utils.register_class(operator)
+
 
 def unregister():
+    for operator in (
+        OPENSTUDIO_OT_publish_task,
+        OPENSTUDIO_OT_fix_textures,
+        OPENSTUDIO_OT_purge_orphans,
+        OPENSTUDIO_OT_audit_task,
+    ):
+        bpy.utils.unregister_class(operator)
     del bpy.types.Scene.os_nom_infractores
     del bpy.types.Scene.os_geo_infractores
-    bpy.utils.unregister_class(OPENSTUDIO_OT_publish_task)
+
 
 if __name__ == "__main__":
     register()

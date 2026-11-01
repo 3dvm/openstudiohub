@@ -231,3 +231,20 @@ def test_clipboard_text_includes_error_details(tmp_path):
     assert "- pro/a.blend" in text
     assert "Message: already locked" in text
 
+
+
+def test_already_unlocked_files_do_not_create_notifications(tmp_path):
+    service, logger = _service(tmp_path)
+    service.refresh_from_audit()
+
+    logger.log(
+        "unlock",
+        project="p0005-indent-machine",
+        ok=False,
+        error_code="E195013",
+        message="is not locked in this working copy",
+        paths=["pro/assets/fx/seeds_sim/fx-seeds_sim-model.blend"],
+    )
+
+    assert service.refresh_from_audit() == []
+    assert service.unread_count() == 0

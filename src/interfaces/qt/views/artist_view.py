@@ -494,9 +494,10 @@ class ViewArtist(BaseDashboardView):
                 on_kitsu_callback=self._open_task_kitsu,
                 on_history_callback=(
                     (lambda c=card: self._open_vcs_history(c))
-                    if card.task_file_path
+                    if card.task_file_path and not card.file_missing
                     else None
                 ),
+                file_missing=card.file_missing,
             )
             task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
             task_card.set_can_break_lock(self.vm.can_break_foreign_locks())

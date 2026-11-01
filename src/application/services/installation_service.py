@@ -21,6 +21,7 @@ from typing import Dict, Optional, Tuple
 
 from src.application.services.addon_config_generator import AddonConfigGenerator
 from src.application.sparse_manager import SparseManager
+from src.domain.workspace.blueprint import ProjectBlueprint
 from src.infrastructure.sandbox.blender_locator import BlenderLocator
 from src.infrastructure.vcs.vcs_router import VCSRouter
 
@@ -62,15 +63,59 @@ class InstallationService:
             return "windows", "zip"
         return "macos", "dmg"
 
-    def verify_installation(self, project_root: Path) -> bool:
-        """Return True when the local sandbox, VCS checkout and Blender exist.
+    @staticmethod
+    def _read_json(path: Path) -> dict:
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
 
-        A project is only considered installed when the local configuration was
-        written (the last step of :meth:`instalar_entorno`), the VCS checkout is
-        present, and the isolated Blender binary can be resolved. The previous
-        check only tested ``project_config.json`` + ``svn`` so projects with a
-        half-provisioned ``local`` folder (e.g. missing ``blender-build``) were
-        treated as installed and the spawner failed later with a hidden error.
+    def local_config_path(self, project_root: Path) -> Path:
+        return (
+            Path(project_root)
+            / self.config_factory.get_vfs_local_name()
+            / "project_config.json"
+        )
+
+    def load_local_config(self, project_root: Path) -> dict:
+        return self._read_json(self.local_config_path(project_root))
+
+    def load_project_blueprint(self, project_root: Path) -> dict:
+        try:
+            candidates = sorted(Path(project_root).glob("*/project_init.json"))
+        except OSError:
+            return {}
+        for candidate in candidates:
+            data = self._read_json(candidate)
+            if data:
+                return data
+        return {}
+
+    def workspace_needs_update(self, project_root: Path) -> bool:
+        """True when project_init.json changed after the workspace was installed."""
+        local = self.load_local_config(project_root)
+        if not local:
+            return False
+        if bool(local.get("workspace_update_required")):
+            return True
+
+        blueprint = self.load_project_blueprint(project_root)
+        if not blueprint:
+            return False
+
+        local_version = str(local.get("blender_version") or "")
+        blueprint_version = str(blueprint.get("blender_version") or "")
+        return bool(local_version and blueprint_version and local_version != blueprint_version)
+
+    def verify_installation(self, project_root: Path) -> bool:
+        """Return True when the local workspace matches the project blueprint.
+
+        A project is considered installed only when the local configuration
+        exists, the VCS checkout is present, the workspace has no pending
+        project_init.json changes, and the exact Blender version declared by
+        the configuration is available. This prevents silently launching a
+        stale workspace after the project version or components changed.
         """
         vfs_local = self.config_factory.get_vfs_local_name()
         vfs_svn = self.config_factory.get_vfs_svn_name()
@@ -81,8 +126,19 @@ class InstallationService:
         if not (config_local.exists() and vcs_dir.exists()):
             return False
 
+        if self.workspace_needs_update(project_root):
+            return False
+
+        local_config = self._read_json(config_local)
+        version = str(local_config.get("blender_version") or "")
+        if not version:
+            version = str(self.load_project_blueprint(project_root).get("blender_version") or "")
+
         try:
-            BlenderLocator.resolve(project_root / vfs_local / "blender-build")
+            BlenderLocator.resolve(
+                project_root / vfs_local / "blender-build",
+                version=version or None,
+            )
         except FileNotFoundError:
             return False
         return True
@@ -114,11 +170,13 @@ class InstallationService:
             with open(init_json_path, "r", encoding="utf-8") as handle:
                 init_data = json.load(handle)
 
-            project_name = init_data.get("project_name", project_root.name)
-            blender_version = init_data.get("blender_version", "4.2.0")
-            dependencies = init_data.get("dependencies", {})
-            template_name = init_data.get("template", "")
-            addon_configuration = init_data.get("addon_configuration", {})
+            blueprint = ProjectBlueprint.from_dict(init_data)
+            project_name = blueprint.project_name or project_root.name
+            blender_version = blueprint.blender_version or "4.2.0"
+            dependencies = blueprint.dependencies
+            template_name = blueprint.template
+            addon_configuration = blueprint.addon_configuration
+            topography = blueprint.topography
 
             server = self._resolve_server(project_root)
             if server is not None:
@@ -161,7 +219,7 @@ class InstallationService:
             AddonConfigGenerator(self.config_factory).generate(
                 project_root,
                 addon_configuration,
-                self.config_factory.get_topography(),
+                topography,
                 status_callback=status_callback,
             )
             progress(95)

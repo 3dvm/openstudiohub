@@ -54,7 +54,9 @@ class ProjectBlueprint:
         return cls(
             project_name=data.get("project_name") or "",
             kitsu_project_id=data.get("kitsu_project_id") or "",
-            blender_version=version_locking.get("blender_version") or data.get("blender_version") or "",
+            # The top-level key is authoritative. ``version_locking`` is kept
+            # only as a legacy fallback for old blueprints.
+            blender_version=data.get("blender_version") or version_locking.get("blender_version") or "",
             template=data.get("template") or "",
             dependencies=dependencies,
             addon_configuration=addon_configuration,
@@ -73,7 +75,7 @@ class ProjectBlueprint:
         if version_locking is not None and not isinstance(version_locking, dict):
             return False
 
-        blender_version = (version_locking or {}).get("blender_version") or data.get("blender_version")
+        blender_version = data.get("blender_version") or (version_locking or {}).get("blender_version")
         dependencies = data.get("dependencies")
         topography = data.get("topography_signature")
 

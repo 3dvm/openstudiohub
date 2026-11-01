@@ -127,6 +127,7 @@ class TaskCard(QFrame):
         on_comments_callback=None,
         on_kitsu_callback=None,
         on_history_callback=None,
+        file_missing: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -148,6 +149,7 @@ class TaskCard(QFrame):
         self.on_comments_callback = on_comments_callback
         self.on_kitsu_callback = on_kitsu_callback
         self.on_history_callback = on_history_callback
+        self.file_missing = bool(file_missing)
         self.allow_break_lock = False
 
         self.setObjectName("FloatingCard")
@@ -312,6 +314,14 @@ class TaskCard(QFrame):
             self.action_btn = QPushButton(f"🔒 {msg}")
             self.action_btn.setObjectName("MutedOutlineButton")
             self.action_btn.setEnabled(False)
+
+        elif self.is_installed and self.file_missing:
+            self.action_btn = QPushButton(self.tr("File Missing on Disk"))
+            self.action_btn.setObjectName("DangerOutlineButton")
+            self.action_btn.setEnabled(False)
+            self.action_btn.setToolTip(
+                self.tr("The task file does not exist on disk. Ask a PM/TD to create or link it.")
+            )
 
         elif self.is_installed:
             self.action_btn = QPushButton(self.tr("Launch Project Environment"))

@@ -70,15 +70,14 @@ class AppContext:
 
         # Shared status channel for the dashboard ViewModels.
         self.status_sink = StatusSink()
+        self.active_profile_role = self.auth_service.current_role().value
 
         self.notification_service = NotificationService(
             audit_logger=VcsAuditLogger(),
             user_id_provider=lambda: str(
                 getattr(self.auth_service.current_user, "id", "") or ""
             ),
-            role_provider=lambda: getattr(
-                self.auth_service.current_role(), "value", ""
-            ),
+            role_provider=lambda: self.active_profile_role,
         )
         self.notifications_vm = NotificationsViewModel(
             self.notification_service,

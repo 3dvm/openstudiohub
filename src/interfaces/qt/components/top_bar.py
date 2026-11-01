@@ -18,11 +18,14 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
+    QToolButton,
     QWidget,
 )
 
 from src.application.services.auth_service import AuthService
+from src.domain.identity.value_objects import Role, ViewProfile
 from src.interfaces.qt.components.notification_panel import NotificationPanel
 
 
@@ -34,12 +37,23 @@ class TopBar(QFrame):
         config_factory,
         on_logout,
         notifications_vm=None,
+        profiles=None,
+        active_profile="",
+        on_profile_selected=None,
+        profile_labels=None,
     ) -> None:
         super().__init__(parent)
         self.auth = auth_service
         self.config_factory = config_factory
         self.on_logout = on_logout
         self.notifications_vm = notifications_vm
+        self.on_profile_selected = on_profile_selected
+        self.profiles = [
+            profile.value if isinstance(profile, ViewProfile) else str(profile)
+            for profile in (profiles or [])
+        ]
+        self.active_profile = str(active_profile or "")
+        self.profile_labels = dict(profile_labels or {})
         self.notification_panel = None
 
         self.setObjectName("TopBar")
@@ -89,14 +103,21 @@ class TopBar(QFrame):
         self.btn_kitsu.clicked.connect(self._on_kitsu_clicked)
         layout.addWidget(self.btn_kitsu)
 
-        role = self.auth.current_role().label if self.auth else "Offline"
+        role = self.auth.current_role() if self.auth else None
         user = self.auth.current_user if self.auth else None
         user_name = user.first_name if user else "User"
 
-        self.lbl_name = QLabel(self.tr("{0} ({1})").format(user_name, role))
+        self.lbl_name = QLabel(user_name)
         self.lbl_name.setObjectName("TopBarUserLabel")
         self.lbl_name.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         layout.addWidget(self.lbl_name)
+
+        self.btn_profile = QToolButton()
+        self.btn_profile.setObjectName("TopBarProfileButton")
+        self.btn_profile.setCursor(Qt.PointingHandCursor)
+        self.btn_profile.setFixedHeight(30)
+        self._configure_profile_button(role)
+        layout.addWidget(self.btn_profile)
 
         self.btn_avatar = QPushButton()
         self.btn_avatar.setObjectName("TopBarAvatarButton")
@@ -140,6 +161,49 @@ class TopBar(QFrame):
         if self.on_logout:
             self.btn_logout.clicked.connect(self.on_logout)
         layout.addWidget(self.btn_logout)
+
+    def _profile_label(self, profile: str, role) -> str:
+        if profile in self.profile_labels:
+            return str(self.profile_labels[profile])
+        view = ViewProfile.from_value(profile)
+        if view is not None:
+            position = str(getattr(self.auth.current_user, "position", "") or "")
+            if isinstance(role, Role):
+                return role.profile_label(view, position)
+            return view.label
+        return str(getattr(role, "label", "Offline") or "Offline")
+
+    def _configure_profile_button(self, role) -> None:
+        profiles = list(self.profiles)
+        if not profiles and role is not None:
+            value = str(getattr(role, "value", "") or "").strip()
+            if value:
+                profiles = [value]
+        if not profiles:
+            self.btn_profile.setText(str(getattr(role, "label", "Offline") or "Offline"))
+            self.btn_profile.setEnabled(False)
+            return
+
+        active = self.active_profile if self.active_profile in profiles else profiles[0]
+        self.active_profile = active
+        self.btn_profile.setText(self._profile_label(active, role))
+
+        if len(profiles) <= 1 or not callable(self.on_profile_selected):
+            self.btn_profile.setPopupMode(QToolButton.ToolButtonPopupMode.DelayedPopup)
+            self.btn_profile.setArrowType(Qt.NoArrow)
+            return
+
+        menu = QMenu(self.btn_profile)
+        for profile in profiles:
+            action = menu.addAction(self._profile_label(profile, role))
+            action.setCheckable(True)
+            action.setChecked(profile == active)
+            action.triggered.connect(
+                lambda checked=False, p=profile: self.on_profile_selected(p)
+            )
+        self.btn_profile.setMenu(menu)
+        self.btn_profile.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_profile.setArrowType(Qt.DownArrow)
 
     def _on_unread_count(self, count: int) -> None:
         if count <= 0:

@@ -152,7 +152,7 @@ class OPENSTUDIO_OT_master_qa_ui(bpy.types.Operator):
         context.scene.os_geo_infractores = ""
         context.scene.os_nom_infractores = ""
         
-        self.report({'INFO'}, "Master QA: Todas las reparaciones ejecutadas. Vuelve a intentar el Push.")
+        self.report({'INFO'}, "Master QA: repairs applied. Re-run the audit or continue when ready.")
         return {'FINISHED'}
 
 # ---------------------------------------------------------

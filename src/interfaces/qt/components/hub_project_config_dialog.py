@@ -47,6 +47,7 @@ class HubProjectConfigDialog(QDialog):
         on_probe: Callable[[str, str], tuple],
         on_save: Callable[[dict], tuple],
         vault_service=None,
+        on_update: Optional[Callable[[], tuple]] = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Project Configuration"))
@@ -65,6 +66,7 @@ class HubProjectConfigDialog(QDialog):
         self.servers = self.config.get("servers") or []
         self.on_probe = on_probe
         self.on_save = on_save
+        self.on_update = on_update
 
         self.vault_service = vault_service
         self.vault_data = {}
@@ -74,6 +76,7 @@ class HubProjectConfigDialog(QDialog):
             except Exception:  # noqa: BLE001
                 self.vault_data = {}
 
+        self.update_required = bool(self.config.get("update_required"))
         self.splash_source_path = ""
         self.tool_checkboxes: dict = {}
         self.addon_config_panels: dict = {}
@@ -82,6 +85,8 @@ class HubProjectConfigDialog(QDialog):
         self._vcs_probe_server_id = ""
 
         self._build_ui()
+        if self.update_required and self.on_update is not None and self.project_dir:
+            self.btn_update.show()
         self._prefill()
 
     # ------------------------------------------------------------------
@@ -135,6 +140,14 @@ class HubProjectConfigDialog(QDialog):
         btn_cancel.setCursor(Qt.PointingHandCursor)
         btn_cancel.clicked.connect(self.reject)
         buttons.addWidget(btn_cancel)
+
+        self.btn_update = QPushButton(self.tr("Update Workspace"))
+        self.btn_update.setObjectName("WarningButton")
+        self.btn_update.setFixedHeight(38)
+        self.btn_update.setCursor(Qt.PointingHandCursor)
+        self.btn_update.clicked.connect(self._execute_update)
+        self.btn_update.hide()
+        buttons.addWidget(self.btn_update)
 
         self.btn_save = QPushButton(self.tr("Save Configuration"))
         self.btn_save.setObjectName("PrimaryButton")
@@ -512,6 +525,30 @@ class HubProjectConfigDialog(QDialog):
             "behaviors": list(default_config.get("behaviors") or []),
         }
 
+    def _workspace_changed(self, payload: dict) -> bool:
+        blueprint = self.blueprint if isinstance(self.blueprint, dict) else {}
+        for key in ("blender_version", "template", "dependencies", "addon_configuration"):
+            if payload.get(key) != blueprint.get(key):
+                return True
+        return False
+
+    def _execute_update(self) -> None:
+        if self.on_update is None:
+            return
+        self.btn_update.setEnabled(False)
+        self._show_status(self.tr("Starting workspace update..."), ok=None)
+        try:
+            result = self.on_update()
+            success, message = result if isinstance(result, tuple) else (True, "")
+        except Exception as error:  # noqa: BLE001
+            success, message = False, str(error)
+        if success:
+            self._show_status(message or self.tr("Workspace update started."), ok=True)
+            self.accept()
+        else:
+            self.btn_update.setEnabled(True)
+            self._show_status(message, ok=False)
+
     def _execute_save(self) -> None:
         server_id = self.combo_vcs.currentData() or ""
         binding_changed = server_id != self.bound_server_id
@@ -545,6 +582,12 @@ class HubProjectConfigDialog(QDialog):
 
         if success:
             self._show_status(message, ok=True)
+            if self.on_update is not None and self.project_dir and self._workspace_changed(payload):
+                self.btn_update.show()
+                self.btn_save.setText(self.tr("Close"))
+                self.btn_save.clicked.disconnect(self._execute_save)
+                self.btn_save.clicked.connect(self.accept)
+                return
             self.accept()
         else:
             self.btn_save.setEnabled(True)

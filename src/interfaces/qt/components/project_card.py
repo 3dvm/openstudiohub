@@ -399,6 +399,14 @@ class ProjectCard(QFrame):
             elif self.user_role != "td":
                 self.btn_primary_action.setText(self.tr("Launch Project"))
                 self.btn_primary_action.setObjectName("InfoButton")
+        elif status.get("update_required"):
+            self.lbl_sync_status.setText(self.tr("⚙️ Project configuration changed"))
+            self.lbl_sync_status.setObjectName("StatusLabel")
+            self.lbl_badge.setText(self.tr("Update required"))
+
+            if self.user_role != "td":
+                self.btn_primary_action.setText(self.tr("Update Workspace ↓"))
+                self.btn_primary_action.setObjectName("WarningButton")
         else:
             self.lbl_sync_status.setText(self.tr("🗄️ ⚪ Cloud Only"))
             self.lbl_sync_status.setObjectName("StatusLabel")

@@ -37,6 +37,10 @@ class BaseDashboardView(QWidget):
         on_logout,
         status_sink: StatusSink | None = None,
         notifications_vm=None,
+        profiles=None,
+        active_profile="",
+        on_profile_selected=None,
+        profile_labels=None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -45,6 +49,10 @@ class BaseDashboardView(QWidget):
         self.config_factory = config_factory
         self.on_logout = on_logout
         self.notifications_vm = notifications_vm
+        self.profiles = profiles
+        self.active_profile = active_profile
+        self.on_profile_selected = on_profile_selected
+        self.profile_labels = profile_labels
 
         self.setObjectName("ViewBase")
         self.web_context = None
@@ -78,6 +86,10 @@ class BaseDashboardView(QWidget):
             self.config_factory,
             self.on_logout,
             notifications_vm=self.notifications_vm,
+            profiles=self.profiles,
+            active_profile=self.active_profile,
+            on_profile_selected=self.on_profile_selected,
+            profile_labels=self.profile_labels,
         )
         self.right_layout.addWidget(self.top_bar)
 

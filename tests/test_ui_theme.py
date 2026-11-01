@@ -106,3 +106,58 @@ def test_vcs_dialogs_use_shared_data_widgets():
         text = (ROOT / filename).read_text(encoding="utf-8")
         assert 'setObjectName("DataList")' in text or 'setObjectName("DataGrid")' in text
         assert 'setObjectName("StatusLabel")' in text or 'setObjectName("MutedLabel")' in text
+
+
+def test_top_bar_shows_and_switches_profiles(qapp):
+    from src.domain.identity.value_objects import Role, ViewProfile
+
+    selected = []
+
+    class RoleAuth(FakeAuth):
+        def current_role(self):
+            return Role.TD
+
+    bar = TopBar(
+        None,
+        RoleAuth(),
+        FakeConfig(),
+        lambda: None,
+        profiles=[ViewProfile.TD, ViewProfile.PM, ViewProfile.ARTIST],
+        active_profile="td",
+        on_profile_selected=selected.append,
+    )
+
+    assert bar.btn_profile.objectName() == "TopBarProfileButton"
+    assert bar.btn_profile.text() == "TD"
+
+    menu = bar.btn_profile.menu()
+    pm_action = next(action for action in menu.actions() if action.text() == "PM")
+    pm_action.trigger()
+
+    assert selected == ["pm"]
+    bar.deleteLater()
+
+
+def test_pm_lead_profile_is_labelled_editor(qapp):
+    from types import SimpleNamespace
+
+    from src.domain.identity.value_objects import Role, ViewProfile
+
+    class LeadAuth(FakeAuth):
+        current_user = SimpleNamespace(first_name="Ada", position="lead")
+
+        def current_role(self):
+            return Role.MANAGER
+
+    bar = TopBar(
+        None,
+        LeadAuth(),
+        FakeConfig(),
+        lambda: None,
+        profiles=[ViewProfile.PM, ViewProfile.ARTIST],
+        active_profile="artist",
+        on_profile_selected=lambda _profile: None,
+    )
+
+    assert bar.btn_profile.text() == "Editor"
+    bar.deleteLater()

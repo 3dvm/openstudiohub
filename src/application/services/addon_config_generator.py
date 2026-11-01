@@ -81,7 +81,10 @@ class AddonConfigGenerator:
 
     def _resolve_template(self, addon_name: str) -> Optional[Path]:
         candidate = self.template_dir / f"cfg_{self._safe_name(addon_name)}.py.template"
-        return candidate if candidate.exists() else None
+        if candidate.exists():
+            return candidate
+        generic = self.template_dir / "cfg_generic.py.template"
+        return generic if generic.exists() else None
 
     def _deploy_support_modules(self, project_root: Path, topography: WorkspaceTopography) -> None:
         """Ship the DCC-side support modules next to ``bootstrap.py``.
@@ -145,7 +148,10 @@ class AddonConfigGenerator:
             config_dir.mkdir(parents=True, exist_ok=True)
             # Python literal (not JSON) so the generated module is directly valid
             # Python: JSON uses true/false/null which are not Python names.
-            payload = repr(config.to_dict())
+            config_payload = config.to_dict()
+            if not config_payload.get("module_match"):
+                config_payload["module_match"] = self._safe_name(addon_name)
+            payload = repr(config_payload)
             rendered = template.read_text(encoding="utf-8").replace(ADDON_CONFIG_TOKEN, payload)
 
             destination = config_dir / f"cfg_{self._safe_name(addon_name)}.py"

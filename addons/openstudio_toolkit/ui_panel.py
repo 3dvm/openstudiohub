@@ -7,7 +7,7 @@ import os
 
 class OPENSTUDIO_PT_kitsu_panel(bpy.types.Panel):
     """Unified panel for the OpenStudio publishing context."""
-    bl_label = "OpenStudio: Publish Manager"
+    bl_label = "OpenStudio: Task Tools"
     bl_idname = "OPENSTUDIO_PT_kitsu_panel"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -49,9 +49,21 @@ class OPENSTUDIO_PT_kitsu_panel(bpy.types.Panel):
 
         layout.separator()
 
-        # --- SECTION: MASTER PUBLISH BUTTON ---
-        # Direct call to the Gatekeeper (Sanity Check -> Save -> SVN -> Kitsu)
-        layout.operator("openstudio.publish_task", text="Push / Publish (SVN + Kitsu)", icon='URL')
+        # --- SECTION: ACTIONS ---
+        box_actions = layout.box()
+        box_actions.label(text="Scene Actions:", icon='TOOL_SETTINGS')
+        box_actions.operator("openstudio.audit_task", text="Audit Scene", icon='CHECKMARK')
+        box_actions.operator(
+            "openstudio.fix_textures",
+            text="Fix Out-of-Bounds Textures",
+            icon='FILE_IMAGE',
+        )
+        box_actions.operator("openstudio.purge_orphans", text="Purge Orphans", icon='TRASH')
+        box_actions.operator(
+            "openstudio.publish_task",
+            text="Save & Commit",
+            icon='FILE_TICK',
+        )
 
 # =========================================================================================
 # REGISTRATION FUNCTIONS

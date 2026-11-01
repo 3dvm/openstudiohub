@@ -593,6 +593,9 @@ class TaskFileSyncService:
         try:
             adapter.unlock(relative_path, username, password, force=force)
         except Exception as error:  # noqa: BLE001
+            message = str(error)
+            if "E195013" in message or "is not locked in this working copy" in message:
+                return True, "File was already unlocked."
             return False, f"Failed to unlock file: {error}"
         return True, "File unlocked."
 

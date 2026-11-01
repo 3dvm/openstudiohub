@@ -52,10 +52,12 @@ class TaskBoardViewModel(BaseViewModel):
         prefs_store: Optional[UiPrefsStore] = None,
         status_sink: StatusSink | None = None,
         parent=None,
+        role_override: str = "",
     ) -> None:
         super().__init__(status_sink, parent)
         self.production_service = production_service
         self.auth_service = auth_service
+        self.role_override = str(role_override or "").strip().lower()
         self.read_store = read_store or CommentReadStore()
         self.prefs_store = prefs_store or UiPrefsStore()
         self.comments = TaskCommentsViewModel(
@@ -108,7 +110,8 @@ class TaskBoardViewModel(BaseViewModel):
     def assignment_allowed(self) -> bool:
         """Only PMs (managers) may edit assignees; TD is read-only."""
         try:
-            return self.auth_service.current_role().value == "manager"
+            role = self.role_override or self.auth_service.current_role().value
+            return role == "manager"
         except Exception:  # noqa: BLE001
             return False
 

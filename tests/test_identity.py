@@ -4,7 +4,7 @@ import os
 
 from src.application.credential_vault import CredentialVault
 from src.domain.identity.entities import User
-from src.domain.identity.value_objects import Role
+from src.domain.identity.value_objects import Role, ViewProfile
 
 
 def test_role_from_kitsu_mapping():
@@ -83,3 +83,26 @@ def test_credential_vault_roundtrip_and_env():
     assert vault.is_server_enabled("vps") is False
     assert "OPENSTUDIO_KITSU_USER" not in os.environ
     assert "OPENSTUDIO_SVN_PASSWORD" not in os.environ
+
+
+def test_incremental_hub_access_profiles():
+    assert Role.TD.access_profiles() == (
+        ViewProfile.TD,
+        ViewProfile.PM,
+        ViewProfile.ARTIST,
+    )
+    assert Role.MANAGER.access_profiles() == (ViewProfile.PM, ViewProfile.ARTIST)
+    assert Role.ARTIST.access_profiles() == (ViewProfile.ARTIST,)
+    assert Role.VENDOR.access_profiles() == (ViewProfile.ARTIST,)
+    assert Role.LEAD.access_profiles() == (ViewProfile.ARTIST,)
+
+    assert Role.SUPERVISOR.has_hub_access() is False
+    assert Role.CLIENT.has_hub_access() is False
+    assert Role.GUEST.has_hub_access() is False
+
+
+def test_pm_lead_uses_the_artist_dashboard_as_editor():
+    assert Role.MANAGER.default_profile("lead") is ViewProfile.ARTIST
+    assert Role.MANAGER.default_profile("") is ViewProfile.PM
+    assert Role.MANAGER.profile_label(ViewProfile.ARTIST, "lead") == "Editor"
+    assert Role.MANAGER.profile_label(ViewProfile.ARTIST, "") == "Artist"

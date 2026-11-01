@@ -91,14 +91,19 @@ def test_disabled_addon_is_not_generated_and_removed(tmp_path):
     assert not script.exists()
 
 
-def test_addon_without_template_is_skipped(tmp_path):
+def test_addon_without_template_uses_generic_activation(tmp_path):
     generator = AddonConfigGenerator()
     generated = generator.generate(
         tmp_path,
         {"unknown_addon": AddonConfiguration(name="unknown_addon")},
         _topography(),
     )
-    assert generated == []
+
+    assert [path.name for path in generated] == ["cfg_unknown_addon.py"]
+    script = generated[0].read_text(encoding="utf-8")
+    assert "__ADDON_CONFIG_JSON__" not in script
+    assert "'module_match': 'unknown_addon'" in script
+    assert "addon_enable" in script
 
 
 def test_display_name_resolves_to_slugged_template(tmp_path):

@@ -42,6 +42,7 @@ class ViewPM(BaseDashboardView):
         credential_vault=None,
         task_board_vm=None,
         notifications_vm=None,
+        effective_role: str = "manager",
         **kwargs,
     ) -> None:
         super().__init__(
@@ -65,7 +66,10 @@ class ViewPM(BaseDashboardView):
             project_list_vm, "production_service", None
         )
         self.task_board_vm = task_board_vm or TaskBoardViewModel(
-            self.production_service, auth_service, status_sink=status_sink
+            self.production_service,
+            auth_service,
+            status_sink=status_sink,
+            role_override=effective_role,
         )
 
         self.setObjectName("ViewPMBase")
