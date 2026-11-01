@@ -41,6 +41,13 @@ When an add-on update is available, project integrity marks the workspace as
 needing an update. Use **Update Workspace** on the project card to refresh the
 add-ons together with the rest of the workspace.
 
+To repackage the locally maintained OpenStudio Toolkit after changing its
+source, open the software manifest editor, select the target Blender version
+and click **Package OpenStudio Toolkit**. It reads the version from
+`addons/openstudio_toolkit/blender_manifest.toml`, writes the matching zip to
+the vault and updates that Blender version's manifest entry. Then run
+**Update Workspace** on the affected projects.
+
 ## Per-project Blender preferences
 
 Each project sandbox has its own `userpref.blend` under

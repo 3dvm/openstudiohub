@@ -47,6 +47,9 @@ releases may include larger UI or workflow changes.
 
 - OpenStudio Toolkit actions are now separate operations: `Audit Scene`,
   `Fix Out-of-Bounds Textures`, `Purge Orphans` and `Save & Commit`.
+- The software manifest editor exposes **Package OpenStudio Toolkit** so the
+  local toolkit can be repackaged for the selected Blender version without
+  fetching remote Studio Tools.
 - Removed the Toolkit's own Kitsu playblast hook; Blender Kitsu remains the
   owner of playblast publishing.
 - Prop asset tasks use a two-frame timeline (`1–2`); shots and other entities

@@ -89,6 +89,18 @@ class ManifestEditorWidget(QFrame):
         self.btn_addons_fetch_pack.clicked.connect(self._fetch_pack_pipeline_addons)
         control_layout.addWidget(self.btn_addons_fetch_pack)
 
+        self.btn_package_toolkit = QPushButton(self.tr("Package OpenStudio Toolkit"))
+        self.btn_package_toolkit.setObjectName("SecondaryButton")
+        self.btn_package_toolkit.setFixedHeight(30)
+        self.btn_package_toolkit.setToolTip(
+            self.tr(
+                "Package the local addons/openstudio_toolkit source for the selected "
+                "Blender version without fetching remote Studio Tools."
+            )
+        )
+        self.btn_package_toolkit.clicked.connect(self._package_local_toolkit)
+        control_layout.addWidget(self.btn_package_toolkit)
+
         manifest_layout.addLayout(control_layout)
 
         self.tree_manifest = QTreeWidget()
