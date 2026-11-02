@@ -1,0 +1,840 @@
+# =========================================================================================
+# OPENSTUDIOHUB
+# Module: src/infrastructure/render/burst.py
+# Architectural role: Render infrastructure / direct Vast.ai burst
+# =========================================================================================
+
+"""Render selected shots on short-lived Vast.ai GPU instances.
+
+This is the "direct burst" backend: the Hub rents on-demand instances, installs
+the project's Blender version inside each instance, stages the production folder
+over SSH, renders a contiguous frame chunk and syncs the frames back to
+``03_render``. Every instance is destroyed in a ``finally`` block.
+
+Flamenco is intentionally not required here: the shared-storage constraint of a
+persistent farm does not apply to an ephemeral per-job burst.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import tempfile
+import threading
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Iterable, Sequence
+
+from src.domain.render.models import RenderPlan, RenderShot
+from src.infrastructure.render.vast import (
+    DEFAULT_DISK_GB,
+    DEFAULT_IMAGE,
+    VastError,
+    VastInstance,
+    VastOffer,
+    VastProvider,
+)
+
+ProgressCallback = Callable[["BurstProgress"], None]
+
+_RENDER_SCRIPT = r"""
+import json
+import os
+import sys
+import time
+
+import bpy
+
+config_path = sys.argv[-1]
+with open(config_path, "r", encoding="utf-8") as handle:
+    config = json.load(handle)
+
+scene = bpy.context.scene
+scene.render.engine = config["engine"]
+scene.render.resolution_x = int(config["resolution_x"])
+scene.render.resolution_y = int(config["resolution_y"])
+scene.render.resolution_percentage = int(config["resolution_percentage"])
+scene.render.image_settings.file_format = config.get("file_format", "PNG")
+scene.render.filepath = config["output_dir"]
+
+if config["engine"] == "CYCLES":
+    prefs = bpy.context.preferences.addons["cycles"].preferences
+    prefs.compute_device_type = config.get("device_type", "CUDA")
+    prefs.get_devices()
+    for device in prefs.devices:
+        device.use = device.type != "CPU"
+    scene.cycles.device = "GPU"
+    scene.cycles.samples = int(config["samples"])
+    scene.cycles.use_denoising = bool(config.get("denoise", True))
+    scene.cycles.denoiser = "OPENIMAGEDENOISE"
+    scene.render.use_persistent_data = True
+    print("OSDEVICES::" + json.dumps([(d.name, d.type, d.use) for d in prefs.devices]))
+elif config["engine"].upper().startswith("BLENDER_EEVEE"):
+    eevee = getattr(scene, "eevee", None)
+    if eevee is not None:
+        eevee.taa_render_samples = int(config["samples"])
+
+if config.get("bake_particles"):
+    print("OSBAKE::start")
+    scene.frame_start = int(config.get("frame_start", scene.frame_start))
+    scene.frame_end = int(config.get("frame_end", scene.frame_end))
+    baked = 0
+    for obj in bpy.data.objects:
+        for psys in getattr(obj, "particle_systems", []):
+            point_cache = getattr(psys, "point_cache", None)
+            if point_cache is None:
+                continue
+            point_cache.use_disk_cache = True
+            try:
+                with bpy.context.temp_override(
+                    scene=scene,
+                    object=obj,
+                    active_object=obj,
+                    selected_objects=[obj],
+                    selected_editable_objects=[obj],
+                    point_cache=point_cache,
+                ):
+                    bpy.ops.ptcache.bake(bake=True)
+                baked += 1
+                print("OSBAKE::baked::%s::%s" % (obj.name, psys.name))
+            except Exception as exc:
+                print("OSBAKE::error::%s::%s::%s" % (obj.name, psys.name, exc))
+    if baked == 0:
+        try:
+            with bpy.context.temp_override(scene=scene):
+                bpy.ops.ptcache.bake_all(bake=True)
+            print("OSBAKE::bake_all_done")
+        except Exception as exc:
+            print("OSBAKE::bake_all_error::%s" % exc)
+    print("OSBAKE::done::%d" % baked)
+
+output_dir = config["output_dir"]
+os.makedirs(output_dir, exist_ok=True)
+for frame in config["frames"]:
+    frame = int(frame)
+    scene.frame_set(frame)
+    scene.render.filepath = os.path.join(output_dir, "frame_%04d" % frame)
+    started = time.monotonic()
+    bpy.ops.render.render(write_still=True)
+    elapsed = time.monotonic() - started
+    print("OSFRAME::" + json.dumps({"frame": frame, "seconds": round(elapsed, 3)}))
+"""
+
+
+class BurstError(RuntimeError):
+    """Raised when the burst cannot start or a node fails unexpectedly."""
+
+
+@dataclass(frozen=True)
+class BurstProgress:
+    node: int
+    stage: str
+    message: str
+    frames_done: int = 0
+    frames_total: int = 0
+    instance_id: int = 0
+
+
+@dataclass
+class NodeResult:
+    node: int
+    instance_id: int
+    ok: bool
+    message: str
+    frames_done: int
+    frames_expected: int
+    wall_seconds: float
+    cost: float
+    missing: tuple[int, ...] = ()
+
+
+@dataclass
+class BurstReport:
+    ok: bool
+    message: str
+    nodes: tuple[NodeResult, ...]
+    frames_expected: int
+    frames_rendered: int
+    missing: tuple[int, ...]
+    wall_seconds: float
+    cost: float
+
+
+@dataclass(frozen=True)
+class BurstTask:
+    shot: RenderShot
+    frames: tuple[int, ...]
+    output_subdir: str
+
+    @property
+    def remote_blend(self) -> str:
+        return self.shot.relative_path
+
+
+class RenderBurstRunner:
+    def __init__(
+        self,
+        provider: VastProvider,
+        *,
+        project_root: Path | str,
+        output_root: Path | str,
+        ssh_key_path: Path | str,
+        production_folder: str,
+        blender_version: str,
+        work_root: str = "/root/openstudio",
+        image: str = DEFAULT_IMAGE,
+        disk_gb: int = DEFAULT_DISK_GB,
+        max_price_per_hour: float = 0.0,
+        stage_shared: bool = True,
+        task_type: str = "render",
+        preferred_region: str = "prefer_us",
+        min_inet_down_mbps: float = 0.0,
+        min_inet_up_mbps: float = 0.0,
+        bake_particles: bool = False,
+    ) -> None:
+        self.provider = provider
+        self.project_root = Path(project_root)
+        self.output_root = Path(output_root)
+        self.ssh_key_path = Path(ssh_key_path).expanduser()
+        self.production_folder = production_folder
+        self.blender_version = blender_version
+        self.work_root = work_root.rstrip("/")
+        self.image = image
+        self.disk_gb = int(disk_gb)
+        self.max_price_per_hour = float(max_price_per_hour)
+        self.stage_shared = bool(stage_shared)
+        self.task_type = str(task_type or "render")
+        self.preferred_region = str(preferred_region or "prefer_us")
+        self.min_inet_down_mbps = float(min_inet_down_mbps or 0.0)
+        self.min_inet_up_mbps = float(min_inet_up_mbps or 0.0)
+        self.bake_particles = bool(bake_particles)
+        self._instances: dict[int, VastInstance] = {}
+        self._lock = threading.Lock()
+        self._cancel = threading.Event()
+        self._run_id = uuid.uuid4().hex[:8]
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def cancel(self) -> None:
+        self._cancel.set()
+        with self._lock:
+            instances = list(self._instances.items())
+        for instance_id, _instance in instances:
+            try:
+                self.provider.destroy_instance(instance_id)
+            except VastError:
+                continue
+
+    def run(
+        self,
+        shots: Sequence[RenderShot],
+        plan: RenderPlan,
+        *,
+        progress: ProgressCallback | None = None,
+    ) -> BurstReport:
+        if not self.ssh_key_path.is_file():
+            raise BurstError(f"SSH key not found: {self.ssh_key_path}")
+
+        assignments = self._assign(shots, max(1, plan.required_nodes))
+        assignments = [assignment for assignment in assignments if assignment]
+        if not assignments:
+            return BurstReport(
+                ok=False,
+                message="No ready shots with frames to render.",
+                nodes=(),
+                frames_expected=0,
+                frames_rendered=0,
+                missing=(),
+                wall_seconds=0.0,
+                cost=0.0,
+            )
+
+        balance = self.provider.balance()
+        if plan.estimated_cost > 0 and balance < plan.estimated_cost:
+            raise BurstError(
+                f"Vast.ai balance ({balance:.2f}) is below the estimated cost "
+                f"({plan.estimated_cost:.2f}). Top up before starting."
+            )
+
+        offers = self.provider.choose_offers(
+            plan.gpu_profile,
+            count=len(assignments),
+            max_price_per_hour=self.max_price_per_hour or plan.price_per_hour,
+            min_disk_gb=self.disk_gb,
+            preferred_region=self.preferred_region,
+            min_inet_down_mbps=self.min_inet_down_mbps,
+            min_inet_up_mbps=self.min_inet_up_mbps,
+        )
+        if not offers:
+            raise BurstError("No Vast.ai offer is available for this GPU profile.")
+
+        started = time.monotonic()
+        results: list[NodeResult] = []
+        try:
+            with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
+                futures = {
+                    pool.submit(
+                        self._run_node,
+                        index,
+                        tasks,
+                        offers[index % len(offers)],
+                        progress,
+                    ): index
+                    for index, tasks in enumerate(assignments)
+                }
+                for future in as_completed(futures):
+                    node = futures[future]
+                    try:
+                        results.append(future.result())
+                    except Exception as error:  # noqa: BLE001
+                        results.append(
+                            NodeResult(
+                                node=node,
+                                instance_id=0,
+                                ok=False,
+                                message=str(error),
+                                frames_done=0,
+                                frames_expected=sum(len(task.frames) for task in assignments[node]),
+                                wall_seconds=0.0,
+                                cost=0.0,
+                            )
+                        )
+        finally:
+            self.cancel()
+
+        wall_seconds = time.monotonic() - started
+        expected = sum(len(task.frames) for tasks in assignments for task in tasks)
+        rendered = sum(result.frames_done for result in results)
+        missing = tuple(
+            frame for result in results for frame in result.missing
+        )
+        cost = sum(result.cost for result in results)
+        ok = bool(results) and all(result.ok for result in results) and not missing
+        message = (
+            f"Rendered {rendered}/{expected} frame(s) on {len(results)} node(s)."
+            if ok
+            else f"Rendered {rendered}/{expected} frame(s); {len(missing)} missing."
+        )
+        return BurstReport(
+            ok=ok,
+            message=message,
+            nodes=tuple(sorted(results, key=lambda item: item.node)),
+            frames_expected=expected,
+            frames_rendered=rendered,
+            missing=missing,
+            wall_seconds=wall_seconds,
+            cost=cost,
+        )
+
+    # ------------------------------------------------------------------
+    # Assignment
+    # ------------------------------------------------------------------
+    def _assign(self, shots: Sequence[RenderShot], nodes: int) -> list[list[BurstTask]]:
+        entries: list[tuple[RenderShot, int]] = []
+        for shot in shots:
+            if not shot.is_ready:
+                continue
+            step = max(1, shot.frame_step)
+            for frame in range(shot.frame_start, shot.frame_end + 1, step):
+                entries.append((shot, frame))
+        if not entries:
+            return []
+
+        chunks: list[list[tuple[RenderShot, int]]] = [[] for _ in range(nodes)]
+        total = len(entries)
+        for index, entry in enumerate(entries):
+            node = min(nodes - 1, (index * nodes) // total)
+            chunks[node].append(entry)
+
+        assignments: list[list[BurstTask]] = []
+        for chunk in chunks:
+            tasks: list[BurstTask] = []
+            current_shot: RenderShot | None = None
+            current_frames: list[int] = []
+            for shot, frame in chunk:
+                if current_shot is not None and shot.relative_path != current_shot.relative_path:
+                    tasks.append(self._task(current_shot, current_frames))
+                    current_frames = []
+                current_shot = shot
+                current_frames.append(frame)
+            if current_shot is not None:
+                tasks.append(self._task(current_shot, current_frames))
+            assignments.append([task for task in tasks if task.frames])
+        return assignments
+
+    def _task(self, shot: RenderShot, frames: Iterable[int]) -> BurstTask:
+        sequence = shot.sequence or "shots"
+        return BurstTask(
+            shot=shot,
+            frames=tuple(sorted(frames)),
+            output_subdir=f"shots/{sequence}/{shot.name}.{self.task_type}",
+        )
+
+    # ------------------------------------------------------------------
+    # Node lifecycle
+    # ------------------------------------------------------------------
+    def _run_node(
+        self,
+        index: int,
+        tasks: list[BurstTask],
+        offer: VastOffer,
+        progress: ProgressCallback | None,
+    ) -> NodeResult:
+        started = time.monotonic()
+        instance: VastInstance | None = None
+        expected = sum(len(task.frames) for task in tasks)
+        rendered = 0
+        missing: list[int] = []
+        label = f"osh-render-{self.project_root.name}-{self._run_id}-{index}"
+        try:
+            self._emit(progress, index, "offer", f"renting {offer.gpu_name} at ${offer.price_per_hour:.2f}/h")
+            instance = self.provider.create_instance(
+                offer.id,
+                label=label,
+                image=self.image,
+                disk_gb=self.disk_gb,
+            )
+            with self._lock:
+                self._instances[instance.id] = instance
+            self._emit(progress, index, "boot", f"instance {instance.id} created", instance_id=instance.id)
+            instance = self.provider.wait_running(
+                instance.id,
+                progress=lambda message: self._emit(
+                    progress, index, "boot", message, instance_id=instance.id
+                ),
+            )
+            self._wait_for_ssh(instance, index, progress)
+            self._install_blender(instance, index, progress)
+            self._stage_project(instance, index, progress)
+
+            with tempfile.TemporaryDirectory(prefix="openstudio_burst_") as temp_dir:
+                temp = Path(temp_dir)
+                render_script = temp / "render_frames.py"
+                render_script.write_text(_RENDER_SCRIPT, encoding="utf-8")
+                self._scp(instance, render_script, "/root/render_frames.py")
+
+                for task in tasks:
+                    if self._cancel.is_set():
+                        raise BurstError("Render cancelled.")
+                    rendered += self._render_task(
+                        instance, task, index, progress, rendered, expected, temp
+                    )
+                    self._sync_task_output(instance, task, index, progress)
+                    if self.bake_particles:
+                        self._sync_bake_cache(instance, task, index, progress)
+
+            for task in tasks:
+                for frame in task.frames:
+                    local = self._local_frame_path(task, frame)
+                    if not local.is_file():
+                        missing.append(frame)
+            return NodeResult(
+                node=index,
+                instance_id=instance.id,
+                ok=not missing,
+                message="completed" if not missing else f"{len(missing)} frame(s) missing",
+                frames_done=rendered,
+                frames_expected=expected,
+                wall_seconds=time.monotonic() - started,
+                cost=instance.price_per_hour * (time.monotonic() - started) / 3600.0,
+                missing=tuple(missing),
+            )
+        except Exception as error:  # noqa: BLE001
+            return NodeResult(
+                node=index,
+                instance_id=instance.id if instance is not None else 0,
+                ok=False,
+                message=str(error),
+                frames_done=rendered,
+                frames_expected=expected,
+                wall_seconds=time.monotonic() - started,
+                cost=(
+                    instance.price_per_hour * (time.monotonic() - started) / 3600.0
+                    if instance is not None
+                    else 0.0
+                ),
+                missing=tuple(missing),
+            )
+        finally:
+            if instance is not None:
+                try:
+                    self.provider.destroy_instance(instance.id)
+                    self._emit(
+                        progress,
+                        index,
+                        "destroy",
+                        f"instance {instance.id} destroyed",
+                        instance_id=instance.id,
+                    )
+                except VastError:
+                    pass
+                with self._lock:
+                    self._instances.pop(instance.id, None)
+
+    def _wait_for_ssh(
+        self, instance: VastInstance, index: int, progress: ProgressCallback | None
+    ) -> None:
+        for attempt in range(1, 31):
+            if self._cancel.is_set():
+                raise BurstError("Render cancelled.")
+            result = self._ssh(instance, "echo ok", check=False, timeout=20)
+            if result.returncode == 0:
+                self._emit(progress, index, "ssh", "SSH ready", instance_id=instance.id)
+                return
+            time.sleep(5)
+        raise BurstError(f"SSH to instance {instance.id} did not become ready.")
+
+    def _install_blender(
+        self, instance: VastInstance, index: int, progress: ProgressCallback | None
+    ) -> None:
+        self._emit(progress, index, "setup", "installing Blender and runtime libraries", instance_id=instance.id)
+        major_minor = ".".join(self.blender_version.split(".")[:2])
+        archive = f"blender-{self.blender_version}-linux-x64"
+        url = (
+            f"https://download.blender.org/release/Blender{major_minor}/"
+            f"{archive}.tar.xz"
+        )
+        command = (
+            "set -e\n"
+            "export DEBIAN_FRONTEND=noninteractive\n"
+            "apt-get update -qq\n"
+            "apt-get install -y -qq --no-install-recommends "
+            "libx11-6 libxi6 libxxf86vm1 libxfixes3 libxrender1 libxkbcommon0 "
+            "libsm6 libice6 libgl1 libegl1 libgomp1 rsync ca-certificates curl xvfb >/dev/null\n"
+            "mkdir -p /root/blender\n"
+            "if [ ! -x /root/blender/blender ]; then\n"
+            f"  curl -L --fail -sS -o /root/blender.tar.xz '{url}'\n"
+            "  tar -xf /root/blender.tar.xz -C /root\n"
+            f"  mv /root/{archive}/* /root/blender/\n"
+            f"  rm -rf /root/{archive} /root/blender.tar.xz\n"
+            "fi\n"
+            "/root/blender/blender -b --version | head -3\n"
+        )
+        result = self._ssh(instance, command, timeout=900)
+        if result.returncode != 0:
+            raise BurstError(f"Blender install failed: {_tail(result.stderr or result.stdout)}")
+        self._emit(progress, index, "setup", "Blender ready", instance_id=instance.id)
+
+    def _stage_project(
+        self, instance: VastInstance, index: int, progress: ProgressCallback | None
+    ) -> None:
+        self._emit(progress, index, "stage", "staging production files", instance_id=instance.id)
+        production = self.project_root / self.production_folder
+        remote_production = f"{self.work_root}/{self.production_folder}"
+        self._ssh(instance, f"mkdir -p '{remote_production}'")
+        self._rsync(instance, production, remote_production)
+        if self.stage_shared:
+            for folder in ("01_Brief_y_Refs", "04_datos_compartidos"):
+                local = self.project_root / folder
+                if local.is_dir():
+                    remote = f"{self.work_root}/{folder}"
+                    self._ssh(instance, f"mkdir -p '{remote}'")
+                    self._rsync(instance, local, remote)
+        self._emit(progress, index, "stage", "production files staged", instance_id=instance.id)
+
+    # ------------------------------------------------------------------
+    # Render
+    # ------------------------------------------------------------------
+    def _render_task(
+        self,
+        instance: VastInstance,
+        task: BurstTask,
+        index: int,
+        progress: ProgressCallback | None,
+        rendered_before: int,
+        expected: int,
+        temp: Path,
+    ) -> int:
+        shot = task.shot
+        quality = shot.quality
+        output_dir = f"{self.work_root}/out/{task.output_subdir}"
+        remote_blend = f"{self.work_root}/{self.production_folder}/{task.remote_blend}"
+        config = {
+            "engine": quality.engine,
+            "resolution_x": quality.resolution_x,
+            "resolution_y": quality.resolution_y,
+            "resolution_percentage": quality.resolution_percentage,
+            "samples": quality.samples,
+            "denoise": quality.denoise,
+            "file_format": "PNG",
+            "output_dir": output_dir,
+            "frames": list(task.frames),
+            "frame_start": min(task.frames),
+            "frame_end": max(task.frames),
+            "bake_particles": self.bake_particles,
+        }
+        config_path = temp / f"config_{index}_{shot.name}.json"
+        config_path.write_text(json.dumps(config), encoding="utf-8")
+        remote_config = f"/root/config_{index}_{shot.name}.json"
+        self._scp(instance, config_path, remote_config)
+        self._ssh(instance, f"mkdir -p '{output_dir}'")
+
+        blender = "/root/blender/blender"
+        if quality.is_eevee:
+            blender = f"xvfb-run -a {blender}"
+        command = (
+            f"cd '{self.work_root}' && {blender} -b --factory-startup "
+            f"'{remote_blend}' --python /root/render_frames.py -- '{remote_config}'"
+        )
+        self._emit(
+            progress,
+            index,
+            "render",
+            f"rendering {len(task.frames)} frame(s) of {task.output_subdir}",
+            frames_done=rendered_before,
+            frames_total=expected,
+            instance_id=instance.id,
+        )
+        process = subprocess.Popen(
+            self._ssh_command(instance, command),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        done = rendered_before
+        try:
+            for line in process.stdout or ():
+                if self._cancel.is_set():
+                    process.terminate()
+                    break
+                if "OSFRAME::" in line:
+                    done += 1
+                    self._emit(
+                        progress,
+                        index,
+                        "frame",
+                        line.strip().split("OSFRAME::", 1)[1],
+                        frames_done=done,
+                        frames_total=expected,
+                        instance_id=instance.id,
+                    )
+                elif "OSBAKE::" in line:
+                    self._emit(
+                        progress,
+                        index,
+                        "bake",
+                        line.strip().split("OSBAKE::", 1)[1],
+                        instance_id=instance.id,
+                    )
+                elif "OSDEVICES::" in line:
+                    self._emit(
+                        progress,
+                        index,
+                        "device",
+                        line.strip().split("OSDEVICES::", 1)[1],
+                        instance_id=instance.id,
+                    )
+            process.wait(timeout=30)
+        finally:
+            if process.poll() is None:
+                process.kill()
+        if process.returncode != 0:
+            raise BurstError(
+                f"Blender failed on node {index} for {task.output_subdir} "
+                f"(exit {process.returncode})."
+            )
+        return done - rendered_before
+
+    def _sync_task_output(
+        self,
+        instance: VastInstance,
+        task: BurstTask,
+        index: int,
+        progress: ProgressCallback | None,
+    ) -> None:
+        self._emit(progress, index, "sync", f"syncing {task.output_subdir}", instance_id=instance.id)
+        local = self.output_root / task.output_subdir
+        local.mkdir(parents=True, exist_ok=True)
+        remote = f"{self.work_root}/out/{task.output_subdir}/"
+        self._rsync(instance, remote, str(local), remote_source=True)
+
+    def _sync_bake_cache(
+        self,
+        instance: VastInstance,
+        task: BurstTask,
+        index: int,
+        progress: ProgressCallback | None,
+    ) -> None:
+        """Bring the particle cache back next to the local .blend."""
+        shot_folder = Path(task.shot.relative_path).parent
+        remote = (
+            f"{self.work_root}/{self.production_folder}/"
+            f"{shot_folder.as_posix().rstrip('/')}/"
+        )
+        local = self.project_root / self.production_folder / shot_folder
+        local.mkdir(parents=True, exist_ok=True)
+        self._emit(
+            progress,
+            index,
+            "bake",
+            "syncing particle cache",
+            instance_id=instance.id,
+        )
+        try:
+            self._rsync(
+                instance,
+                remote,
+                str(local) + "/",
+                remote_source=True,
+                extra_excludes=("*.blend", "*.blend1", "*.blend2"),
+            )
+        except BurstError as error:
+            self._emit(
+                progress,
+                index,
+                "bake",
+                f"cache sync skipped: {error}",
+                instance_id=instance.id,
+            )
+
+    def _local_frame_path(self, task: BurstTask, frame: int) -> Path:
+        return self.output_root / task.output_subdir / f"frame_{frame:04d}.png"
+
+    # ------------------------------------------------------------------
+    # SSH / rsync helpers
+    # ------------------------------------------------------------------
+    def _ssh_command(self, instance: VastInstance, remote_command: str) -> list[str]:
+        return [
+            "ssh",
+            "-i",
+            str(self.ssh_key_path),
+            "-p",
+            str(instance.ssh_port),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "ConnectTimeout=15",
+            "-o",
+            "ServerAliveInterval=15",
+            f"root@{instance.ssh_host}",
+            remote_command,
+        ]
+
+    def _ssh(
+        self,
+        instance: VastInstance,
+        remote_command: str,
+        *,
+        check: bool = True,
+        timeout: float = 120.0,
+    ) -> subprocess.CompletedProcess:
+        result = subprocess.run(
+            self._ssh_command(instance, remote_command),
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+        if check and result.returncode != 0:
+            raise BurstError(
+                f"SSH command failed on {instance.ssh_host}: "
+                f"{_tail(result.stderr or result.stdout)}"
+            )
+        return result
+
+    def _scp(self, instance: VastInstance, local: Path, remote: str) -> None:
+        command = [
+            "scp",
+            "-q",
+            "-i",
+            str(self.ssh_key_path),
+            "-P",
+            str(instance.ssh_port),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            str(local),
+            f"root@{instance.ssh_host}:{remote}",
+        ]
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=300
+        )
+        if result.returncode != 0:
+            raise BurstError(f"scp failed: {_tail(result.stderr or result.stdout)}")
+
+    def _rsync(
+        self,
+        instance: VastInstance,
+        local: Path | str,
+        remote: str,
+        *,
+        remote_source: bool = False,
+        extra_excludes: Sequence[str] = (),
+    ) -> None:
+        ssh = (
+            f"ssh -i {self.ssh_key_path} -p {instance.ssh_port} "
+            "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+        )
+        if remote_source:
+            source = f"root@{instance.ssh_host}:{str(local).rstrip('/')}/"
+            destination = str(remote).rstrip("/") + "/"
+        else:
+            source = str(local).rstrip("/") + "/"
+            destination = f"root@{instance.ssh_host}:{str(remote).rstrip('/')}/"
+        command = [
+            "rsync",
+            "-az",
+            "--exclude",
+            ".svn",
+            "--exclude",
+            "*.blend1",
+            "--exclude",
+            "*.blend2",
+            "--exclude",
+            "*.crash.txt",
+            "--exclude",
+            "__pycache__",
+            *[item for pattern in extra_excludes for item in ("--exclude", pattern)],
+            "-e",
+            ssh,
+            source,
+            destination,
+        ]
+        result = subprocess.run(
+            command, capture_output=True, text=True, check=False, timeout=1800
+        )
+        if result.returncode != 0:
+            raise BurstError(f"rsync failed: {_tail(result.stderr or result.stdout)}")
+
+    # ------------------------------------------------------------------
+    # Progress helper
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _emit(
+        callback: ProgressCallback | None,
+        node: int,
+        stage: str,
+        message: str,
+        *,
+        frames_done: int = 0,
+        frames_total: int = 0,
+        instance_id: int = 0,
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            callback(
+                BurstProgress(
+                    node=node,
+                    stage=stage,
+                    message=message,
+                    frames_done=frames_done,
+                    frames_total=frames_total,
+                    instance_id=instance_id,
+                )
+            )
+        except Exception:  # noqa: BLE001 - progress must never abort a render
+            pass
+
+
+def _tail(text: str, lines: int = 8) -> str:
+    values = (text or "").strip().splitlines()
+    return " | ".join(values[-lines:]) if values else "no output"

@@ -109,23 +109,6 @@ class TopBar(QFrame):
         self.btn_kitsu.clicked.connect(self._on_kitsu_clicked)
         layout.addWidget(self.btn_kitsu)
 
-        role = self.auth.current_role() if self.auth else None
-        user = self.auth.current_user if self.auth else None
-        user_name = user.first_name if user else "User"
-
-        self.lbl_name = QLabel(user_name)
-        self.lbl_name.setObjectName("TopBarUserLabel")
-        self.lbl_name.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        layout.addWidget(self.lbl_name)
-
-        self.btn_profile = QToolButton()
-        self.btn_profile.setObjectName("TopBarProfileButton")
-        self.btn_profile.setCursor(Qt.PointingHandCursor)
-        self.btn_profile.setFixedHeight(30)
-        self.btn_profile.setToolButtonStyle(Qt.ToolButtonTextOnly)
-        self._configure_profile_button(role)
-        layout.addWidget(self.btn_profile)
-
         self.btn_avatar = QPushButton()
         self.btn_avatar.setObjectName("TopBarAvatarButton")
         self.btn_avatar.setFixedSize(36, 36)
@@ -137,6 +120,24 @@ class TopBar(QFrame):
             self.btn_avatar.setText("👤")
         layout.addWidget(self.btn_avatar)
         self._load_kitsu_avatar()
+
+        role = self.auth.current_role() if self.auth else None
+        user = self.auth.current_user if self.auth else None
+        user_name = user.first_name if user else "User"
+
+        self.lbl_name = QLabel(user_name)
+        self.lbl_name.setObjectName("TopBarUserLabel")
+        self.lbl_name.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addWidget(self.lbl_name)
+
+        self.btn_profile = QToolButton()
+        self.btn_profile.setObjectName("TopBarProfileButton")
+        self.btn_profile.setCursor(Qt.PointingHandCursor)
+        self.btn_profile.setFixedHeight(30)
+        self.btn_profile.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self._configure_profile_button(role)
+        layout.addWidget(self.btn_profile)
+
 
         bell_container = QWidget()
         bell_grid = QGridLayout(bell_container)

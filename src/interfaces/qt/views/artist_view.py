@@ -29,10 +29,12 @@ from PySide6.QtWidgets import (
 )
 
 from src.application.services.auth_service import AuthService
+from src.infrastructure.nas_manager import NasManager
 from src.domain.production.kitsu_links import kitsu_base_url, task_kitsu_url
 from src.interfaces.qt.components.comment_panel import CommentPanel
 from src.interfaces.qt.components.project_card import ProjectCard
 from src.interfaces.qt.components.task_card import TaskCard, resolve_task_status
+from src.interfaces.qt.widgets.render_progress_widget import RenderProgressWidget
 from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
 from src.interfaces.qt.viewmodels.artist_viewmodel import ArtistViewModel
@@ -67,6 +69,7 @@ class ViewArtist(BaseDashboardView):
         self.vm = viewmodel
         self._token = auth_service.access_token()
         self._host = auth_service.host
+        self._render_nas = NasManager(config_factory=config_factory)
 
         self._task_widgets = []
         self._task_cards_by_id = {}
@@ -84,11 +87,13 @@ class ViewArtist(BaseDashboardView):
 
         self.add_sidebar_button("projects", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._switch_panel("projects"), active=True)
         self.add_sidebar_button("my_tasks", self.tr("My Tasks"), "📋", "list.svg", lambda: self._switch_panel("my_tasks"))
+        self.add_sidebar_button("render", self.tr("Render"), "🎬", "film.svg", lambda: self._switch_panel("render"))
         self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_content()
         self.vm.tasks_loaded.connect(self._on_tasks_loaded)
         self.vm.projects_loaded.connect(self._on_projects_loaded)
+        self.vm.projects_loaded.connect(self.panel_render.set_projects)
         self.vm.comment_counts_ready.connect(self._on_comment_counts_ready)
         self.vm.tasks_load_started.connect(self._on_tasks_load_started)
         self.vm.tasks_load_finished.connect(self._on_tasks_load_finished)
@@ -109,6 +114,11 @@ class ViewArtist(BaseDashboardView):
 
         self.panel_tasks = self._build_tasks_panel()
         self.stacked_content.addWidget(self.panel_tasks)
+
+        self.panel_render = RenderProgressWidget(
+            self.stacked_content, self._resolve_render_project_root
+        )
+        self.stacked_content.addWidget(self.panel_render)
 
         self.panel_settings = self._build_settings_panel()
         self.stacked_content.addWidget(self.panel_settings)
@@ -384,10 +394,16 @@ class ViewArtist(BaseDashboardView):
                 col = 0
                 row += 1
 
+    def _resolve_render_project_root(self, project_name: str):
+        resolved = self._render_nas.resolve_project_dir(project_name)
+        if resolved is not None:
+            return resolved
+        return self.config_factory.get_workspace_root() / str(project_name or "").strip().lower().replace(" ", "-")
+
     def _switch_panel(self, panel_id: str) -> None:
         self.show_dashboard_content()
         self.set_active_sidebar_button(panel_id)
-        indices = {"projects": 0, "my_tasks": 1, "settings": 2}
+        indices = {"projects": 0, "my_tasks": 1, "render": 2, "settings": 3}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
         if panel_id != "my_tasks":
             self._close_comments(instant=True)

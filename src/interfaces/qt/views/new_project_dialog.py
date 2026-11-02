@@ -42,7 +42,7 @@ class NewProjectDialog(QDialog):
     def __init__(self, parent: QWidget, viewmodel: NewProjectViewModel, on_success_callback) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("New Project"))
-        self.setFixedSize(700, 980)
+        self.setFixedSize(700, 1030)
         self.setSizeGripEnabled(True)
         self.setModal(True)
 
@@ -50,6 +50,7 @@ class NewProjectDialog(QDialog):
         self.on_success = on_success_callback
 
         self.splash_path = ""
+        self.preferences_template_path = ""
         self.vault_data = self.vm.vault_data
         self.tool_checkboxes = {}
         self.addon_config_panels = {}
@@ -146,6 +147,25 @@ class NewProjectDialog(QDialog):
         splash_layout.addWidget(self.lbl_splash_name, stretch=1)
         main_layout.addLayout(splash_layout)
 
+        lbl_prefs = QLabel(self.tr("Blender Preferences Template (optional):"))
+        lbl_prefs.setObjectName("SectionTitle")
+        main_layout.addWidget(lbl_prefs)
+
+        prefs_layout = QHBoxLayout()
+        prefs_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.btn_preferences = QPushButton(self.tr("Browse .blend"))
+        self.btn_preferences.setObjectName("SecondaryButton")
+        self.btn_preferences.setFixedSize(140, 35)
+        self.btn_preferences.setCursor(Qt.PointingHandCursor)
+        self.btn_preferences.clicked.connect(self._select_preferences_template)
+        prefs_layout.addWidget(self.btn_preferences)
+
+        self.lbl_preferences_name = QLabel(self.tr("Project defaults"))
+        self.lbl_preferences_name.setObjectName("HintLabel")
+        prefs_layout.addWidget(self.lbl_preferences_name, stretch=1)
+        main_layout.addLayout(prefs_layout)
+
         self.lbl_status = QLabel("")
         self.lbl_status.setObjectName("StatusLabel")
         self.lbl_status.setAlignment(Qt.AlignCenter)
@@ -166,6 +186,7 @@ class NewProjectDialog(QDialog):
             self.entry_name.setEnabled(False)
             self.combo_version.setEnabled(False)
             self.btn_splash.setEnabled(False)
+            self.btn_preferences.setEnabled(False)
             self.btn_create.setEnabled(False)
 
     def _populate_vcs_servers(self) -> None:
@@ -330,8 +351,18 @@ class NewProjectDialog(QDialog):
             "behaviors": list(default_config.get("behaviors") or []),
         }
 
+    def _select_preferences_template(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.tr("Select Blender Preferences"), "", self.tr("Blender Preferences (*.blend)")
+        )
+        if path:
+            self.preferences_template_path = path
+            self.lbl_preferences_name.setText(Path(path).name)
+            self.lbl_preferences_name.setObjectName("BodyValue")
+
     def _on_creation_finished(self, outcome: CreationOutcome) -> None:
         if outcome.success:
+            self.vm.store_preferences_template(outcome, self.preferences_template_path)
             self.lbl_status.setText(outcome.message)
             from src.interfaces.qt.ui_style import set_ui_state
 

@@ -48,11 +48,15 @@ sidebar footer, top bar, cards, dialogs, settings panels and data views.
 - **Passive Auto-Saves:** Background synchronization with the VCS every 30 minutes to prevent catastrophic data loss.
 - **Undo Harvester:** A lightweight data collector that reads Blender's undo stack to understand artist workflows without interrupting them. This will allow easy comments to update the work done on an artist session.
 
-## v0.8.5 - Render Farm & Job Orchestration
-*Simplifying deployment.* 
-- **Flamenco Integration:** Automated, silent deployment of the Flamenco render farm add-on directly into the artist's sandbox.
-- **VFS Orchestration:** Smart routing of heavy render outputs directly to the NAS, bypassing SVN to keep repositories lightning-fast.
-- **RBAC Guardrails:** Conditional UI locks to prevent junior artists from accidentally saturating the render farm without lead approval.
+## v0.8.5 - Render Panel, Capacity & Cloud Burst
+*Answering "how many nodes do I need?" and "is the render setup correct?"*
+- **Dedicated render panel:** project selector, shot checkboxes, shared per-project settings, setup audit and live node progress for TD/PM; read-only progress for artists.
+- **Render plan:** probe every shot, join measured render profiles, and calculate GPU-hours, nodes, ETA and cost for a target wall time.
+- **Preview:** one composite frame per shot at a lower quality, local by default or on Vast; catches missing compositing/view layers before the full render.
+- **Direct Vast.ai burst and local headless:** rent on-demand GPU instances or render on the workstation, write the Blender Studio Tools layout under `03_render/shots/`, and destroy every Vast instance.
+- **Review video and Kitsu:** create the Kitsu review MP4, the Blender render-review copy, upload the video and set the task status from the project's statuses.
+- **Guardrails:** skip empty shots, flag geometry-node shots, support RTX 3070/3080/4070/3090/4090/A6000 profiles, and enforce a $0.13/h default cap, Americas preference, bandwidth floor, node cap and budget.
+- **Flamenco (next):** persistent local farm and Vast VM workers with Tailscale + NFS for studios that need a queue or already have shared storage.
 
 ## v0.9.0 - The AI Scribe & Daily Digest
 *AI assintance designed for production, securely.* 

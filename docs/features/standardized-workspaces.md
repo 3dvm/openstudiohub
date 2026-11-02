@@ -17,7 +17,7 @@ Before the software even launches, the Hub performs a silent sync.
 
 * It pulls the studio tools declared by the project from the central NAS.
 * It forces physical studio preferences (like injecting the `OPENSTUDIO_PROJECT_ROOT` path into the add-on settings), instantly reverting any manual, unauthorized modifications made by the user.
-* Features are context-aware: Tools like the *Flamenco Render Farm* submitter are dynamically hidden from modelers and automatically enabled only for lighting and rendering artists.
+* Features are context-aware: tools and actions can be hidden or enabled by task type and role. Current rendering is TD/Manager-triggered from the project card; Flamenco-based artist submission is on the roadmap.
 
 ### 4. Manifest-Driven Add-on Versions
 
@@ -63,10 +63,22 @@ The Hub applies these project policies at every launch:
 
 The OpenStudio Toolkit panel adds a separate **Project Preferences** section:
 
-* **Save Preferences** applies the project policy and writes `userpref.blend`;
+* **Save Preferences** applies the project policy, writes `userpref.blend` and
+  records a signed-off snapshot of the values (Mouse Select, OptiX device,
+  keyconfig, temp directory, undo steps and save versions);
+* **Reload Preferences** reloads the project sandbox preferences into the
+  current session;
+* **Restore Saved Preferences** restores the last saved snapshot;
 * **Import Preferences…** replaces the project preferences from an exported
   `userpref.blend` and then reapplies the project policy;
 * **Export Preferences…** saves a copy of the project's current preferences.
 
-Import/export are artist actions. A project can start from a studio-provided
-preference template, but after that the local artist remains in control.
+After startup, if the loaded session differs from the saved snapshot, Blender
+shows a dialog with the differing values and offers **OK to restore** or
+**Cancel to keep the current session**. The Hub also keeps a
+`blender_prefs/session_start.blend` snapshot before each launch.
+
+Import/export and restore are artist actions. A project can start from a
+studio-provided preference template selected in the project creation or
+configuration dialog, but after that the local artist remains in control. The
+template is only used when the sandbox does not have a `userpref.blend` yet.

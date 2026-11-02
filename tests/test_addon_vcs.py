@@ -51,6 +51,89 @@ def test_svn_commit_does_not_pass_the_password_in_argv(monkeypatch):
     assert captured["kwargs"]["input"] == "secret-password"
 
 
+def _run_lock(monkeypatch, vcs_svn, *, info_stdout="", lock_stderr="", lock_returncode=0):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        if cmd[:2] == ["svn", "info"]:
+            return types.SimpleNamespace(returncode=0, stdout=info_stdout, stderr="")
+        return types.SimpleNamespace(
+            returncode=lock_returncode, stdout="", stderr=lock_stderr
+        )
+
+    monkeypatch.setattr(vcs_svn.subprocess, "run", fake_run)
+    manager = vcs_svn.SVNManager("/workspace", "artist", "secret-password")
+    return manager, calls
+
+
+def test_svn_lock_does_not_pass_the_password_in_argv(monkeypatch):
+    vcs_svn = _load_vcs_modules()
+    manager, calls = _run_lock(monkeypatch, vcs_svn)
+
+    assert manager.lock("/workspace/pro/a.blend") is True
+
+    cmd, kwargs = calls[-1]
+    assert cmd[0] == "svn" and cmd[1] == "lock"
+    assert "--password-from-stdin" in cmd
+    assert "--password" not in cmd
+    assert "secret-password" not in cmd
+    assert kwargs["input"] == "secret-password"
+
+
+def test_svn_lock_returns_true_when_owned_by_the_same_user(monkeypatch):
+    vcs_svn = _load_vcs_modules()
+    manager, calls = _run_lock(
+        monkeypatch, vcs_svn, info_stdout="Lock Owner: artist\nLock Token: abc\n"
+    )
+
+    assert manager.lock("/workspace/pro/a.blend") is True
+    assert all(cmd[:2] != ["svn", "lock"] for cmd, _ in calls)
+
+
+def test_svn_lock_raises_for_a_foreign_owner(monkeypatch):
+    vcs_svn = _load_vcs_modules()
+    manager, _calls = _run_lock(
+        monkeypatch, vcs_svn, info_stdout="Lock Owner: edv\nLock Token: abc\n"
+    )
+
+    try:
+        manager.lock("/workspace/pro/a.blend")
+    except vcs_svn.VCSLockError as error:
+        assert error.owner == "edv"
+    else:  # pragma: no cover - the call must fail
+        raise AssertionError("lock should have raised for a foreign owner")
+
+
+def test_svn_lock_treats_a_race_held_by_the_same_user_as_success(monkeypatch):
+    vcs_svn = _load_vcs_modules()
+    manager, _calls = _run_lock(
+        monkeypatch,
+        vcs_svn,
+        lock_stderr="svn: warning: W160035: Path is already locked by user 'artist'.",
+        lock_returncode=1,
+    )
+
+    assert manager.lock("/workspace/pro/a.blend") is True
+
+
+def test_svn_lock_raises_for_a_foreign_race(monkeypatch):
+    vcs_svn = _load_vcs_modules()
+    manager, _calls = _run_lock(
+        monkeypatch,
+        vcs_svn,
+        lock_stderr="svn: E160039: Path is already locked by user 'edv'.",
+        lock_returncode=1,
+    )
+
+    try:
+        manager.lock("/workspace/pro/a.blend")
+    except vcs_svn.VCSLockError as error:
+        assert error.owner == "edv"
+    else:  # pragma: no cover - the call must fail
+        raise AssertionError("lock should have raised for a foreign owner")
+
+
 def test_addon_qa_rules_stay_in_sync_with_the_hub():
     hub_rules = (ROOT / "src" / "domain" / "qa" / "rules.py").read_text(encoding="utf-8")
     addon_rules = (PACKAGE_DIR / "qa_rules.py").read_text(encoding="utf-8")

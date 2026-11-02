@@ -35,8 +35,34 @@ releases may include larger UI or workflow changes.
   - updates fail explicitly when the declared archive is missing or
     incompatible;
   - project integrity marks the workspace as needing an update.
-- `openstudio_toolkit` 0.6.0, with self-contained QA rules so it loads from the
+- `openstudio_toolkit` 0.6.2, with self-contained QA rules so it loads from the
   Blender extension sandbox.
+- Dedicated render panel and capacity planner:
+  - `Render` sidebar entry for TD/PM, with a project selector, shot checkboxes,
+    shared per-project settings and a live node log; artists get a read-only
+    progress panel;
+  - the Hub probes each shot, audits compositing/view layers/output/color,
+    joins measured `render_profiles.json` values and calculates GPU-hours,
+    nodes, ETA and cost for a target wall time;
+  - **Preview selected/all** renders one composite frame at a lower quality,
+    locally by default or on a Vast node;
+  - final renders can run on Vast.ai on-demand instances or locally with the
+    project's isolated Blender; frames use the Blender Studio Tools layout
+    `03_render/shots/<sequence>/<shot>.render/`;
+  - every Vast instance is destroyed on completion/error/cancel; empty shots
+    are skipped, geometry-node shots are flagged and price/node/budget caps are
+    enforced ($0.13/h default, Americas preference and bandwidth floor);
+  - GPU profiles for RTX 3070 (8 GB), 3080 (10 GB), 4070 (12 GB), 3090/4090
+    (24 GB) and A6000 (48 GB); times for a budget profile are scaled from the
+    3090 benchmark (marked `~`/estimated) until the GPU is benchmarked directly;
+  - **Benchmark selected** measures three frames on one node and updates the
+    shared profile;
+  - ffmpeg creates the Kitsu review video
+    `shared/editorial/footage/pro/<seq>/<shot>/<shot>-render/<shot>-render-v###.mp4`
+    and the render-review copy; the panel can upload the video to the matching
+    Kitsu `render` task and set a status fetched from the server;
+  - new docs: the render backend ADR, the render-farm feature page, the
+    capacity guide and the Vast.ai runbook.
 - Kitsu-backed shell identity:
   - the top bar shows the active profile name (TD, PM, Editor or Artist)
     instead of a second dropdown arrow;
@@ -48,12 +74,21 @@ releases may include larger UI or workflow changes.
   - Temporary Files points to `<vfs_local>/blender-tmp/`;
   - Undo Steps is set to 256;
   - Save Versions is set to 0 when the project uses VCS;
-  - artists can save, import and export `userpref.blend` from the Toolkit panel.
+  - artists can save, reload, restore, import and export `userpref.blend` from
+    the Toolkit panel;
+  - saved preferences are snapshotted per project and compared on launch;
+  - when the loaded session differs (for example Mouse Select or OptiX device),
+    Blender warns and offers to restore the saved preferences;
+  - the Hub keeps a `session_start.blend` snapshot before each launch;
+  - new projects can seed their sandbox from an optional preferences template
+    selected in the project creation or configuration dialog.
 
 ### Changed
 
 - OpenStudio Toolkit actions are now separate operations: `Audit Scene`,
-  `Fix Out-of-Bounds Textures`, `Purge Orphans` and `Save & Commit`.
+  `Fix Out-of-Bounds Textures`, `Purge Orphans`, `Lock File` and `Save &
+  Commit`. `Lock File` lets an artist acquire the VCS write lock for a
+  `.blend` opened outside the Hub.
 - The software manifest editor exposes **Package OpenStudio Toolkit** so the
   local toolkit can be repackaged for the selected Blender version without
   fetching remote Studio Tools.
@@ -66,15 +101,27 @@ releases may include larger UI or workflow changes.
 
 ### Fixed
 
+- `Save & Commit` now acquires the SVN lock before saving, so a `needs-lock`
+  `.blend` opened without the Hub can be saved instead of failing with
+  `Cannot save blend file, path is not writable`. A lock held by another user
+  aborts with a clear message, and a failed save reports an actionable error.
 - SVN unlock is idempotent. Files already unlocked by another client no longer
   produce `E195013` notifications.
 - Lock probes for unversioned or missing paths no longer emit `W155010` audit
   failures or `Info failed` notifications.
 - `openstudio_toolkit` activates correctly inside the Blender sandbox.
+- Importing, reloading or restoring project preferences no longer crashes
+  Blender. The preferences reload now runs from a deferred timer instead of
+  inside the operator, because `wm.read_userpref` re-registers add-ons and
+  invalidates the running operator.
+- The Toolkit panel sections (file status, production context, scene actions
+  and project preferences) are collapsible.
+- The render scan no longer fails with `name 'bake_particles' is not defined`;
+  `RenderService.cheapest_offer()` had a stray `bake_particles` argument.
 
 ### Tests
 
-- Full suite: 686 passing tests.
+- Full suite: 751 passing tests.
 
 ## [0.7.5] - 2026-10-25
 

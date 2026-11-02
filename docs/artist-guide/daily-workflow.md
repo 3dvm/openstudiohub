@@ -19,7 +19,7 @@ When the task is ready, click the **Launch Project** button.
 
 * **What happens?** The Hub automatically launches your isolated Blender environment and opens your `.blend` file.
 * **Missing files:** If the task has no file on disk, the card shows **File Missing on Disk** and the launch is blocked. Ask a PM or TD to create or link the file.
-* **Context Injection:** The interface is pre-navigated to your specific task context, and only the tools you need (like the Flamenco Render Farm for lighting artists) are enabled.
+* **Context Injection:** The interface is pre-navigated to your specific task context, and only the tools you need are enabled. Rendering is currently triggered by a TD or Manager from the project card; Flamenco-based artist submission is on the roadmap.
 
 ## 2. Working & Telemetry - TODO
 While you work, the Hub operates silently in the background:

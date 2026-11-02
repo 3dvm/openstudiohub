@@ -233,6 +233,9 @@ class InstallationService:
                 topography,
                 status_callback=status_callback,
             )
+            self._install_preferences_template(
+                project_root, vfs_local, topography.vfs_pipeline, status_callback
+            )
             progress(95)
 
             status_callback("Configuring production VFS symlinks...", "yellow")
@@ -648,6 +651,23 @@ class InstallationService:
                     link_path.symlink_to(target_path, target_is_directory=True)
                 except OSError as error:
                     print(f"[VFS WARNING] Symlink creation failed (Privilege issue?): {error}")
+
+    def _install_preferences_template(
+        self, project_root: Path, vfs_local: str, vfs_pipeline: str, status_callback
+    ) -> None:
+        """Seed a new local sandbox from the project's optional userpref template."""
+        source = Path(project_root) / vfs_pipeline / "blender_preferences.blend"
+        destination = (
+            Path(project_root) / vfs_local / "blender_data" / "config" / "userpref.blend"
+        )
+        if not source.is_file() or destination.exists():
+            return
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            status_callback("Blender preferences template installed.", "green")
+        except OSError as error:
+            status_callback(f"Could not install Blender preferences template: {error}", "red")
 
     def _instalar_template(self, project_root, vfs_local, template_name, blender_version, status_callback):
         source_path = self.boveda_templates / template_name

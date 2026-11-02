@@ -22,3 +22,17 @@ def temporary_directory(blender_user_resources: str) -> Path | None:
 
 def vcs_is_enabled(adapter: str) -> bool:
     return str(adapter or "").strip().lower() not in ("", "none")
+
+
+def mismatched_preferences(saved: dict, current: dict) -> list[str]:
+    """Return saved keys whose current value differs, ignoring unavailable values."""
+    changed = []
+    for key, value in (saved or {}).items():
+        if key not in (current or {}):
+            continue
+        current_value = current.get(key)
+        if current_value is None:
+            continue
+        if str(current_value) != str(value):
+            changed.append(key)
+    return changed

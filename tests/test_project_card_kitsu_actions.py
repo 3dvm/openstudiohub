@@ -8,7 +8,7 @@
 from src.interfaces.qt.components.project_card import ProjectCard
 
 
-def _card(on_export, on_configure=None, on_publish=None, on_reset=None, on_backfill=None):
+def _card(on_export, on_configure=None, on_publish=None, on_reset=None, on_backfill=None, on_render=None):
     noop = lambda *args, **kwargs: None
     return ProjectCard(
         parent=None,
@@ -31,6 +31,7 @@ def _card(on_export, on_configure=None, on_publish=None, on_reset=None, on_backf
         on_backfill=on_backfill,
         on_reset=on_reset,
         on_configure=on_configure,
+        on_render=on_render,
     )
 
 
@@ -105,3 +106,17 @@ def test_card_backfill_action_forwards(qapp):
     action.trigger()
 
     assert captured == {"name": "Neon", "pid": "p1"}
+
+def test_td_card_render_action_forwards(qapp):
+    captured = {}
+    card = _card(
+        lambda *args: None,
+        on_render=lambda name: captured.update(name=name),
+    )
+
+    action = next(
+        a for a in card.options_menu.actions() if "Render" in a.text()
+    )
+    action.trigger()
+
+    assert captured == {"name": "Neon"}

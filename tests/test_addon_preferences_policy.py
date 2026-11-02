@@ -43,3 +43,21 @@ def test_vcs_adapter_enables_save_version_policy():
     assert policy.vcs_is_enabled("") is False
     assert policy.UNDO_STEPS == 256
     assert policy.SAVE_VERSIONS == 0
+
+
+def test_mismatched_preferences_ignores_unavailable_values():
+    policy = _policy()
+
+    saved = {
+        "select_mouse": "RIGHT",
+        "cycles_device_type": "OPTIX",
+        "undo_steps": 256,
+        "active_keyconfig": "Blender",
+    }
+    current = {
+        "select_mouse": "LEFT",
+        "cycles_device_type": None,
+        "undo_steps": 256,
+    }
+
+    assert policy.mismatched_preferences(saved, current) == ["select_mouse"]

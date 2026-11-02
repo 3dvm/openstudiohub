@@ -18,6 +18,7 @@ We built this tool to solve the most expensive problem in 3D production: **Human
 * **[Vendor Jailing & Sparse Checkout](features/vendor-jailing.md):** Protects your IP and saves bandwidth. Freelancers only download the exact files they need for their assigned task, nothing else.
 * **[Automated Task Orchestration](features/kitsu-orchestration.md):** Connects directly to Kitsu. Translates database tasks into physical folder structures and generates master `.blend` files automatically. Includes project-scoped task boards, two-way comment threads with unread badges, and PM-side responsible assignment.
 * **[Standardized Workspaces](features/standardized-workspaces.md):** Downloads exact Blender versions and extensions, running them in an isolated sandbox to ensure the whole team is strictly on the same page.
+* **[Render Farm & Cloud Burst](features/render-farm.md):** Plans the GPU nodes needed for a deadline and renders on-demand on Vast.ai, writing frames to `03_render/`.
 
 ---
 
@@ -37,6 +38,11 @@ Choose your path based on your role in the studio:
 * [System Requirements](admin-guide/system-requirements.md)
 * [Studio Deployment](admin-guide/deployment.md)
 * [Project Creation](admin-guide/project-creation.md)
+* [Render Capacity](admin-guide/render-capacity.md)
+* [Render on Vast.ai](admin-guide/vast-rendering.md)
+
+### Architecture decisions
+* [ADR-0001: Render backend](decisions/ADR-0001-render-backend.md)
 
 
 ---

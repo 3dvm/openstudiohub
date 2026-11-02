@@ -12,6 +12,7 @@ Switches between the project list and the batch entity builder.
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QStackedWidget, QVBoxLayout
 
+from src.application.services.render_service import RenderService
 from src.domain.production.kitsu_links import task_kitsu_url
 from src.interfaces.qt.settings_tabs.tab_credentials import TabCredentials
 from src.interfaces.qt.shell.base_dashboard_view import BaseDashboardView
@@ -20,9 +21,11 @@ from src.interfaces.qt.viewmodels.blend_builder_viewmodel import BlendBuilderVie
 from src.interfaces.qt.viewmodels.project_audit_viewmodel import ProjectAuditViewModel
 from src.interfaces.qt.viewmodels.project_list_viewmodel import ProjectListViewModel
 from src.interfaces.qt.viewmodels.project_repair_viewmodel import ProjectRepairViewModel
+from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderPanelViewModel
 from src.interfaces.qt.viewmodels.task_board_viewmodel import TaskBoardViewModel
 from src.interfaces.qt.widgets.blend_builder_widget import BlendBuilderWidget
 from src.interfaces.qt.widgets.project_list_widget import ProjectListWidget
+from src.interfaces.qt.widgets.render_panel_widget import RenderPanelWidget
 from src.interfaces.qt.widgets.task_board_widget import TaskBoardWidget
 
 
@@ -71,11 +74,15 @@ class ViewPM(BaseDashboardView):
             status_sink=status_sink,
             role_override=effective_role,
         )
+        self.render_vm = RenderPanelViewModel(
+            RenderService(), self.production_service, status_sink=status_sink
+        )
 
         self.setObjectName("ViewPMBase")
 
         self.add_sidebar_button("btn_projects", self.tr("Projects"), "📁", "folder.svg", lambda: self._switch_panel("btn_projects"), active=True)
         self.add_sidebar_button("btn_tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("btn_tasks"))
+        self.add_sidebar_button("btn_render", self.tr("Render"), "🎬", "film.svg", lambda: self._switch_panel("btn_render"))
         self.add_sidebar_button("btn_batch", self.tr("Batch Creation"), "📦", "box.svg", lambda: self._switch_panel("btn_batch"))
         self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
@@ -91,6 +98,7 @@ class ViewPM(BaseDashboardView):
             repair_vm=self.repair_vm,
             on_open_wizard_callback=self._open_wizard_for_project,
             on_open_tasks_callback=self._open_project_tasks,
+            on_open_render_callback=self._open_project_render,
         )
         self.stacked_content.addWidget(self.project_list)
 
@@ -100,6 +108,13 @@ class ViewPM(BaseDashboardView):
             on_open_kitsu_callback=self._open_task_kitsu,
         )
         self.stacked_content.addWidget(self.task_board)
+
+        self.render_panel = RenderPanelWidget(
+            self.stacked_content,
+            self.render_vm,
+            self.project_list_vm,
+        )
+        self.stacked_content.addWidget(self.render_panel)
 
         self.blend_builder = BlendBuilderWidget(
             parent=self.stacked_content,
@@ -174,6 +189,10 @@ class ViewPM(BaseDashboardView):
         self._switch_panel("btn_tasks")
         self.task_board.select_project(project_id)
 
+    def _open_project_render(self, project_name: str) -> None:
+        self._switch_panel("btn_render")
+        self.render_panel.select_project_by_name(project_name)
+
     def _open_task_kitsu(self, task_data: dict) -> None:
         url = task_kitsu_url(self.config_factory.get_kitsu_api_url(), task_data)
         if url:
@@ -182,7 +201,7 @@ class ViewPM(BaseDashboardView):
     def _switch_panel(self, panel_id: str) -> None:
         self.show_dashboard_content()
         self.set_active_sidebar_button(panel_id)
-        indices = {"btn_projects": 0, "btn_tasks": 1, "btn_batch": 2, "settings": 3}
+        indices = {"btn_projects": 0, "btn_tasks": 1, "btn_render": 2, "btn_batch": 3, "settings": 4}
         self.stacked_content.setCurrentIndex(indices.get(panel_id, 0))
 
         if panel_id == "btn_projects":

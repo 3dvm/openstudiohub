@@ -213,3 +213,24 @@ def test_workspace_needs_update_when_the_manifest_has_a_new_addon_version(tmp_pa
     )
 
     assert service.workspace_needs_update(project) is False
+
+
+def test_preferences_template_seeds_a_new_sandbox_only(tmp_path):
+    project = _project(tmp_path)
+    source = project / "pipeline" / "blender_preferences.blend"
+    source.write_bytes(b"template")
+    service = _service(tmp_path / "vault")
+    messages = []
+
+    service._install_preferences_template(
+        project, "local", "pipeline", lambda message, color: messages.append(message)
+    )
+
+    target = project / "local" / "blender_data" / "config" / "userpref.blend"
+    assert target.read_bytes() == b"template"
+
+    target.write_bytes(b"artist")
+    service._install_preferences_template(
+        project, "local", "pipeline", lambda message, color: messages.append(message)
+    )
+    assert target.read_bytes() == b"artist"

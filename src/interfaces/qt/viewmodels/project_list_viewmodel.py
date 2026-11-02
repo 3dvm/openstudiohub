@@ -187,6 +187,7 @@ class ProjectListViewModel(BaseViewModel):
         self._projects: List[dict] = []
         self.workers = WorkerManager(self)
         self._refresh_pending = False
+        self._render_service = None
 
         if self.export_service is None:
             self.export_service = self._build_export_service()
@@ -520,10 +521,14 @@ class ProjectListViewModel(BaseViewModel):
             pipeline_getter() if callable(pipeline_getter) else "pipeline"
         )
         splash_path = ""
+        preferences_template_path = ""
         if project_dir and vfs_pipeline:
             candidate = project_dir / vfs_pipeline / "splash.png"
             if candidate.exists():
                 splash_path = str(candidate)
+            preferences_candidate = project_dir / vfs_pipeline / "blender_preferences.blend"
+            if preferences_candidate.exists():
+                preferences_template_path = str(preferences_candidate)
 
         try:
             servers = self.list_servers()
@@ -546,6 +551,7 @@ class ProjectListViewModel(BaseViewModel):
             "servers": servers,
             "bound_server_id": server.id if server is not None else "",
             "splash_path": splash_path,
+            "preferences_template_path": preferences_template_path,
             "vfs_pipeline": vfs_pipeline,
             "update_required": update_required,
         }
@@ -660,6 +666,24 @@ class ProjectListViewModel(BaseViewModel):
                     "yellow",
                 )
 
+        preferences_note = ""
+        preferences_source = str(payload.get("preferences_template_source_path") or "")
+        if preferences_source:
+            source = Path(preferences_source)
+            if not source.is_file():
+                return False, "The selected Blender preferences file does not exist."
+            pipeline_getter = getattr(self.config_factory, "get_vfs_pipeline_name", None)
+            vfs_pipeline = (data.get("topography_signature") or {}).get("vfs_pipeline") or (
+                pipeline_getter() if callable(pipeline_getter) else "pipeline"
+            )
+            destination = project_dir / vfs_pipeline / "blender_preferences.blend"
+            try:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
+                preferences_note = " Blender preferences template updated."
+            except OSError as error:
+                return False, f"Could not store the Blender preferences template: {error}"
+
         # Regenerate the add-on config scripts so changes apply on next launch.
         try:
             from src.application.services.addon_config_generator import AddonConfigGenerator
@@ -703,7 +727,7 @@ class ProjectListViewModel(BaseViewModel):
                 update_note = " Project changed; install the workspace to apply it."
 
         self.refresh_requested.emit()
-        return True, f"Project configuration saved.{splash_note}{update_note}"
+        return True, f"Project configuration saved.{splash_note}{preferences_note}{update_note}"
 
     def backfill_spawned_files(self, project_name: str, project_id: str = "") -> None:
         """Register and commit task files that were spawned without VCS tracking."""
@@ -1089,6 +1113,18 @@ class ProjectListViewModel(BaseViewModel):
         if resolved is not None:
             return Path(resolved)
         return self.config_factory.get_workspace_root() / project_name.strip().lower().replace(" ", "-")
+
+    def project_root_for(self, project_name: str) -> Path:
+        """Public resolver used by the render dialog."""
+        return self._project_root_for(project_name)
+
+    def render_service(self):
+        """Lazily build the render service so startup never touches Vast."""
+        if self._render_service is None:
+            from src.application.services.render_service import RenderService
+
+            self._render_service = RenderService()
+        return self._render_service
 
     # ------------------------------------------------------------------
     # Manual VCS publish (project card)

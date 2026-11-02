@@ -131,6 +131,7 @@ class LaunchService:
             env[key] = str(value)
 
         self._refresh_addon_config(project_root)
+        self._snapshot_project_preferences(project_root, vfs_local)
 
         bootstrap_dst = self._deploy_bootstrap(project_root, vfs_local)
 
@@ -237,6 +238,19 @@ class LaunchService:
             if entry.name.lower() == target:
                 return entry
         return None
+
+    @staticmethod
+    def _snapshot_project_preferences(project_root: Path, vfs_local: str) -> None:
+        """Keep a per-session copy of userpref.blend for restore diagnostics."""
+        source = project_root / vfs_local / "blender_data" / "config" / "userpref.blend"
+        if not source.is_file():
+            return
+        destination = project_root / vfs_local / "blender_prefs" / "session_start.blend"
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        except OSError as error:
+            print(f"[LaunchService] Preference snapshot skipped: {error}")
 
     def _refresh_addon_config(self, project_root: Path) -> None:
         """Regenerate the ``cfg_<addon>.py`` scripts from the project blueprint.

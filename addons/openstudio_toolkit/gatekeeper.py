@@ -18,6 +18,7 @@ import shutil
 import sys
 from pathlib import Path
 from .vcs import vcs_factory
+from .vcs.vcs_base import VCSLockError
 
 # Make the Hub's shared QA kernel importable from the addon (dev checkout).
 _HUB_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -322,6 +323,42 @@ class OPENSTUDIO_OT_fix_textures(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _vcs_adapter() -> str:
+    return (os.environ.get("OPENSTUDIO_VCS_ADAPTER", "") or "").strip().lower()
+
+
+def _build_vcs_manager(adapter: str):
+    project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
+    production_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
+    vcs_user = os.environ.get("OPENSTUDIO_SVN_USER", "")
+    vcs_pwd = os.environ.get("OPENSTUDIO_SVN_PASSWORD", "")
+
+    if not (project_root and vcs_user and vcs_pwd):
+        return None
+
+    workspace_root = os.path.join(project_root, production_folder)
+    return vcs_factory.get_vcs_manager(adapter, workspace_root, vcs_user, vcs_pwd)
+
+
+def _acquire_write_lock(filepath: str):
+    """Lock the file before saving so a read-only needs-lock file can be written.
+
+    Returns the manager to reuse for the commit, or ``None`` when locking is not
+    part of this session. Raises :class:`VCSLockError` when another user holds
+    the lock.
+    """
+    adapter = _vcs_adapter()
+    if adapter != "svn":
+        return None
+
+    vcs_manager = _build_vcs_manager(adapter)
+    if vcs_manager is None:
+        return None
+
+    vcs_manager.lock(filepath)
+    return vcs_manager
+
+
 class OPENSTUDIO_OT_publish_task(bpy.types.Operator):
     bl_idname = "openstudio.publish_task"
     bl_label = "Save & Commit"
@@ -337,10 +374,39 @@ class OPENSTUDIO_OT_publish_task(bpy.types.Operator):
             self.report({'ERROR'}, "Save the .blend before publishing.")
             return {'CANCELLED'}
 
-        bpy.ops.wm.save_mainfile()
         filepath = bpy.data.filepath
+        adapter = _vcs_adapter()
 
-        adapter = (os.environ.get("OPENSTUDIO_VCS_ADAPTER", "") or "").strip().lower()
+        try:
+            vcs_manager = _acquire_write_lock(filepath)
+        except VCSLockError as error:
+            self.report({'ERROR'}, f"Cannot publish: {error}")
+            return {'CANCELLED'}
+        except Exception as error:  # noqa: BLE001
+            self.report({'ERROR'}, f"Could not lock the file before saving: {error}")
+            return {'CANCELLED'}
+
+        if vcs_manager is not None and not os.access(filepath, os.W_OK):
+            self.report(
+                {'ERROR'},
+                "The .blend is still read-only after locking. Release the stale "
+                "lock from the task card and try again.",
+            )
+            return {'CANCELLED'}
+
+        try:
+            bpy.ops.wm.save_mainfile()
+        except RuntimeError as error:
+            if not os.access(filepath, os.W_OK):
+                self.report(
+                    {'ERROR'},
+                    "The .blend is read-only. Lock it from the OpenStudio Hub "
+                    "task card (or use 'Lock File') and try again.",
+                )
+            else:
+                self.report({'ERROR'}, f"Could not save the .blend: {error}")
+            return {'CANCELLED'}
+
         if adapter in ("", "none"):
             self.report({'INFO'}, "Saved locally; VCS is not in use.")
             return {'FINISHED'}
@@ -349,25 +415,12 @@ class OPENSTUDIO_OT_publish_task(bpy.types.Operator):
             self.report({'ERROR'}, f"Unsupported VCS adapter: {adapter}")
             return {'CANCELLED'}
 
-        project_root = os.environ.get("OPENSTUDIO_PROJECT_ROOT", "")
-        production_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
-        vcs_user = os.environ.get("OPENSTUDIO_SVN_USER", "")
-        vcs_pwd = os.environ.get("OPENSTUDIO_SVN_PASSWORD", "")
-
-        if not (project_root and vcs_user and vcs_pwd):
+        if vcs_manager is None:
             self.report({'WARNING'}, "Saved locally; VCS credentials are missing.")
             return {'FINISHED'}
 
-        workspace_root = os.path.join(project_root, production_folder)
         try:
             self.report({'INFO'}, "Committing to the VCS...")
-            vcs_manager = vcs_factory.get_vcs_manager(
-                adapter, workspace_root, vcs_user, vcs_pwd
-            )
-            if vcs_manager is None:
-                self.report({'ERROR'}, "VCS is enabled but no adapter is available.")
-                return {'CANCELLED'}
-
             message = f"OpenStudio Hub: {bpy.path.basename(filepath)} saved and committed."
             if not vcs_manager.commit(message, filepath):
                 self.report({'ERROR'}, "Commit failed. Check the console for details.")
@@ -380,6 +433,47 @@ class OPENSTUDIO_OT_publish_task(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class OPENSTUDIO_OT_lock_file(bpy.types.Operator):
+    bl_idname = "openstudio.lock_file"
+    bl_label = "Lock File"
+    bl_description = "Acquire the VCS write lock for the current .blend"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        if not bpy.data.filepath:
+            self.report({'ERROR'}, "Save the .blend before locking it.")
+            return {'CANCELLED'}
+
+        adapter = _vcs_adapter()
+        if adapter in ("", "none"):
+            self.report({'INFO'}, "VCS is not in use.")
+            return {'FINISHED'}
+        if adapter != "svn":
+            self.report({'ERROR'}, f"Unsupported VCS adapter: {adapter}")
+            return {'CANCELLED'}
+
+        vcs_manager = _build_vcs_manager(adapter)
+        if vcs_manager is None:
+            self.report({'WARNING'}, "VCS credentials are missing.")
+            return {'CANCELLED'}
+
+        try:
+            vcs_manager.lock(bpy.data.filepath)
+        except VCSLockError as error:
+            self.report({'ERROR'}, f"Cannot lock the file: {error}")
+            return {'CANCELLED'}
+        except Exception as error:  # noqa: BLE001
+            self.report({'ERROR'}, f"Could not lock the file: {error}")
+            return {'CANCELLED'}
+
+        self.report({'INFO'}, "File locked for editing.")
+        return {'FINISHED'}
+
+
 def register():
     bpy.types.Scene.os_geo_infractores = bpy.props.StringProperty()
     bpy.types.Scene.os_nom_infractores = bpy.props.StringProperty()
@@ -388,12 +482,14 @@ def register():
         OPENSTUDIO_OT_purge_orphans,
         OPENSTUDIO_OT_fix_textures,
         OPENSTUDIO_OT_publish_task,
+        OPENSTUDIO_OT_lock_file,
     ):
         bpy.utils.register_class(operator)
 
 
 def unregister():
     for operator in (
+        OPENSTUDIO_OT_lock_file,
         OPENSTUDIO_OT_publish_task,
         OPENSTUDIO_OT_fix_textures,
         OPENSTUDIO_OT_purge_orphans,

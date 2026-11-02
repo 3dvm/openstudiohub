@@ -385,3 +385,35 @@ def test_role_override_changes_ui_permissions_but_not_the_account_role(tmp_path,
 
     assert vm.user_role == "td"
     assert vm.account_role == "artist"
+
+
+def test_save_project_config_stores_preferences_template(tmp_path, qapp):
+    nas_dir = tmp_path / "workspace"
+    project = nas_dir / "Neon"
+    (project / "local").mkdir(parents=True)
+    (project / "local" / "project_config.json").write_text("{}", encoding="utf-8")
+    _write_blueprint(project, {
+        "project_name": "Neon",
+        "kitsu_project_id": "p1",
+        "template": "Main",
+        "blender_version": "4.2",
+        "dependencies": {},
+        "topography_signature": {"vfs_pipeline": "pipeline", "vfs_local": "local"},
+    })
+    source = tmp_path / "userpref.blend"
+    source.write_bytes(b"prefs")
+
+    vm = _make_vm(tmp_path)
+    ok, message = vm.save_project_config(project, "p1", {
+        "server_id": "",
+        "blender_version": "4.2",
+        "template": "Main",
+        "dependencies": {},
+        "addon_configuration": {},
+        "splash_source_path": "",
+        "preferences_template_source_path": str(source),
+    })
+
+    assert ok is True
+    assert "preferences template" in message.lower()
+    assert (project / "pipeline" / "blender_preferences.blend").read_bytes() == b"prefs"

@@ -131,6 +131,7 @@ class ProjectCard(QFrame):
         on_manage_locks: Optional[Callable] = None,
         on_configure: Optional[Callable] = None,
         on_open_tasks: Optional[Callable] = None,
+        on_render: Optional[Callable] = None,
         tasks_only: bool = False,
     ) -> None:
         super().__init__(parent)
@@ -158,6 +159,7 @@ class ProjectCard(QFrame):
         self.on_apply_policy = on_apply_policy
         self.on_manage_locks = on_manage_locks
         self.on_configure = on_configure
+        self.on_render = on_render
 
         self.status = dict(status) if status else {}
         self.project_dir = self.status.get("project_dir")
@@ -209,9 +211,19 @@ class ProjectCard(QFrame):
             self.options_menu.addSeparator()
 
         if (
+            self.on_render is not None
+            and self.user_role in ("td", "pm", "manager")
+            and not self.tasks_only
+        ):
+            action_render = self.options_menu.addAction(
+                self.tr("🎬 Render…")
+            )
+            action_render.triggered.connect(self._on_render_requested)
+
+        if (
             self.on_backfill is not None
             and not self.tasks_only
-            and self.user_role in ("td", "manager")
+            and self.user_role in ("td", "pm", "manager")
         ):
             self.options_menu.addSeparator()
             action_backfill = self.options_menu.addAction(
@@ -449,6 +461,10 @@ class ProjectCard(QFrame):
     def _on_open_tasks_requested(self) -> None:
         if self.on_open_tasks is not None:
             self.on_open_tasks(self.project_data.get("id", ""))
+
+    def _on_render_requested(self) -> None:
+        if self.on_render is not None:
+            self.on_render(self.project_name)
 
     def _on_primary_action(self) -> None:
         """Dispatch the primary button click based on the latest audited status."""

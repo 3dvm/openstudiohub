@@ -1,6 +1,14 @@
 import bpy
 import os
 
+
+def _collapsible(layout, idname, label, icon, default_closed=False):
+    """Draw a collapsible section header and return its body (None when closed)."""
+    header, body = layout.panel(idname, default_closed=default_closed)
+    header.label(text=label, icon=icon)
+    return body
+
+
 # =========================================================================================
 # GRAPHICAL INTERFACE: VIEWPORT PANEL
 # =========================================================================================
@@ -26,62 +34,87 @@ class OPENSTUDIO_PT_kitsu_panel(bpy.types.Panel):
         filename = bpy.path.basename(filepath) if filepath else "Unsaved File"
 
         # --- SECTION: FILE INFORMATION ---
-        box_file = layout.box()
-        box_file.label(text="Local File Status:", icon='FILE_BLEND')
-        row = box_file.row()
-        row.label(text=filename)
+        body = _collapsible(
+            layout, "openstudio_file_status", "Local File Status:", 'FILE_BLEND'
+        )
+        if body is not None:
+            body.label(text=filename)
 
         layout.separator()
 
         # --- SECTION: PRODUCTION CONTEXT (SHOT VS ASSET) ---
-        box_ctx = layout.box()
-        if entity_type == "ASSET":
-            box_ctx.label(text="Context: ASSET", icon='OBJECT_DATA')
-            asset_type = os.environ.get("OPENSTUDIO_KITSU_ASSET_TYPE_NAME", "Prop")
-            box_ctx.label(text=f"Category: {asset_type}")
-        else:
-            box_ctx.label(text="Context: SHOT", icon='SCENE_DATA')
-            seq_name = os.environ.get("OPENSTUDIO_KITSU_SEQUENCE_NAME", "Sequence")
-            box_ctx.label(text=f"Sequence: {seq_name}")
+        context_icon = 'OBJECT_DATA' if entity_type == "ASSET" else 'SCENE_DATA'
+        body = _collapsible(
+            layout, "openstudio_production_context", "Production Context:", context_icon
+        )
+        if body is not None:
+            if entity_type == "ASSET":
+                body.label(text="Context: ASSET", icon='OBJECT_DATA')
+                asset_type = os.environ.get("OPENSTUDIO_KITSU_ASSET_TYPE_NAME", "Prop")
+                body.label(text=f"Category: {asset_type}")
+            else:
+                body.label(text="Context: SHOT", icon='SCENE_DATA')
+                seq_name = os.environ.get("OPENSTUDIO_KITSU_SEQUENCE_NAME", "Sequence")
+                body.label(text=f"Sequence: {seq_name}")
 
-        box_ctx.label(text=f"Name: {entity_name}")
-        box_ctx.label(text=f"Task: {task_type}")
+            body.label(text=f"Name: {entity_name}")
+            body.label(text=f"Task: {task_type}")
 
         layout.separator()
 
         # --- SECTION: ACTIONS ---
-        box_actions = layout.box()
-        box_actions.label(text="Scene Actions:", icon='TOOL_SETTINGS')
-        box_actions.operator("openstudio.audit_task", text="Audit Scene", icon='CHECKMARK')
-        box_actions.operator(
-            "openstudio.fix_textures",
-            text="Fix Out-of-Bounds Textures",
-            icon='FILE_IMAGE',
+        body = _collapsible(
+            layout, "openstudio_scene_actions", "Scene Actions:", 'TOOL_SETTINGS'
         )
-        box_actions.operator("openstudio.purge_orphans", text="Purge Orphans", icon='TRASH')
-        box_actions.operator(
-            "openstudio.publish_task",
-            text="Save & Commit",
-            icon='FILE_TICK',
-        )
+        if body is not None:
+            body.operator("openstudio.audit_task", text="Audit Scene", icon='CHECKMARK')
+            body.operator(
+                "openstudio.fix_textures",
+                text="Fix Out-of-Bounds Textures",
+                icon='FILE_IMAGE',
+            )
+            body.operator("openstudio.purge_orphans", text="Purge Orphans", icon='TRASH')
+            body.operator("openstudio.lock_file", text="Lock File", icon='LOCKED')
+            body.operator(
+                "openstudio.publish_task",
+                text="Save & Commit",
+                icon='FILE_TICK',
+            )
 
-        box_prefs = layout.box()
-        box_prefs.label(text="Project Preferences:", icon='PREFERENCES')
-        box_prefs.operator(
-            "openstudio.save_preferences",
-            text="Save Preferences",
-            icon='FILE_TICK',
+        # --- SECTION: PROJECT PREFERENCES (collapsed by default) ---
+        body = _collapsible(
+            layout,
+            "openstudio_project_preferences",
+            "Project Preferences:",
+            'PREFERENCES',
+            default_closed=True,
         )
-        box_prefs.operator(
-            "openstudio.import_preferences",
-            text="Import Preferences…",
-            icon='IMPORT',
-        )
-        box_prefs.operator(
-            "openstudio.export_preferences",
-            text="Export Preferences…",
-            icon='EXPORT',
-        )
+        if body is not None:
+            body.operator(
+                "openstudio.save_preferences",
+                text="Save Preferences",
+                icon='FILE_TICK',
+            )
+            body.operator(
+                "openstudio.reload_preferences",
+                text="Reload Preferences",
+                icon='FILE_REFRESH',
+            )
+            body.operator(
+                "openstudio.restore_preferences",
+                text="Restore Saved Preferences",
+                icon='LOOP_BACK',
+            )
+            body.operator(
+                "openstudio.import_preferences",
+                text="Import Preferences…",
+                icon='IMPORT',
+            )
+            body.operator(
+                "openstudio.export_preferences",
+                text="Export Preferences…",
+                icon='EXPORT',
+            )
 
 # =========================================================================================
 # REGISTRATION FUNCTIONS

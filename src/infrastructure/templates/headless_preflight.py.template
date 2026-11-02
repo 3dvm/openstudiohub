@@ -65,7 +65,7 @@ try:
     if hasattr(addon_prefs, "seq_playblast_root_dir"): addon_prefs.seq_playblast_root_dir = r"{VFS_SHARED}/editorial/footage"
     if hasattr(addon_prefs, "frames_root_dir"): addon_prefs.frames_root_dir = r"{VFS_SHARED}/editorial/footage"
     if hasattr(addon_prefs, "edit_export_dir"): addon_prefs.edit_export_dir = r"{VFS_SHARED}/editorial/export"
-    if hasattr(addon_prefs, "farm_dir"): addon_prefs.farm_dir = "render"
+    if hasattr(addon_prefs, "farm_output_dir"): addon_prefs.farm_output_dir = r"{PROJECT_PATH}/03_render"
 
     print("[ProjectBuilder] Rutas de Kitsu enrutadas correctamente a VFS_SVN y VFS_SHARED")
     

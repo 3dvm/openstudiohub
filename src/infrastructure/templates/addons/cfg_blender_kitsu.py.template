@@ -124,6 +124,8 @@ def configure():
             setattr(prefs, attr, value)
 
     if project_root:
+        if hasattr(prefs, "farm_output_dir"):
+            prefs.farm_output_dir = str(Path(project_root) / "03_render")
         footage = Path(project_root) / _val("production_folder", "svn") / str(_setting("playblast_subdir"))
         if hasattr(prefs, "shot_playblast_root_dir"):
             prefs.shot_playblast_root_dir = str(footage / "pro")

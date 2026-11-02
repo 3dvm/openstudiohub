@@ -141,6 +141,27 @@ class ProjectCreationService:
         )
         return self._run(context)
 
+    def store_preferences_template(
+        self, context: CreationContext | None, source_path: str
+    ) -> tuple[bool, str]:
+        """Copy a userpref.blend template into the project pipeline folder."""
+        if context is None or not source_path:
+            return True, ""
+        source = Path(source_path)
+        if not source.is_file():
+            return False, f"Preferences template not found: {source}"
+        destination = (
+            Path(context.project_path)
+            / context.blueprint.topography.vfs_pipeline
+            / "blender_preferences.blend"
+        )
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        except OSError as error:
+            return False, f"Could not store preferences template: {error}"
+        return True, str(destination)
+
     def retry(self, context: CreationContext) -> CreationOutcome:
         """Resume a failed creation, skipping the steps already completed."""
         if context is None:

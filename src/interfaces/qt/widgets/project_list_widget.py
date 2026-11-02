@@ -52,6 +52,7 @@ class ProjectListWidget(QFrame):
         on_repair_callback: Optional[Callable] = None,
         vault_service=None,
         on_open_tasks_callback: Optional[Callable] = None,
+        on_open_render_callback: Optional[Callable] = None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -64,6 +65,7 @@ class ProjectListWidget(QFrame):
         self.on_repair_callback = on_repair_callback
         self.vault_service = vault_service
         self.on_open_tasks_callback = on_open_tasks_callback
+        self.on_open_render_callback = on_open_render_callback
 
         self.user_role = self.vm.user_role
 
@@ -379,6 +381,11 @@ class ProjectListWidget(QFrame):
         if self.on_repair_callback:
             self.on_repair_callback(project_name, project_id, error_code)
 
+    def _request_render(self, project_name: str) -> None:
+        """Navigate to the dedicated render panel for one project."""
+        if self.on_open_render_callback is not None:
+            self.on_open_render_callback(project_name)
+
     def _request_config(self, project_name: str, project_id: str, project_dir=None) -> None:
         """Open the local HubProject configuration dialog for a card."""
         config = self.vm.project_config(project_name, project_id)
@@ -557,6 +564,7 @@ class ProjectListWidget(QFrame):
                 on_apply_policy=lambda name, pid=project_id: self._request_apply_policy(name),
                 on_manage_locks=lambda name, pid=project_id: self._request_manage_locks(name),
                 on_configure=self._request_config,
+                on_render=lambda name: self._request_render(name),
                 on_open_tasks=(
                     (lambda pid=project_id: self.on_open_tasks_callback(pid))
                     if self.on_open_tasks_callback is not None

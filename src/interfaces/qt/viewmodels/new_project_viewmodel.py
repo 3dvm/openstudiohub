@@ -138,6 +138,15 @@ class NewProjectViewModel(BaseViewModel):
         worker.result.connect(self._on_creation_finished)
         self.workers.start("creation", worker, critical=True)
 
+    def store_preferences_template(self, outcome, source_path: str) -> None:
+        if not source_path or outcome is None:
+            return
+        ok, message = self.project_creation_service.store_preferences_template(
+            outcome.context, source_path
+        )
+        if not ok:
+            self.report_status(message, "yellow")
+
     def retry_creation(self) -> None:
         """Resume the last failed creation from its recorded context."""
         outcome = self._last_outcome

@@ -51,7 +51,7 @@ class HubProjectConfigDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.tr("Project Configuration"))
-        self.setFixedSize(680, 860)
+        self.setFixedSize(680, 920)
         self.setSizeGripEnabled(True)
         self.setModal(True)
         self.setObjectName("ViewLoginBase")
@@ -78,6 +78,7 @@ class HubProjectConfigDialog(QDialog):
 
         self.update_required = bool(self.config.get("update_required"))
         self.splash_source_path = ""
+        self.preferences_template_source_path = ""
         self.tool_checkboxes: dict = {}
         self.addon_config_panels: dict = {}
         self.template_group: Optional[QButtonGroup] = None
@@ -123,6 +124,7 @@ class HubProjectConfigDialog(QDialog):
         main_layout.addWidget(self._build_vcs_section())
         main_layout.addWidget(self._build_components_section(), stretch=1)
         main_layout.addWidget(self._build_splash_section())
+        main_layout.addWidget(self._build_preferences_section())
 
         self.lbl_status = QLabel("")
         self.lbl_status.setObjectName("StatusLabel")
@@ -296,6 +298,47 @@ class HubProjectConfigDialog(QDialog):
 
         layout.addLayout(row)
         return container
+
+    def _build_preferences_section(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 5, 0, 0)
+        layout.setSpacing(6)
+
+        label = QLabel(self.tr("Blender Preferences Template (optional):"))
+        label.setObjectName("SectionTitle")
+        layout.addWidget(label)
+
+        row = QHBoxLayout()
+        self.btn_preferences = QPushButton(self.tr("Browse .blend"))
+        self.btn_preferences.setObjectName("SecondaryButton")
+        self.btn_preferences.setFixedSize(140, 36)
+        self.btn_preferences.setCursor(Qt.PointingHandCursor)
+        self.btn_preferences.clicked.connect(self._select_preferences_template)
+        self.btn_preferences.setEnabled(self.is_mounted)
+        row.addWidget(self.btn_preferences)
+
+        current = self.config.get("preferences_template_path") or ""
+        self.lbl_preferences_name = QLabel(
+            Path(current).name if current else self.tr("Project defaults")
+        )
+        self.lbl_preferences_name.setObjectName("HintLabel")
+        self.lbl_preferences_name.setWordWrap(True)
+        row.addWidget(self.lbl_preferences_name, stretch=1)
+        layout.addLayout(row)
+        return container
+
+    def _select_preferences_template(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            self.tr("Select Blender Preferences"),
+            "",
+            self.tr("Blender Preferences (*.blend)"),
+        )
+        if path:
+            self.preferences_template_source_path = path
+            self.lbl_preferences_name.setText(Path(path).name)
+            self.lbl_preferences_name.setObjectName("BodyValue")
 
     # ------------------------------------------------------------------
     # Population / prefill
@@ -479,6 +522,7 @@ class HubProjectConfigDialog(QDialog):
                 "dependencies": self.blueprint.get("dependencies") or {},
                 "addon_configuration": self.blueprint.get("addon_configuration") or {},
                 "splash_source_path": self.splash_source_path,
+                "preferences_template_source_path": self.preferences_template_source_path,
             }
 
         dependencies: dict = {}
@@ -509,6 +553,7 @@ class HubProjectConfigDialog(QDialog):
             "dependencies": dependencies,
             "addon_configuration": addon_configuration,
             "splash_source_path": self.splash_source_path,
+            "preferences_template_source_path": self.preferences_template_source_path,
         }
 
     def _build_addon_config(self, addon_name: str, meta: dict) -> dict:

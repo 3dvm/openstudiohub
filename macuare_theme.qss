@@ -388,7 +388,9 @@ QWidget#SettingsWidgetBase,
 QWidget#InfrastructureBase,
 QWidget#SoftwareProvisioningWidgetBase,
 QWidget#VcsAuditWidgetBase,
-QWidget#TaskBoardWidgetBase {
+QWidget#TaskBoardWidgetBase,
+QWidget#RenderPanelBase,
+QWidget#RenderProgressBase {
     background-color: #2E3643;
 }
 

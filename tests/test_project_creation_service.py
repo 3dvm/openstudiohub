@@ -264,3 +264,23 @@ def test_vcs_provisioner_success():
 
     assert ok is True
     assert message
+
+
+def test_store_preferences_template_copies_to_pipeline(tmp_path):
+    from types import SimpleNamespace
+
+    source = tmp_path / "userpref.blend"
+    source.write_bytes(b"prefs")
+    project = tmp_path / "project"
+    context = SimpleNamespace(
+        project_path=project,
+        blueprint=SimpleNamespace(
+            topography=SimpleNamespace(vfs_pipeline="pipeline")
+        ),
+    )
+    service = object.__new__(ProjectCreationService)
+
+    ok, message = service.store_preferences_template(context, str(source))
+
+    assert ok is True
+    assert (project / "pipeline" / "blender_preferences.blend").read_bytes() == b"prefs"
