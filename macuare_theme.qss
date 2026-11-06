@@ -752,6 +752,26 @@ QComboBox:focus {
     background-color: #1A1F29;
 }
 
+QSpinBox, QDoubleSpinBox {
+    background-color: #1F2531;
+    color: #F8FAFC;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 0 8px;
+    min-height: 24px;
+    selection-background-color: #F97316;
+}
+
+QSpinBox:focus, QDoubleSpinBox:focus {
+    border: 1px solid #F97316;
+    background-color: #1A1F29;
+}
+
+QSpinBox:disabled, QDoubleSpinBox:disabled {
+    background-color: #334155;
+    color: #64748B;
+}
+
 QComboBox#StandardComboBox {
     background-color: #1F2531;
     color: #F8FAFC;
