@@ -740,6 +740,7 @@ QComboBox {
     border: 1px solid #475569;
     border-radius: 8px;
     padding: 0 10px;
+    min-height: 28px;
     font-size: 13px;
     selection-background-color: #F97316;
 }
@@ -758,7 +759,7 @@ QSpinBox, QDoubleSpinBox {
     border: 1px solid #475569;
     border-radius: 8px;
     padding: 0 8px;
-    min-height: 24px;
+    min-height: 28px;
     selection-background-color: #F97316;
 }
 
