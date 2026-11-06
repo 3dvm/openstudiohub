@@ -74,6 +74,7 @@ _VALUE_OPTIONS = {
     "--file",
     "--targets",
     "--with-revprop",
+    "--encoding",
 }
 _REVISION_PATTERNS = (
     re.compile(r"Committed revision (\d+)"),
@@ -148,6 +149,7 @@ class SvnCommandRunner:
         audit: Optional[VcsAuditLogger] = None,
         project: str = "",
         server: str = "",
+        locale: str = "",
     ) -> None:
         self.svn_path = str(svn_path or "svn")
         self.default_timeout = float(default_timeout)
@@ -155,6 +157,7 @@ class SvnCommandRunner:
         self.audit = audit
         self.project = str(project or "")
         self.server = str(server or "")
+        self.locale = str(locale or "").strip()
         self._lock = threading.Lock()
         self._process: Optional[subprocess.Popen] = None
         self._cancelled = threading.Event()
@@ -232,9 +235,7 @@ class SvnCommandRunner:
         if effective_timeout is None:
             effective_timeout = self.default_timeout
 
-        env = os.environ.copy()
-        env.setdefault("LC_ALL", "C")
-        env.setdefault("LANG", "C")
+        env = self._build_env()
         if extra_env:
             env.update({str(key): str(value) for key, value in extra_env.items()})
 
@@ -344,9 +345,7 @@ class SvnCommandRunner:
             command = [self.svn_path, raw_args[0], "--non-interactive", *raw_args[1:]]
 
         effective_timeout = timeout if timeout is not None else self.default_timeout
-        env = os.environ.copy()
-        env.setdefault("LC_ALL", "C")
-        env.setdefault("LANG", "C")
+        env = self._build_env()
         destination_path = Path(destination)
         destination_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -413,6 +412,20 @@ class SvnCommandRunner:
                 command.append("--xml")
         result = self.run(command, cwd=cwd, timeout=timeout, check=check)
         return result, result.stdout
+
+    def _build_env(self) -> dict[str, str]:
+        """Return the subprocess environment honoring the configured locale.
+
+        An empty locale inherits the process environment. A non-empty locale is
+        forced on the ``svn`` client so commit messages and paths with non-ASCII
+        characters are converted correctly (the legacy hardcoded ``C`` locale
+        made ``svn commit`` fail with ``E000022``).
+        """
+        env = os.environ.copy()
+        if self.locale:
+            env["LC_ALL"] = self.locale
+            env["LANG"] = self.locale
+        return env
 
     def _audit_failure(
         self,

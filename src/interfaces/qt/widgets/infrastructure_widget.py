@@ -215,6 +215,7 @@ class InfrastructureWidget(QFrame):
         self.chk_trust_default_ca = QCheckBox(self.tr("Trust system CA certificates"))
         self.chk_trust_default_ca.setChecked(True)
         self.entry_trust_failures = self._styled_input("unknown-ca,cn-mismatch")
+        self.entry_svn_locale = self._styled_input("leave empty to inherit the system locale")
 
         form.addRow(self._styled_label(self.tr("Name:")), self.entry_server_name)
         form.addRow(self._styled_label(self.tr("Adapter:")), self.combo_adapter)
@@ -240,6 +241,13 @@ class InfrastructureWidget(QFrame):
             self._styled_label(self.tr("Allowed cert failures:")),
             self.entry_trust_failures,
         )
+        locale_row = self.entry_svn_locale
+        locale_row.setToolTip(self.tr(
+            "Locale forced on the svn client (e.g. C.UTF-8 or en_US.UTF-8). "
+            "A non-UTF-8 locale makes commits with accented characters fail "
+            "with E000022. Leave empty to inherit the system locale."
+        ))
+        form.addRow(self._styled_label(self.tr("SVN Locale:")), locale_row)
         c_layout.addLayout(form)
 
         self.entry_remote_host.textChanged.connect(self._sync_svn_url_from_host)
@@ -356,6 +364,7 @@ class InfrastructureWidget(QFrame):
         self.entry_ca_file.setText(profile.get("ca_file", ""))
         self.chk_trust_default_ca.setChecked(bool(profile.get("trust_default_ca", True)))
         self.entry_trust_failures.setText(profile.get("trust_server_cert_failures", ""))
+        self.entry_svn_locale.setText(profile.get("locale", ""))
         self._loading_server = False
 
     def _clear_server_fields(self) -> None:
@@ -381,7 +390,8 @@ class InfrastructureWidget(QFrame):
         for field in (self.entry_remote_host, self.entry_ssh_user, self.entry_ssh_key,
                       self.entry_ssh_cert, self.entry_known_hosts, self.entry_container,
                       self.entry_container_user, self.entry_password_db,
-                      self.entry_ca_file, self.entry_trust_failures):
+                      self.entry_ca_file, self.entry_trust_failures,
+                      self.entry_svn_locale):
             field.clear()
         self.chk_trust_default_ca.setChecked(True)
         self.entry_ssh_port.setText("22")
@@ -435,6 +445,7 @@ class InfrastructureWidget(QFrame):
                 "ca_file": self.entry_ca_file.text().strip(),
                 "trust_default_ca": self.chk_trust_default_ca.isChecked(),
                 "trust_server_cert_failures": self.entry_trust_failures.text().strip(),
+                "locale": self.entry_svn_locale.text().strip(),
                 "remote": {
                     "host": self.entry_remote_host.text().strip(),
                     "ssh_port": port,

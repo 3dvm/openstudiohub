@@ -51,6 +51,14 @@ the SVN client is missing, the wizard resumes directly at the SVN step.
 * If a configured CA file does not exist, the operation fails closed.
 * `svn://` and `svn+ssh://` repositories do not use the TLS options.
 
+### Client locale
+
+Each VCS server entry has an optional **SVN Locale** field (e.g. `C.UTF-8` or
+`en_US.UTF-8`). It is applied to every `svn` process as `LC_ALL`/`LANG` and is
+also passed to the Blender add-on. Leave it empty to inherit the system locale.
+A non-UTF-8 locale makes `svn commit` fail with `E000022` when the commit
+message or a path contains non-ASCII characters (accents, `ñ`, ...).
+
 ## Updating a workspace
 
 Use **Update from VCS** in the artist or project dashboard. The Hub:

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.domain.workspace.vcs_server_profile import VCSServerProfile
 from src.infrastructure.dev_defaults import DEV_SVN_PASSWORD, DEV_SVN_USER
 from src.infrastructure.vcs import svn_adapter
 from src.infrastructure.vcs.svn_adapter import SVNAdapter
@@ -82,6 +83,16 @@ def test_add_with_no_paths_is_a_noop(monkeypatch):
     assert calls == []
 
 
+def test_adapter_forwards_the_configured_locale_to_the_runner():
+    adapter = SVNAdapter(
+        "svn://localhost/repos/proj/svn",
+        Path("/tmp/workspace"),
+        server_profile=VCSServerProfile(locale="C.UTF-8"),
+    )
+
+    assert adapter._runner.locale == "C.UTF-8"
+
+
 def test_commit_builds_expected_command(monkeypatch):
     calls = []
     stdin_calls = []
@@ -96,7 +107,7 @@ def test_commit_builds_expected_command(monkeypatch):
     # Local Docker URLs force the dev bootstrap credentials. The password is
     # sent over stdin instead of being exposed in the process list.
     assert calls[0][0] == [
-        "svn", "commit", "-m", "msg", "pro/a.blend",
+        "svn", "commit", "--encoding", "UTF-8", "-m", "msg", "pro/a.blend",
         "--non-interactive",
         "--username", DEV_SVN_USER, "--no-auth-cache", "--password-from-stdin",
     ]

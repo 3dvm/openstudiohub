@@ -52,3 +52,10 @@ def test_vcs_adapter_roundtrip():
     assert env[EnvKey.VCS_ADAPTER] == "svn"
     restored = SandboxEnvironment.from_os_environ(env)
     assert restored.vcs_adapter == "svn"
+
+
+def test_svn_locale_roundtrip():
+    env = SandboxEnvironment(svn_locale="C.UTF-8").to_os_environ()
+    assert env[EnvKey.SVN_LOCALE] == "C.UTF-8"
+    restored = SandboxEnvironment.from_os_environ(env)
+    assert restored.svn_locale == "C.UTF-8"

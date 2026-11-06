@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 
@@ -27,6 +28,18 @@ def _first_line(text: str) -> str:
 
 
 class SVNManager(AbstractVCSManager):
+    def __init__(self, workspace_root: str, username: str, password: str, locale: str = ""):
+        super().__init__(workspace_root, username, password)
+        self.locale = str(locale or "").strip()
+
+    def _env(self) -> dict:
+        """Honor the configured SVN locale; inherit the process env when empty."""
+        env = os.environ.copy()
+        if self.locale:
+            env["LC_ALL"] = self.locale
+            env["LANG"] = self.locale
+        return env
+
     def _auth_args(self) -> list:
         args: list = []
         if self.username:
@@ -42,6 +55,7 @@ class SVNManager(AbstractVCSManager):
             capture_output=True,
             input=self.password or "",
             text=True,
+            env=self._env(),
         )
 
     def get_lock_info(self, filepath: str) -> dict:
@@ -50,6 +64,7 @@ class SVNManager(AbstractVCSManager):
             cwd=self.workspace_root,
             capture_output=True,
             text=True,
+            env=self._env(),
         )
         if result.returncode != 0:
             return {}
@@ -110,12 +125,15 @@ class SVNManager(AbstractVCSManager):
                 cwd=self.workspace_root,
                 check=True,
                 capture_output=True,
+                env=self._env(),
             )
         except subprocess.CalledProcessError as error:
             print(f"[SVN ADD ERROR] {error.stderr.decode('utf-8', errors='ignore')}")
 
         cmd = [
             "commit",
+            "--encoding",
+            "UTF-8",
             "-m",
             message,
             "--non-interactive",

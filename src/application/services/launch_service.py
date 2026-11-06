@@ -93,6 +93,7 @@ class LaunchService:
             )
 
         vcs_adapter = self._resolve_vcs_adapter(project_root)
+        svn_locale = self._resolve_svn_locale(project_root)
 
         sandbox_env = SandboxEnvironment(
             project_config=str(config_path),
@@ -120,6 +121,7 @@ class LaunchService:
             vcs_adapter=vcs_adapter,
             svn_user=svn_user,
             svn_password=svn_pwd,
+            svn_locale=svn_locale,
             blender_user_resources=str(sandbox_dir),
             blender_user_config=str(sandbox_dir / "config"),
             blender_user_scripts=str(sandbox_dir / "scripts"),
@@ -143,6 +145,18 @@ class LaunchService:
         status_callback(f"Blender en ejecucion ({project_name})...", "#00aaff")
         proceso.wait()
         status_callback(f"Sesion de {project_name} terminada.", "green")
+
+    def _resolve_svn_locale(self, project_root: Path) -> str:
+        """Return the SVN client locale configured for the project's server."""
+        try:
+            getter = getattr(self.config_factory, "get_server_for_project", None)
+            server = getter(project_root) if callable(getter) else None
+            profile = getattr(server, "profile", None)
+            if profile is None:
+                profile = self.config_factory.get_vcs_server_profile()
+            return str(getattr(profile, "locale", "") or "").strip()
+        except Exception:  # noqa: BLE001 - the DCC can start without a locale
+            return ""
 
     def _resolve_vcs_adapter(self, project_root: Path) -> str:
         """Return the project's VCS adapter, or an empty string when disabled."""

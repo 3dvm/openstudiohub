@@ -138,3 +138,22 @@ def test_addon_qa_rules_stay_in_sync_with_the_hub():
     hub_rules = (ROOT / "src" / "domain" / "qa" / "rules.py").read_text(encoding="utf-8")
     addon_rules = (PACKAGE_DIR / "qa_rules.py").read_text(encoding="utf-8")
     assert addon_rules == hub_rules
+
+
+def test_svn_commit_forces_the_configured_locale(monkeypatch):
+    vcs_svn = _load_vcs_modules()
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["kwargs"] = kwargs
+        return types.SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(vcs_svn.subprocess, "run", fake_run)
+    manager = vcs_svn.SVNManager(
+        "/workspace", "artist", "secret-password", locale="C.UTF-8"
+    )
+
+    assert manager.commit("mensaje con acentos: cámara", "/workspace/pro/a.blend") is True
+
+    assert captured["kwargs"]["env"]["LC_ALL"] == "C.UTF-8"
+    assert captured["kwargs"]["env"]["LANG"] == "C.UTF-8"

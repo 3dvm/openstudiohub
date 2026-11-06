@@ -110,6 +110,12 @@ releases may include larger UI or workflow changes.
 
 ### Fixed
 
+- SVN commits with accented or non-ASCII messages no longer fail with
+  `E000022`. The Hub inherited a forced `C` locale that could not represent
+  UTF-8 text; the client locale is now configurable per VCS server and is also
+  passed to the Blender add-on.
+- SVN error messages surface the specific cause instead of the generic
+  `Commit failed (details follow):` header.
 - `Save & Commit` now acquires the SVN lock before saving, so a `needs-lock`
   `.blend` opened without the Hub can be saved instead of failing with
   `Cannot save blend file, path is not writable`. A lock held by another user

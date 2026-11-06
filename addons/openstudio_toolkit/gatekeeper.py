@@ -332,12 +332,15 @@ def _build_vcs_manager(adapter: str):
     production_folder = os.environ.get("OPENSTUDIO_PRODUCTION_FOLDER", "svn")
     vcs_user = os.environ.get("OPENSTUDIO_SVN_USER", "")
     vcs_pwd = os.environ.get("OPENSTUDIO_SVN_PASSWORD", "")
+    vcs_locale = os.environ.get("OPENSTUDIO_SVN_LOCALE", "")
 
     if not (project_root and vcs_user and vcs_pwd):
         return None
 
     workspace_root = os.path.join(project_root, production_folder)
-    return vcs_factory.get_vcs_manager(adapter, workspace_root, vcs_user, vcs_pwd)
+    return vcs_factory.get_vcs_manager(
+        adapter, workspace_root, vcs_user, vcs_pwd, vcs_locale
+    )
 
 
 def _acquire_write_lock(filepath: str):

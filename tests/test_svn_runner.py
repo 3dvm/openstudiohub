@@ -2,7 +2,12 @@
 
 import pytest
 
-from src.infrastructure.vcs.svn_errors import SvnAuthError, VcsError
+from src.infrastructure.vcs.svn_errors import (
+    SvnAuthError,
+    SvnEncodingError,
+    VcsError,
+    classify_svn_error,
+)
 from src.infrastructure.vcs.svn_runner import SvnCommandRunner
 
 
@@ -60,3 +65,44 @@ def test_runner_can_skip_audit_for_expected_probes(tmp_path):
 
     assert result.ok is False
     assert logger.read_recent() == []
+
+
+def test_encoding_errors_surface_the_specific_cause():
+    error = classify_svn_error(
+        "svn: E000022: Commit failed (details follow):\n"
+        "svn: E000022: Can't convert string from 'UTF-8' to native encoding\n",
+        1,
+    )
+
+    assert isinstance(error, SvnEncodingError)
+    assert "convert string" in str(error)
+
+
+def test_encoding_errors_prefer_the_conversion_line():
+    error = classify_svn_error(
+        "svn: E000022: Error normalizing log message to internal format\n"
+        "svn: E000022: Can't convert string from native encoding to 'UTF-8':\n"
+        "svn: E000022: camara\n",
+        1,
+    )
+
+    assert isinstance(error, SvnEncodingError)
+    assert "convert string" in str(error)
+
+
+def test_runner_forces_the_configured_locale():
+    runner = SvnCommandRunner("/bin/sh", locale="en_US.UTF-8")
+
+    result = runner.run(["-c", 'printf "%s" "$LC_ALL"'], non_interactive=False)
+
+    assert result.stdout == "en_US.UTF-8"
+
+
+def test_runner_inherits_the_environment_when_no_locale_is_configured(monkeypatch):
+    monkeypatch.setenv("LC_ALL", "en_US.UTF-8")
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    runner = SvnCommandRunner("/bin/sh")
+
+    result = runner.run(["-c", 'printf "%s" "$LC_ALL"'], non_interactive=False)
+
+    assert result.stdout == "en_US.UTF-8"

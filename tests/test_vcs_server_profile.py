@@ -67,3 +67,9 @@ def test_invalid_mode_falls_back_to_local():
 def test_missing_port_defaults_to_22():
     profile = VCSServerProfile.from_dict({"mode": REMOTE_SSH, "remote": {"host": "h"}})
     assert profile.remote.ssh_port == 22
+
+
+def test_profile_round_trip_includes_the_svn_locale():
+    profile = VCSServerProfile.from_dict({"locale": "C.UTF-8"})
+    assert profile.locale == "C.UTF-8"
+    assert VCSServerProfile.from_dict(profile.to_dict()).locale == "C.UTF-8"

@@ -34,6 +34,7 @@ _OUT_OF_DATE_CODES = frozenset({"E160028", "E155011", "E195020"})
 _ALREADY_LOCKED_CODES = frozenset({"E160039", "W160035"})
 _NEEDS_LOCK_CODES = frozenset({"E200009", "E155005"})
 _CONFLICT_CODES = frozenset({"E155015", "E155024"})
+_ENCODING_CODES = frozenset({"E000022"})
 _NOT_WORKING_COPY_CODES = frozenset({"E155007", "E155010", "E155021"})
 _PATH_NOT_FOUND_CODES = frozenset({"E160013", "E155010", "E200009"})
 
@@ -87,6 +88,10 @@ class SvnConflictError(SvnCommandError):
     """The operation produced or encountered a conflict."""
 
 
+class SvnEncodingError(SvnCommandError):
+    """The client locale cannot represent a UTF-8 commit message or path."""
+
+
 class SvnNotWorkingCopyError(SvnCommandError):
     """The target path is not a Subversion working copy."""
 
@@ -135,12 +140,34 @@ def extract_path(stderr: str) -> str:
     return match.group(1) if match else ""
 
 
-def _first_line(text: str) -> str:
-    for line in (text or "").splitlines():
-        stripped = line.strip()
-        if stripped:
-            return stripped
-    return ""
+_DETAIL_HINTS = (
+    "can't convert string",
+    "can't open",
+    "can't write",
+    "can't read",
+    "permission denied",
+    "is out of date",
+    "not under version control",
+    "is not locked",
+    "already locked",
+    "path not found",
+)
+
+
+def _meaningful_line(text: str) -> str:
+    """Prefer the specific cause over SVN's generic "details follow" header."""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    lowered_lines = [line.lower() for line in lines]
+    for hint in _DETAIL_HINTS:
+        for line, lowered in zip(lines, lowered_lines):
+            if hint in lowered:
+                return line
+    for line in lines:
+        lowered = line.lower()
+        if lowered.endswith("(details follow):") or lowered.endswith("(details follow)"):
+            continue
+        return line
+    return lines[0] if lines else ""
 
 
 def classify_svn_error(
@@ -151,7 +178,7 @@ def classify_svn_error(
     """Translate an ``svn`` failure into the most specific :class:`VcsError`."""
     raw = stderr or ""
     code = extract_error_code(raw)
-    message = _first_line(raw) or f"svn exited with code {returncode}."
+    message = _meaningful_line(raw) or f"svn exited with code {returncode}."
     common = {"code": code, "raw": raw, "command": tuple(command or ())}
 
     # "Already locked" is often emitted as a W160035 warning followed by a
@@ -180,6 +207,8 @@ def classify_svn_error(
         return SvnNeedsLockError(message, **common)
     if code in _CONFLICT_CODES:
         return SvnConflictError(message, **common)
+    if code in _ENCODING_CODES:
+        return SvnEncodingError(message, **common)
     if code in _NOT_WORKING_COPY_CODES:
         return SvnNotWorkingCopyError(message, **common)
     if code in _PATH_NOT_FOUND_CODES:

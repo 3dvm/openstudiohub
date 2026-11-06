@@ -75,6 +75,7 @@ class EnvKey:
     VCS_ADAPTER = "OPENSTUDIO_VCS_ADAPTER"
     SVN_USER = "OPENSTUDIO_SVN_USER"
     SVN_PASSWORD = "OPENSTUDIO_SVN_PASSWORD"
+    SVN_LOCALE = "OPENSTUDIO_SVN_LOCALE"
 
     # Blender sandbox overrides (user resources / config / scripts isolation)
     BLENDER_USER_RESOURCES = "BLENDER_USER_RESOURCES"
@@ -113,6 +114,7 @@ _FIELD_TO_KEY: Dict[str, str] = {
     "vcs_adapter": EnvKey.VCS_ADAPTER,
     "svn_user": EnvKey.SVN_USER,
     "svn_password": EnvKey.SVN_PASSWORD,
+    "svn_locale": EnvKey.SVN_LOCALE,
     "blender_user_resources": EnvKey.BLENDER_USER_RESOURCES,
     "blender_user_config": EnvKey.BLENDER_USER_CONFIG,
     "blender_user_scripts": EnvKey.BLENDER_USER_SCRIPTS,
@@ -161,6 +163,7 @@ class SandboxEnvironment:
     vcs_adapter: Optional[str] = None
     svn_user: Optional[str] = None
     svn_password: Optional[str] = None
+    svn_locale: Optional[str] = None
 
     blender_user_resources: Optional[str] = None
     blender_user_config: Optional[str] = None

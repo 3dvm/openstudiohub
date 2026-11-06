@@ -67,6 +67,7 @@ class SVNAdapter(AbstractVCS):
             audit=self._audit,
             project=self._project_label(),
             server=self._server_host(),
+            locale=getattr(self.server_profile, "locale", ""),
         )
 
     # ------------------------------------------------------------------
@@ -274,7 +275,7 @@ class SVNAdapter(AbstractVCS):
         return True
 
     def commit(self, message: str, paths: Optional[List[str]] = None, username: Optional[str] = None, password: Optional[str] = None) -> bool:
-        cmd = ["svn", "commit", "-m", message]
+        cmd = ["svn", "commit", "--encoding", "UTF-8", "-m", message]
         if paths:
             cmd.extend(paths)
         cmd.extend(self._build_auth_args(username, password))

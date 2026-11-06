@@ -52,3 +52,6 @@ settings.json
 tests/dev_tools/*_env.json
 tests/dev_tools/kitsu_test_env.json
 tests/dev_tools/svn_ssh_env.json
+
+# Local backup of unorganized docs (kept outside the repository)
+old_unorganized_docs_no_git_upload/

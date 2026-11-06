@@ -126,6 +126,9 @@ class VCSServerProfile:
     ca_file: str = ""
     trust_default_ca: bool = True
     trust_server_cert_failures: str = ""
+    # Locale forced on the ``svn`` client process. Empty inherits the
+    # environment; UTF-8 is required to commit non-ASCII messages and paths.
+    locale: str = ""
 
     @property
     def is_remote(self) -> bool:
@@ -148,6 +151,7 @@ class VCSServerProfile:
             trust_server_cert_failures=(
                 data.get("trust_server_cert_failures") or ""
             ).strip(),
+            locale=(data.get("locale") or "").strip(),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -159,4 +163,5 @@ class VCSServerProfile:
             "ca_file": self.ca_file,
             "trust_default_ca": self.trust_default_ca,
             "trust_server_cert_failures": self.trust_server_cert_failures,
+            "locale": self.locale,
         }
