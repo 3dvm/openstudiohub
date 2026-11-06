@@ -348,6 +348,8 @@ class RenderPanelViewModel(BaseViewModel):
                 list(self.plan.shots),
                 self.settings,
                 skip_existing=retry,
+                audit=self.audit,
+                run_id=self._active_run_id,
             )
             worker.render_progress.connect(self.local_render_progress)
             worker.finished_render.connect(self._on_local_finished)
@@ -379,7 +381,6 @@ class RenderPanelViewModel(BaseViewModel):
             min_inet_down_mbps=self.settings.min_inet_down_mbps,
             min_inet_up_mbps=self.settings.min_inet_up_mbps,
             audit=self.audit,
-            canary=True,
             run_id=self._active_run_id,
             skip_existing=retry,
         )

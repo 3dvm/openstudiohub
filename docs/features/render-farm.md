@@ -105,15 +105,19 @@ changed in the panel.
 
 ## Rendering
 
-- **Vast.ai:** the Hub validates setup with a single canary node, then rents
-  the remaining on-demand instances, installs the project's exact Blender,
-  stages the production folder, renders contiguous frame chunks and syncs the
-  frames back. Every instance is destroyed in a `finally` block.
+- **Vast.ai:** the Hub rents the on-demand instances, installs the project's
+  exact Blender, stages the production folder, renders contiguous frame chunks
+  and syncs the frames back. Every instance is destroyed in a `finally` block.
+  Each node is audited independently, so a failure on one node never hides the
+  state of another.
 - When a run is partial, **Retry missing frames** renders only the frames that
   are absent. Approved frames are skipped.
 - Each run writes a local audit trail:
   `~/.openstudio/state/render_runs.jsonl` plus per-node logs under
-  `~/.openstudio/state/render_runs/<run_id>/`. The panel has **Open run logs**.
+  `~/.openstudio/state/render_runs/<run_id>/`:
+  `node-<n>.log` (Hub timeline), `node-<n>.json` (result) and
+  `node-<n>-blender-<shot>.log` (raw Blender output). Local runs write the same
+  files with the `local-<shot>` node id. The panel has **Open run logs**.
 - **Local:** the project's isolated Blender runs headlessly on the workstation
   and writes the same path. This is useful for simple shots or when there is
   enough time. The plan shows an estimated local slowdown factor

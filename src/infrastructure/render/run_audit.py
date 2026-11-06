@@ -21,7 +21,7 @@ import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from src.infrastructure.json_state import default_state_dir
 
@@ -62,6 +62,64 @@ class RenderRunAuditLogger:
             return True
         except OSError:
             return False
+
+    def node_log_path(self, run_id: str, node: int | str) -> Path:
+        return self.run_dir(run_id) / f"node-{_safe_label(node)}.log"
+
+    def blender_log_path(
+        self,
+        run_id: str,
+        node: int | str,
+        label: str = "",
+    ) -> Path:
+        suffix = f"-{_safe_label(label)}" if str(label or "").strip() else ""
+        return self.run_dir(run_id) / f"node-{_safe_label(node)}-blender{suffix}.log"
+
+    def node_event(self, event: str, *, run_id: str, node: int | str, **fields) -> bool:
+        """Write a structured event and a human line to the node's own log."""
+        ok = self.log(event, run_id=run_id, node=node, **fields)
+        message = str(fields.get("message") or "").strip()
+        detail = " ".join(
+            f"{key}={value}"
+            for key, value in fields.items()
+            if key not in ("message",) and value not in (None, "")
+        )
+        line = f"{event}: {message}".rstrip(": ")
+        if detail:
+            line = f"{line} | {detail}"
+        self.append_node_log(run_id, node, line)
+        return ok
+
+    def append_node_log(self, run_id: str, node: int | str, line: str) -> Path | None:
+        try:
+            path = self.node_log_path(run_id, node)
+            stamp = datetime.now(timezone.utc).strftime("%H:%M:%S")
+            with self._lock:
+                with open(path, "a", encoding="utf-8") as handle:
+                    handle.write(f"[{stamp}] {str(line).rstrip()}\n")
+            return path
+        except OSError:
+            return None
+
+    def node_summary(self, run_id: str, node: int | str, data: dict) -> Path | None:
+        try:
+            path = self.run_dir(run_id) / f"node-{_safe_label(node)}.json"
+            with self._lock:
+                path.write_text(
+                    json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            return path
+        except (OSError, ValueError):
+            return None
+
+    def append_blender_output(self, path: Path | str, line: str) -> None:
+        try:
+            with self._lock:
+                with open(path, "a", encoding="utf-8") as handle:
+                    handle.write(str(line).rstrip() + "\n")
+        except OSError:
+            pass
 
     def run_dir(self, run_id: str) -> Path:
         folder = self.root / str(run_id or "unknown")
@@ -127,3 +185,8 @@ class RenderRunAuditLogger:
             self.path.replace(self.path.with_name(f"{self.path.name}.1"))
         except OSError:
             pass
+
+
+def _safe_label(value) -> str:
+    text = str(value or "unknown").strip().replace(" ", "-")
+    return "".join(ch for ch in text if ch.isalnum() or ch in "-_.") or "unknown"

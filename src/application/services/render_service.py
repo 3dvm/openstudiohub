@@ -798,7 +798,6 @@ class RenderService:
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
         audit: RenderRunAuditLogger | None = None,
-        canary: bool = True,
         run_id: str = "",
         skip_existing: bool = False,
     ) -> RenderBurstRunner:
@@ -819,7 +818,6 @@ class RenderService:
             min_inet_up_mbps=min_inet_up_mbps,
             bake_particles=bake_particles,
             audit=audit,
-            canary=canary,
             run_id=run_id,
             skip_existing=skip_existing,
         )

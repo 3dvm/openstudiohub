@@ -46,7 +46,6 @@ class RenderBurstWorker(ManagedWorker):
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         audit=None,
-        canary: bool = True,
         run_id: str = "",
         skip_existing: bool = False,
     ) -> None:
@@ -59,7 +58,6 @@ class RenderBurstWorker(ManagedWorker):
         self.min_inet_down_mbps = float(min_inet_down_mbps or 0.0)
         self.min_inet_up_mbps = float(min_inet_up_mbps or 0.0)
         self.audit = audit
-        self.canary = bool(canary)
         self.run_id = str(run_id or "")
         self.skip_existing = bool(skip_existing)
         self.runner = None
@@ -74,7 +72,6 @@ class RenderBurstWorker(ManagedWorker):
                 min_inet_down_mbps=self.min_inet_down_mbps,
                 min_inet_up_mbps=self.min_inet_up_mbps,
                 audit=self.audit,
-                canary=self.canary,
                 run_id=self.run_id,
                 skip_existing=self.skip_existing,
             )
@@ -246,6 +243,8 @@ class LocalRenderWorker(ManagedWorker):
         shots: list[RenderShot],
         settings: RenderSettings,
         skip_existing: bool = False,
+        audit=None,
+        run_id: str = "",
     ) -> None:
         super().__init__()
         self.service = service
@@ -253,6 +252,8 @@ class LocalRenderWorker(ManagedWorker):
         self.shots = list(shots)
         self.settings = settings
         self.skip_existing = bool(skip_existing)
+        self.audit = audit
+        self.run_id = str(run_id or "")
         self.runner = None
 
     def run(self) -> None:
@@ -260,6 +261,7 @@ class LocalRenderWorker(ManagedWorker):
         try:
             self.runner = self.service.local_runner(self.project_root)
             for shot in self.shots:
+                node_id = f"local-{shot.name}"
                 output_dir = self.service.shot_output_dir(
                     self.project_root, shot, self.settings.task_type
                 )
@@ -277,6 +279,20 @@ class LocalRenderWorker(ManagedWorker):
                 ]
                 if not frames:
                     continue
+                log_path = None
+                if self.audit is not None:
+                    log_path = self.audit.blender_log_path(
+                        self.run_id, node_id
+                    )
+                    self.audit.node_event(
+                        "node_started",
+                        run_id=self.run_id,
+                        node=node_id,
+                        stage="render",
+                        message=f"local render of {shot.name}",
+                        frames_expected=len(frames),
+                        blender_log=str(log_path),
+                    )
                 report = self.runner.render(
                     shot.blend_path,
                     shot.quality,
@@ -288,8 +304,34 @@ class LocalRenderWorker(ManagedWorker):
                     progress=lambda done, total, seconds, name=shot.name: self.render_progress.emit(
                         name, done, total, seconds
                     ),
+                    log_path=log_path,
                 )
                 reports.append(report)
+                if self.audit is not None:
+                    self.audit.node_event(
+                        "node_finished",
+                        run_id=self.run_id,
+                        node=node_id,
+                        stage="render",
+                        ok=report.ok,
+                        message=report.message,
+                        frames_done=report.frames_rendered,
+                        frames_expected=report.frames_expected,
+                        blender_log=str(log_path or ""),
+                    )
+                    self.audit.node_summary(
+                        self.run_id,
+                        node_id,
+                        {
+                            "node": node_id,
+                            "ok": report.ok,
+                            "message": report.message,
+                            "frames_done": report.frames_rendered,
+                            "frames_expected": report.frames_expected,
+                            "missing": list(report.missing),
+                            "blender_logs": [str(log_path)] if log_path else [],
+                        },
+                    )
             self.finished_render.emit(reports)
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))

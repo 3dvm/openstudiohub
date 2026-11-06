@@ -114,8 +114,12 @@ def test_assign_skips_existing_and_approved_frames(tmp_path):
     assert [task.frames for task in assignments[0]] == [(103, 104, 105, 106, 107, 108, 109, 110)]
 
 
-def test_canary_task_uses_the_first_pending_frame(tmp_path):
-    shot = _shot("sh010", frames=4, start=101)
+
+def test_runner_has_no_canary_and_audits_nodes_individually(tmp_path):
+    from src.infrastructure.render.burst import NodeResult
+    from src.infrastructure.render.run_audit import RenderRunAuditLogger
+
+    audit = RenderRunAuditLogger(tmp_path / "audit" / "render_runs.jsonl")
     runner = RenderBurstRunner(
         FakeProvider(),
         project_root=tmp_path,
@@ -123,10 +127,28 @@ def test_canary_task_uses_the_first_pending_frame(tmp_path):
         ssh_key_path=Path("/tmp/key"),
         production_folder="02_archivos_de_produccion",
         blender_version="5.2.3",
+        audit=audit,
+        run_id="rnode",
     )
-    assignment = runner._assign([shot], 1)[0]
+    result = NodeResult(
+        node=2,
+        instance_id=55,
+        ok=True,
+        message="completed",
+        frames_done=10,
+        frames_expected=10,
+        wall_seconds=1.0,
+        cost=0.01,
+        stage="validate",
+        gpu_name="RTX 4090",
+        region="US",
+        price_per_hour=0.5,
+        duration_ms=1000,
+    )
 
-    canary = runner._canary_task(assignment)
+    assert not hasattr(runner, "canary")
+    runner._write_node_summary(2, result)
 
-    assert canary.frames == (101,)
-    assert canary.output_subdir == assignment[0].output_subdir
+    summary = audit.run_dir("rnode") / "node-2.json"
+    assert summary.is_file()
+    assert '"gpu_name": "RTX 4090"' in summary.read_text(encoding="utf-8")

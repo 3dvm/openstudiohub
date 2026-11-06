@@ -13,8 +13,8 @@ releases may include larger UI or workflow changes.
   - `~/.openstudio/state/render_runs.jsonl` records stages, failures and
     instance destruction reasons;
   - detail logs live under `~/.openstudio/state/render_runs/<run_id>/`;
-  - a canary node validates setup before the rest of the Vast.ai nodes are
-    rented;
+  - every node is audited independently with its own `.log`, `.json` and raw
+    Blender output file;
   - partial runs expose **Retry missing frames** and skip frames that already
     exist or are approved.
 - The render panel has an integrated PNG sequence player for finished renders,

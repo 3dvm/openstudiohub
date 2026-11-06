@@ -118,6 +118,7 @@ class LocalRenderRunner:
         use_compositing: bool = True,
         file_format: str = "PNG",
         progress: ProgressCallback | None = None,
+        log_path: Path | str | None = None,
     ) -> LocalRenderReport:
         if not self.blender_path.is_file():
             raise LocalRenderError(f"Blender executable not found: {self.blender_path}")
@@ -178,6 +179,13 @@ class LocalRenderRunner:
             if quality.is_eevee and shutil.which("xvfb-run"):
                 command = ["xvfb-run", "-a", *command]
 
+            log_handle = None
+            if log_path is not None:
+                log_file = Path(log_path)
+                log_file.parent.mkdir(parents=True, exist_ok=True)
+                log_handle = open(log_file, "a", encoding="utf-8")
+                log_handle.write(f"# local Blender · {blend.name}\n")
+                log_handle.flush()
             started = time.monotonic()
             deadline = started + self.timeout
             process = subprocess.Popen(
@@ -194,6 +202,9 @@ class LocalRenderRunner:
             seconds: list[float] = []
             try:
                 for line in process.stdout or ():
+                    if log_handle is not None:
+                        log_handle.write(line)
+                        log_handle.flush()
                     if self._cancel.is_set() or time.monotonic() > deadline:
                         process.terminate()
                         break
@@ -216,6 +227,8 @@ class LocalRenderRunner:
                     self._process = None
                 if process.poll() is None:
                     process.kill()
+                if log_handle is not None:
+                    log_handle.close()
 
         missing = tuple(
             frame
