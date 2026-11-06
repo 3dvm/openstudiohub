@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from src.domain.render.image_formats import IMAGE_FORMATS, image_extension
 from src.domain.render.models import (
     RenderQuality,
     RenderSettings,
@@ -34,6 +35,35 @@ def test_render_settings_round_trip(tmp_path):
     assert loaded.target_hours == 2.0
     assert loaded.render_backend == "local"
     assert loaded.local_speed_factor == 6.0
+    assert loaded.final_quality.file_format == "PNG"
+
+
+def test_image_formats_cover_blender_still_formats_and_default_png():
+    identifiers = {item.identifier for item in IMAGE_FORMATS}
+
+    assert "PNG" in identifiers
+    assert "OPEN_EXR" in identifiers
+    assert "TIFF" in identifiers
+    assert "OPEN_EXR_MULTILAYER" in identifiers
+    assert "FFMPEG" not in identifiers
+    assert image_extension("OPEN_EXR") == "exr"
+    assert image_extension("TIFF") == "tif"
+
+
+def test_final_quality_round_trips_image_format(tmp_path):
+    store = RenderSettingsStore(tmp_path / "render_settings.json")
+    settings = RenderSettings(
+        final_quality=RenderQuality(
+            file_format="OPEN_EXR", color_mode="RGBA", color_depth="32"
+        )
+    )
+    store.save(settings)
+
+    loaded = RenderSettingsStore(store.path).load()
+
+    assert loaded.final_quality.file_format == "OPEN_EXR"
+    assert loaded.final_quality.color_mode == "RGBA"
+    assert loaded.final_quality.color_depth == "32"
 
 
 def test_setup_readiness_requires_every_layer_connected():

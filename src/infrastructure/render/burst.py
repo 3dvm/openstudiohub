@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
+from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderShot
 from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
@@ -60,7 +61,12 @@ scene.render.engine = config["engine"]
 scene.render.resolution_x = int(config["resolution_x"])
 scene.render.resolution_y = int(config["resolution_y"])
 scene.render.resolution_percentage = int(config["resolution_percentage"])
-scene.render.image_settings.file_format = config.get("file_format", "PNG")
+image_settings = scene.render.image_settings
+if hasattr(image_settings, "media_type"):
+    image_settings.media_type = config.get("media_type", "IMAGE")
+image_settings.file_format = config.get("file_format", "PNG")
+image_settings.color_mode = config.get("color_mode", "RGBA")
+image_settings.color_depth = config.get("color_depth", "8")
 scene.render.filepath = config["output_dir"]
 
 if config["engine"] == "CYCLES":
@@ -478,10 +484,11 @@ class RenderBurstRunner:
             step = max(1, shot.frame_step)
             for frame in range(shot.frame_start, shot.frame_end + 1, step):
                 if self.skip_existing:
+                    extension = image_format(shot.quality.file_format).extension
                     path = (
                         self.output_root
                         / output_subdir
-                        / f"frame_{frame:04d}.png"
+                        / f"frame_{frame:04d}.{extension}"
                     )
                     if path.is_file() or frame in approved:
                         continue
@@ -871,6 +878,10 @@ class RenderBurstRunner:
         quality = shot.quality
         output_dir = f"{self.work_root}/out/{task.output_subdir}"
         remote_blend = f"{self.work_root}/{self.production_folder}/{task.remote_blend}"
+        fmt = image_format(quality.file_format)
+        proxy_dir = (
+            f"{output_dir}/.proxies" if fmt.identifier != "PNG" else ""
+        )
         config = {
             "engine": quality.engine,
             "resolution_x": quality.resolution_x,
@@ -878,7 +889,11 @@ class RenderBurstRunner:
             "resolution_percentage": quality.resolution_percentage,
             "samples": quality.samples,
             "denoise": quality.denoise,
-            "file_format": "PNG",
+            "file_format": fmt.identifier,
+            "color_mode": quality.color_mode,
+            "color_depth": quality.color_depth,
+            "media_type": fmt.media_type,
+            "proxy_dir": proxy_dir,
             "output_dir": output_dir,
             "frames": list(task.frames),
             "frame_start": min(task.frames),
@@ -900,7 +915,7 @@ class RenderBurstRunner:
         remote_log = f"/root/openstudio-render-{index}-{safe_shot}.log"
         command = (
             f"bash -lc \"cd '{self.work_root}' && set -o pipefail; "
-            f"{blender} -b --factory-startup '{remote_blend}' "
+            f"{blender} -b --python-exit-code 1 --factory-startup '{remote_blend}' "
             f"--python /root/render_frames.py -- '{remote_config}' "
             f"2>&1 | tee '{remote_log}'\""
         )
@@ -1057,7 +1072,12 @@ class RenderBurstRunner:
             )
 
     def _local_frame_path(self, task: BurstTask, frame: int) -> Path:
-        return self.output_root / task.output_subdir / f"frame_{frame:04d}.png"
+        extension = image_format(task.shot.quality.file_format).extension
+        return (
+            self.output_root
+            / task.output_subdir
+            / f"frame_{frame:04d}.{extension}"
+        )
 
     # ------------------------------------------------------------------
     # SSH / rsync helpers

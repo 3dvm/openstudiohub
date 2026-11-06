@@ -43,7 +43,8 @@ every shot as a collapsible card; the right side shows the selected shot.
   `.render_status.json` and `03_render/.previews/index.json`. When a run is
   reopened, the panel also searches the timestamped Vast preview folders, so a
   finished preview stays attached to its shot after a reload.
-- **Preview:** one frame of the composite is rendered at 50% / 32 samples by
+- **Preview:** one frame of the composite is rendered at 50% / 32 samples in
+  PNG by
   default. Preview can run locally (default) or on a Vast node. The preview is
   the quickest way to catch a missing view layer or a broken compositor before
   the full render.
@@ -59,7 +60,14 @@ every shot as a collapsible card; the right side shows the selected shot.
 - **Frame ranges:** the sequence player has **In point** / **Out point** and
   **Clear range** controls. **Approve selection** and **Delete selection** act
   on the selected frame range, or on the current frame when no range is set.
-- **Final render:** Vast.ai on-demand or local headless, one project at a time. GPU profiles: RTX 3070, 3080, 4070, 3090, 4090 and A6000.
+- **Final render:** Vast.ai on-demand or local headless, one project at a time.
+  The final image format follows Blender's still-image formats (PNG by default,
+  plus JPEG, TIFF, OpenEXR and the other Blender image formats) with configurable
+  color mode and color depth. Previews are always PNG. GPU profiles: RTX 3070,
+  3080, 4070, 3090, 4090 and A6000.
+- **Format proxies:** non-PNG final frames also write a PNG proxy in
+  `.proxies/`. The in-app sequence player, frame review and preview/review
+  videos use those proxies, while delivery frames keep the selected format.
 - **Final sequence player:** the panel replays the rendered PNG sequence with
   play/pause, scrubbing and frame stepping. The current frame can be moved to
   `.frame_trash/` (render error) or approved; approved frames are protected from

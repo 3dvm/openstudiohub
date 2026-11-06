@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.domain.render.image_formats import IMAGE_FORMATS, image_format
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
 from src.interfaces.qt.components.collapsible_section import CollapsibleSection
 from src.interfaces.qt.components.frame_sequence_player import FrameSequencePlayer
@@ -277,6 +278,27 @@ class RenderPanelWidget(QFrame):
         self.combo_samples = QComboBox()
         self.combo_samples.addItems(["128", "256"])
         final_form.addRow(self.tr("Samples"), self.combo_samples)
+
+        self.combo_image_format = QComboBox()
+        for image_format_item in IMAGE_FORMATS:
+            self.combo_image_format.addItem(
+                image_format_item.label, image_format_item.identifier
+            )
+        self.combo_image_format.currentIndexChanged.connect(
+            self._on_image_format_changed
+        )
+        final_form.addRow(self.tr("Image format"), self.combo_image_format)
+
+        format_row = QHBoxLayout()
+        self.combo_color_mode = QComboBox()
+        self.combo_color_depth = QComboBox()
+        format_row.addWidget(QLabel(self.tr("Mode")))
+        format_row.addWidget(self.combo_color_mode)
+        format_row.addWidget(QLabel(self.tr("Depth")))
+        format_row.addWidget(self.combo_color_depth)
+        format_row.addStretch()
+        final_form.addRow(self.tr("Color"), format_row)
+        self._on_image_format_changed()
         self.final_settings_section.add_widget(final_widget)
 
         preview_widget = QWidget()
@@ -611,6 +633,29 @@ class RenderPanelWidget(QFrame):
         if not custom:
             self.spin_hours.setValue(float(self.combo_target.currentData()))
 
+    def _on_image_format_changed(self, _index: int = 0) -> None:
+        fmt = image_format(self.combo_image_format.currentData() or "PNG")
+        mode = self.combo_color_mode.currentData()
+        depth = self.combo_color_depth.currentData()
+        self.combo_color_mode.blockSignals(True)
+        self.combo_color_depth.blockSignals(True)
+        self.combo_color_mode.clear()
+        for item in fmt.modes:
+            self.combo_color_mode.addItem(item, item)
+        self.combo_color_depth.clear()
+        for item in fmt.depths:
+            self.combo_color_depth.addItem(item, item)
+        mode_index = self.combo_color_mode.findData(mode)
+        self.combo_color_mode.setCurrentIndex(
+            mode_index if mode_index >= 0 else self.combo_color_mode.findData(fmt.default_mode)
+        )
+        depth_index = self.combo_color_depth.findData(depth)
+        self.combo_color_depth.setCurrentIndex(
+            depth_index if depth_index >= 0 else self.combo_color_depth.findData(fmt.default_depth)
+        )
+        self.combo_color_mode.blockSignals(False)
+        self.combo_color_depth.blockSignals(False)
+
     def _sync_backend_sections(self, _index: int = 0) -> None:
         final_vast = self.combo_backend.currentData() == "vast"
         preview_vast = self.combo_preview_backend.currentData() == "vast"
@@ -628,6 +673,9 @@ class RenderPanelWidget(QFrame):
             resolution_y=1080,
             resolution_percentage=100,
             samples=int(self.combo_samples.currentText()),
+            file_format=self.combo_image_format.currentData() or "PNG",
+            color_mode=self.combo_color_mode.currentData() or "RGBA",
+            color_depth=self.combo_color_depth.currentData() or "8",
         )
         preview = replace(
             base.preview_quality,
@@ -635,6 +683,9 @@ class RenderPanelWidget(QFrame):
             resolution_y=1080,
             resolution_percentage=int(self.combo_preview_res.currentData() or 50),
             samples=int(self.combo_preview_samples.currentText()),
+            file_format="PNG",
+            color_mode="RGBA",
+            color_depth="8",
         )
         return replace(
             base,
@@ -664,6 +715,9 @@ class RenderPanelWidget(QFrame):
         self.combo_preview_backend.blockSignals(True)
         self.combo_preview_res.blockSignals(True)
         self.combo_preview_samples.blockSignals(True)
+        self.combo_image_format.blockSignals(True)
+        self.combo_color_mode.blockSignals(True)
+        self.combo_color_depth.blockSignals(True)
         try:
             index = self.combo_target.findData(1.0)
             if float(settings.target_hours) not in (1.0, 2.0):
@@ -685,6 +739,19 @@ class RenderPanelWidget(QFrame):
             )
             self.combo_preview_res.setCurrentIndex(max(0, res_index))
             self.combo_preview_samples.setCurrentText(str(settings.preview_quality.samples))
+            format_index = self.combo_image_format.findData(
+                settings.final_quality.file_format
+            )
+            self.combo_image_format.setCurrentIndex(max(0, format_index))
+            self._on_image_format_changed()
+            mode_index = self.combo_color_mode.findData(
+                settings.final_quality.color_mode
+            )
+            self.combo_color_mode.setCurrentIndex(max(0, mode_index))
+            depth_index = self.combo_color_depth.findData(
+                settings.final_quality.color_depth
+            )
+            self.combo_color_depth.setCurrentIndex(max(0, depth_index))
             region_index = self.combo_region.findData(settings.preferred_region)
             self.combo_region.setCurrentIndex(max(0, region_index))
             self.spin_min_down.setValue(float(settings.min_inet_down_mbps))
@@ -701,6 +768,9 @@ class RenderPanelWidget(QFrame):
                 self.combo_preview_backend,
                 self.combo_preview_res,
                 self.combo_preview_samples,
+                self.combo_image_format,
+                self.combo_color_mode,
+                self.combo_color_depth,
                 self.combo_region,
             ):
                 widget.blockSignals(False)

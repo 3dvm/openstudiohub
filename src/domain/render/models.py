@@ -30,6 +30,9 @@ class RenderQuality:
     resolution_percentage: int = 100
     samples: int = 128
     denoise: bool = True
+    file_format: str = "PNG"
+    color_mode: str = "RGBA"
+    color_depth: str = "8"
 
     @property
     def effective_width(self) -> int:
@@ -57,7 +60,7 @@ class RenderQuality:
     def label(self) -> str:
         return (
             f"{self.engine} {self.effective_width}x{self.effective_height} "
-            f"@ {self.samples} spp"
+            f"@ {self.samples} spp · {self.file_format}"
         )
 
 
@@ -237,6 +240,9 @@ def _quality_to_dict(quality: RenderQuality) -> dict:
         "resolution_percentage": quality.resolution_percentage,
         "samples": quality.samples,
         "denoise": quality.denoise,
+        "file_format": quality.file_format,
+        "color_mode": quality.color_mode,
+        "color_depth": quality.color_depth,
     }
 
 
@@ -251,6 +257,9 @@ def _quality_from_dict(data: dict | None, fallback: RenderQuality) -> RenderQual
         ),
         samples=int(data.get("samples") or fallback.samples),
         denoise=bool(data.get("denoise", fallback.denoise)),
+        file_format=str(data.get("file_format") or fallback.file_format),
+        color_mode=str(data.get("color_mode") or fallback.color_mode),
+        color_depth=str(data.get("color_depth") or fallback.color_depth),
     )
 
 

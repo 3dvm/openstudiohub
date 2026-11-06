@@ -24,6 +24,7 @@ from PySide6.QtCore import Signal
 from src.application.services.launch_service import LaunchService
 from src.application.services.render_service import RenderService
 from src.application.services.task_file_resolver import TaskFileResolver
+from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.qt_worker import ManagedWorker
 from src.infrastructure.render.frame_state import RenderFrameStateStore
@@ -377,7 +378,13 @@ class LocalRenderWorker(ManagedWorker):
                         shot.frame_end + 1,
                         max(1, shot.frame_step),
                     )
-                    if not (self.skip_existing and (output_dir / f"frame_{frame:04d}.png").is_file())
+                    if not (
+                        self.skip_existing
+                        and (
+                            output_dir
+                            / f"frame_{frame:04d}.{image_format(shot.quality.file_format).extension}"
+                        ).is_file()
+                    )
                     and frame not in approved
                 ]
                 if not frames:

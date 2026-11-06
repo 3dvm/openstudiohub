@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 from src.application.services.render_service import RenderService
@@ -174,3 +175,38 @@ def test_frame_ranges_can_be_approved_and_deleted_in_one_operation(tmp_path):
     assert deleted == (103,)
     assert not (output / "frame_0103.png").exists()
     assert (output / "frame_0101.png").is_file()
+
+
+def test_frame_paths_and_proxies_follow_the_final_format(tmp_path):
+    root = _project(tmp_path)
+    service = RenderService()
+    shot = _shot()
+    shot = shot.with_quality(replace(shot.quality, file_format="OPEN_EXR"))
+
+    final = service.frame_path(root, shot, 101)
+    proxy = service.proxy_frame_path(root, shot, 101)
+
+    assert final.name == "frame_0101.exr"
+    assert proxy.name == "frame_0101.png"
+    assert service.display_frame_path(root, shot, 101) == final
+    proxy.parent.mkdir(parents=True)
+    proxy.write_bytes(b"x")
+    assert service.display_frame_path(root, shot, 101) == proxy
+
+
+def test_video_command_uses_the_requested_frame_extension(tmp_path, monkeypatch):
+    frames = tmp_path / "frames"
+    frames.mkdir()
+    (frames / "frame_0101.exr").write_bytes(b"x")
+    service = RenderVideoService("ffmpeg")
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr("src.infrastructure.render.video.subprocess.run", fake_run)
+
+    service.create_video(frames, 101, 101, 24.0, tmp_path / "review.mp4", extension="exr")
+
+    assert str(frames / "frame_%04d.exr") in captured["command"]

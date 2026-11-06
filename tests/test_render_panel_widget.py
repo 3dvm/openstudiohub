@@ -111,6 +111,7 @@ def test_shot_review_card_shows_counts_and_actions(qapp):
         engine="CYCLES",
         resolution="1920×1080 (100%)",
         samples=256,
+        image_format="PNG",
         measured_seconds=40.5,
         warnings=(),
         relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
@@ -125,3 +126,19 @@ def test_shot_review_card_shows_counts_and_actions(qapp):
     assert card.btn_view.isEnabled() is True
     assert card.btn_retry.isEnabled() is True
     card.deleteLater()
+
+
+def test_final_image_format_controls_update_render_settings(qapp):
+    widget = _widget()
+
+    index = widget.combo_image_format.findData("OPEN_EXR")
+    widget.combo_image_format.setCurrentIndex(index)
+    widget.combo_color_mode.setCurrentText("RGBA")
+    widget.combo_color_depth.setCurrentText("32")
+    settings = widget._settings_from_ui()
+
+    assert settings.final_quality.file_format == "OPEN_EXR"
+    assert settings.final_quality.color_mode == "RGBA"
+    assert settings.final_quality.color_depth == "32"
+    assert settings.preview_quality.file_format == "PNG"
+    widget.deleteLater()

@@ -187,7 +187,8 @@ class ShotReviewCard(QFrame):
         )
         self.lbl_details.setText(
             f"Frames {model.frame_range} · {model.engine} "
-            f"{model.resolution} @ {model.samples} spp · {measured}"
+            f"{model.resolution} @ {model.samples} spp · "
+            f"{model.image_format} · {measured}"
         )
         self.lbl_warnings.setText(" · ".join(model.warnings) if model.warnings else "")
         self.lbl_warnings.setVisible(bool(model.warnings))

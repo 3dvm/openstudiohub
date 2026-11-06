@@ -89,6 +89,7 @@ class ShotReviewModel:
     engine: str
     resolution: str
     samples: int
+    image_format: str
     measured_seconds: float | None
     warnings: tuple[str, ...]
     relative_path: str
@@ -419,6 +420,7 @@ class RenderPanelViewModel(BaseViewModel):
             engine=quality.engine,
             resolution=resolution,
             samples=int(quality.samples),
+            image_format=quality.file_format,
             measured_seconds=shot.measured_seconds,
             warnings=tuple(warnings),
             relative_path=shot.relative_path,
@@ -453,14 +455,13 @@ class RenderPanelViewModel(BaseViewModel):
     def _rendered_frames(self, shot: RenderShot) -> list[int]:
         if self.project_root is None:
             return []
-        folder = self.service.shot_output_dir(
-            self.project_root, shot, self.settings.task_type
-        )
         step = max(1, int(shot.frame_step or 1))
         return [
             frame
             for frame in range(shot.frame_start, shot.frame_end + 1, step)
-            if (folder / f"frame_{frame:04d}.png").is_file()
+            if self.service.frame_path(
+                self.project_root, shot, frame, self.settings.task_type
+            ).is_file()
         ]
 
     def render_single_shot(self, shot: RenderShot) -> bool:
@@ -1263,13 +1264,12 @@ class RenderPanelViewModel(BaseViewModel):
     def shot_progress(self, shot: RenderShot) -> tuple[int, int]:
         if self.project_root is None:
             return 0, int(shot.frames)
-        folder = self.service.shot_output_dir(
-            self.project_root, shot, self.settings.task_type
-        )
         step = max(1, int(shot.frame_step or 1))
         done = 0
         for frame in range(shot.frame_start, shot.frame_end + 1, step):
-            if (folder / f"frame_{frame:04d}.png").is_file():
+            if self.service.frame_path(
+                self.project_root, shot, frame, self.settings.task_type
+            ).is_file():
                 done += 1
         return done, int(shot.frames)
 

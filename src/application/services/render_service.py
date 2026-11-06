@@ -27,6 +27,7 @@ from src.domain.render.capacity import (
     RenderCapacityCalculator,
     scale_seconds_for_gpu,
 )
+from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.infrastructure.render.burst import (
@@ -583,7 +584,11 @@ class RenderService:
             task_type=settings.task_type,
         )
         preview_quality = replace(
-            settings.preview_quality, engine=shot.quality.engine
+            settings.preview_quality,
+            engine=shot.quality.engine,
+            file_format="PNG",
+            color_mode="RGBA",
+            color_depth="8",
         )
         report = self.local_runner(root).render(
             shot.blend_path,
@@ -616,7 +621,13 @@ class RenderService:
         for shot in shots:
             frame = self._preview_frame(shot, settings)
             frames[shot.relative_path] = frame
-            quality = replace(settings.preview_quality, engine=shot.quality.engine)
+            quality = replace(
+                settings.preview_quality,
+                engine=shot.quality.engine,
+                file_format="PNG",
+                color_mode="RGBA",
+                color_depth="8",
+            )
             preview_shots.append(
                 replace(
                     shot,
@@ -685,6 +696,41 @@ class RenderService:
             self.shot_output_dir(project_root, shot, task_type)
         )
 
+    def frame_extension(self, shot: RenderShot) -> str:
+        return image_format(shot.quality.file_format).extension
+
+    def frame_path(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        frame: int,
+        task_type: str = "render",
+    ) -> Path:
+        folder = self.shot_output_dir(project_root, shot, task_type)
+        return folder / f"frame_{int(frame):04d}.{self.frame_extension(shot)}"
+
+    def proxy_frame_path(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        frame: int,
+        task_type: str = "render",
+    ) -> Path:
+        folder = self.shot_output_dir(project_root, shot, task_type)
+        return folder / ".proxies" / f"frame_{int(frame):04d}.png"
+
+    def display_frame_path(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        frame: int,
+        task_type: str = "render",
+    ) -> Path:
+        proxy = self.proxy_frame_path(project_root, shot, frame, task_type)
+        if proxy.is_file():
+            return proxy
+        return self.frame_path(project_root, shot, frame, task_type)
+
     def sequence_entries(
         self,
         project_root: Path | str,
@@ -692,11 +738,10 @@ class RenderService:
         task_type: str = "render",
     ) -> list[tuple[int, Path | None]]:
         """Return the shot frame range with the existing PNG path for each frame."""
-        folder = self.shot_output_dir(project_root, shot, task_type)
         entries: list[tuple[int, Path | None]] = []
         step = max(1, int(shot.frame_step or 1))
         for frame in range(shot.frame_start, shot.frame_end + 1, step):
-            path = folder / f"frame_{frame:04d}.png"
+            path = self.display_frame_path(project_root, shot, frame, task_type)
             entries.append((frame, path if path.is_file() else None))
         return entries
 
@@ -728,7 +773,7 @@ class RenderService:
         skipped = 0
         trash = folder / ".frame_trash"
         for frame in sorted({int(item) for item in frames or ()}):
-            source = folder / f"frame_{frame:04d}.png"
+            source = self.frame_path(project_root, shot, frame, task_type)
             if not source.is_file():
                 skipped += 1
                 continue
@@ -743,6 +788,9 @@ class RenderService:
                         f"{source.stem}-{int(datetime.now().timestamp())}{source.suffix}"
                     )
                 shutil.move(str(source), str(destination))
+                proxy = self.proxy_frame_path(project_root, shot, frame, task_type)
+                if proxy.is_file():
+                    proxy.unlink(missing_ok=True)
             except OSError as error:
                 return False, f"Could not move the frames to the trash: {error}", tuple(deleted)
             deleted.append(frame)
@@ -791,7 +839,7 @@ class RenderService:
             missing = [
                 frame
                 for frame in selected
-                if not (folder / f"frame_{frame:04d}.png").is_file()
+                if not self.frame_path(project_root, shot, frame, task_type).is_file()
             ]
             if missing:
                 return False, "Only rendered frames can be approved."
@@ -803,6 +851,17 @@ class RenderService:
         state = "approved" if approved else "unlocked"
         return True, f"{len(selected)} frame(s) {state}."
 
+    def _video_source(
+        self, root: Path, shot: RenderShot, settings: RenderSettings
+    ) -> tuple[Path, str]:
+        final_dir = self.shot_output_dir(root, shot, settings.task_type)
+        final_format = image_format(shot.quality.file_format)
+        proxy_dir = final_dir / ".proxies"
+        if final_format.identifier != "PNG" and proxy_dir.is_dir():
+            if any(proxy_dir.glob("frame_*.png")):
+                return proxy_dir, "png"
+        return final_dir, final_format.extension
+
     def create_preview_video(
         self,
         project_root: Path | str,
@@ -811,7 +870,7 @@ class RenderService:
     ) -> Path:
         """Create a fast, half-resolution MP4 for quick review."""
         root = Path(project_root)
-        source = self.shot_output_dir(root, shot, settings.task_type)
+        source, extension = self._video_source(root, shot, settings)
         preview_dir = self.preview_dir(root, shot, task_type=settings.task_type)
         preview_dir.mkdir(parents=True, exist_ok=True)
         path = preview_dir / (
@@ -826,6 +885,7 @@ class RenderService:
             crf=28,
             preset="veryfast",
             video_filter="scale=iw/2:-2",
+            extension=extension,
         )
         return path
 
@@ -840,11 +900,11 @@ class RenderService:
     ) -> Path:
         root = Path(project_root)
         task_type = settings.video_task_type or settings.task_type or "render"
-        source = (
-            Path(frames_dir)
-            if frames_dir is not None
-            else self.shot_output_dir(root, shot, settings.task_type)
-        )
+        if frames_dir is not None:
+            source = Path(frames_dir)
+            extension = image_format(shot.quality.file_format).extension
+        else:
+            source, extension = self._video_source(root, shot, settings)
         review_dir = self.kitsu_review_dir(root, shot, task_type)
         review_dir.mkdir(parents=True, exist_ok=True)
         chosen_version = version or settings.video_version or next_version(
@@ -859,6 +919,7 @@ class RenderService:
             last,
             shot.setup.fps if shot.setup else 24.0,
             video_path,
+            extension=extension,
         )
         render_review = self.render_review_video_path(
             root, shot, first, last, settings.task_type

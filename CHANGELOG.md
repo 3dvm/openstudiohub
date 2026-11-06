@@ -24,6 +24,12 @@ releases may include larger UI or workflow changes.
   state for shots already rendering. The sequence button toggles play/stop and
   the active shot gets an orange outline.
 - Render plans now exclude approved frames and only schedule pending frames.
+- Final renders can use Blender's still-image formats (PNG default, JPEG,
+  TIFF, OpenEXR, DPX, Targa, WebP, AVIF and others) with configurable color mode
+  and depth. Previews remain PNG and non-PNG final frames get PNG review proxies.
+- Render scripts force the Blender image media type before setting the format
+  and use `--python-exit-code 1`, so FFMPEG-configured scenes no longer fail
+  silently or report successful empty renders.
 - Render nodes copy their remote Blender logs and diagnostics before being
   destroyed, even on success or cancellation.
 - Preview images are persisted per shot and recovered from the timestamped

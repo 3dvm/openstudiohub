@@ -58,6 +58,7 @@ class RenderVideoService:
         crf: int = 18,
         preset: str = "medium",
         video_filter: str = "",
+        extension: str = "png",
     ) -> Path:
         if not self.available:
             raise RenderVideoError(
@@ -71,10 +72,11 @@ class RenderVideoService:
         last = int(last_frame)
         if last < first:
             raise RenderVideoError("The last frame is before the first frame.")
+        suffix = str(extension or "png").lstrip(".")
         missing = [
             frame
             for frame in range(first, last + 1)
-            if not (source / f"frame_{frame:04d}.png").is_file()
+            if not (source / f"frame_{frame:04d}.{suffix}").is_file()
         ]
         if missing:
             raise RenderVideoError(
@@ -92,7 +94,7 @@ class RenderVideoService:
             "-framerate",
             f"{float(fps):.6g}",
             "-i",
-            str(source / "frame_%04d.png"),
+            str(source / f"frame_%04d.{suffix}"),
             "-frames:v",
             str(last - first + 1),
         ]

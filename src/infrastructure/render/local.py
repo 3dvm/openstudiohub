@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderQuality
 
 ProgressCallback = Callable[[int, int, float], None]
@@ -45,7 +46,12 @@ scene.render.engine = quality["engine"]
 scene.render.resolution_x = int(quality["resolution_x"])
 scene.render.resolution_y = int(quality["resolution_y"])
 scene.render.resolution_percentage = int(quality["resolution_percentage"])
-scene.render.image_settings.file_format = config.get("file_format", "PNG")
+image_settings = scene.render.image_settings
+if hasattr(image_settings, "media_type"):
+    image_settings.media_type = config.get("media_type", "IMAGE")
+image_settings.file_format = config.get("file_format", "PNG")
+image_settings.color_mode = config.get("color_mode", "RGBA")
+image_settings.color_depth = config.get("color_depth", "8")
 scene.render.use_compositing = bool(config.get("use_compositing", True))
 
 if quality["engine"] == "CYCLES":
@@ -116,7 +122,7 @@ class LocalRenderRunner:
         output_dir: Path | str,
         *,
         use_compositing: bool = True,
-        file_format: str = "PNG",
+        file_format: str = "",
         progress: ProgressCallback | None = None,
         log_path: Path | str | None = None,
     ) -> LocalRenderReport:
@@ -137,6 +143,7 @@ class LocalRenderRunner:
             script = temp / "render_frames.py"
             script.write_text(_RENDER_SCRIPT, encoding="utf-8")
             config = temp / "config.json"
+            fmt = image_format(quality.file_format)
             config.write_text(
                 json.dumps(
                     {
@@ -151,7 +158,11 @@ class LocalRenderRunner:
                         "frames": list(frame_list),
                         "output_dir": str(destination),
                         "use_compositing": use_compositing,
-                        "file_format": file_format,
+                        "file_format": file_format or fmt.identifier,
+                        "color_mode": quality.color_mode,
+                        "color_depth": quality.color_depth,
+                        "media_type": fmt.media_type,
+                        "proxy_dir": str(destination / ".proxies") if fmt.identifier != "PNG" else "",
                     }
                 ),
                 encoding="utf-8",
@@ -169,6 +180,8 @@ class LocalRenderRunner:
             command = [
                 str(self.blender_path),
                 "-b",
+                "--python-exit-code",
+                "1",
                 "--factory-startup",
                 str(blend),
                 "--python",
