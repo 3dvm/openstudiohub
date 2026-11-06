@@ -75,7 +75,13 @@ class ViewPM(BaseDashboardView):
             role_override=effective_role,
         )
         self.render_vm = RenderPanelViewModel(
-            RenderService(), self.production_service, status_sink=status_sink
+            RenderService(),
+            self.production_service,
+            status_sink=status_sink,
+            config_factory=config_factory,
+            auth_service=auth_service,
+            credential_vault=self.credential_vault,
+            vcs_prompt=getattr(project_list_vm, "vcs_prompt", None),
         )
 
         self.setObjectName("ViewPMBase")

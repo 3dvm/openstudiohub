@@ -21,7 +21,9 @@ from pathlib import Path
 
 from PySide6.QtCore import Signal
 
+from src.application.services.launch_service import LaunchService
 from src.application.services.render_service import RenderService
+from src.application.services.task_file_resolver import TaskFileResolver
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.qt_worker import ManagedWorker
 from src.infrastructure.render.frame_state import RenderFrameStateStore
@@ -539,6 +541,137 @@ class KitsuUploadWorker(ManagedWorker):
             )
         except Exception as error:  # noqa: BLE001
             self.upload_finished.emit(False, str(error))
+
+
+class OpenShotBlendWorker(ManagedWorker):
+    """Open one shot .blend with the task sandbox and SVN lock protocol."""
+
+    status = Signal(str, str)  # message, color
+    finished_launch = Signal(str, bool, str)  # shot relative path, ok, message
+
+    def __init__(
+        self,
+        *,
+        config_factory,
+        launch_service: LaunchService,
+        sync_service,
+        production_service,
+        project_root: Path,
+        project_id: str,
+        project_name: str,
+        shot,
+        svn_user: str,
+        svn_pwd: str,
+        kitsu_user: str,
+        kitsu_pwd: str,
+        user_role: str,
+    ) -> None:
+        super().__init__()
+        self.config_factory = config_factory
+        self.launch_service = launch_service
+        self.sync_service = sync_service
+        self.production_service = production_service
+        self.project_root = Path(project_root)
+        self.project_id = str(project_id or "")
+        self.project_name = str(project_name or self.project_root.name)
+        self.shot = shot
+        self.svn_user = svn_user
+        self.svn_pwd = svn_pwd
+        self.kitsu_user = kitsu_user
+        self.kitsu_pwd = kitsu_pwd
+        self.user_role = user_role
+        self._cancelled = False
+
+    def run(self) -> None:
+        locked = False
+        try:
+            task_data = self._resolve_task_data()
+            status = self.sync_service.lock_task_file(
+                self.project_root,
+                self.shot.relative_path,
+                self.svn_user,
+                self.svn_pwd,
+            )
+            locked, lock_message = status
+            if not locked:
+                self.finished_launch.emit(
+                    self.shot.relative_path, False, lock_message
+                )
+                return
+            self.status.emit(lock_message, "green")
+            vfs_local = self.config_factory.get_vfs_local_name()
+            config_path = self.project_root / vfs_local / "project_config.json"
+            if not config_path.is_file():
+                self.finished_launch.emit(
+                    self.shot.relative_path,
+                    False,
+                    "The project configuration is missing. Reinstall the workspace.",
+                )
+                return
+            self.launch_service.launch(
+                project_root=self.project_root,
+                config_path=config_path,
+                svn_user=self.svn_user,
+                svn_pwd=self.svn_pwd,
+                kitsu_user=self.kitsu_user,
+                kitsu_pwd=self.kitsu_pwd,
+                kitsu_host=self.config_factory.get_kitsu_api_url(),
+                user_role=self.user_role,
+                task_data=task_data,
+                target_file=self.shot.blend_path,
+                status_callback=self.status.emit,
+                production_folder=self.config_factory.get_vfs_svn_name(),
+            )
+            self.finished_launch.emit(
+                self.shot.relative_path, True, "DCC session finished."
+            )
+        except Exception as error:  # noqa: BLE001
+            self.finished_launch.emit(self.shot.relative_path, False, str(error))
+        finally:
+            if locked:
+                ok, message = self.sync_service.unlock_task_file(
+                    self.project_root,
+                    self.shot.relative_path,
+                    self.svn_user,
+                    self.svn_pwd,
+                )
+                color = "green" if ok else "yellow"
+                self.status.emit(message, color)
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def _resolve_task_data(self) -> dict:
+        target = Path(self.shot.blend_path).resolve()
+        resolver = TaskFileResolver(self.config_factory)
+        tasks = []
+        if self.production_service is not None and self.project_id:
+            try:
+                tasks = self.production_service.get_project_task_board(self.project_id)
+            except Exception:  # noqa: BLE001
+                tasks = []
+        for task in tasks or []:
+            try:
+                resolved = resolver.resolve(
+                    self.project_root,
+                    task,
+                    production_folder=self.config_factory.get_vfs_svn_name(),
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            if resolved is not None and resolved.absolute_path.resolve() == target:
+                return dict(task)
+        stem = Path(self.shot.relative_path).stem
+        task_type = stem.rsplit("-", 1)[-1] if "-" in stem else "render"
+        return {
+            "task_type_name": task_type,
+            "project_name": self.project_name,
+            "project_id": self.project_id,
+            "entity_type": "shot",
+            "entity_name": self.shot.name,
+            "sequence_name": self.shot.sequence,
+            "data": {"filepath": self.shot.relative_path},
+        }
 
 
 class RenderBenchmarkWorker(ManagedWorker):

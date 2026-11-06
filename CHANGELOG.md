@@ -24,6 +24,8 @@ releases may include larger UI or workflow changes.
   state for shots already rendering. The sequence button toggles play/stop and
   the active shot gets an orange outline.
 - Render plans now exclude approved frames and only schedule pending frames.
+- **Open .blend** on a shot launches the isolated Blender through the task
+  sandbox and follows the SVN lock/unlock protocol.
 - The sequence player supports In/Out points for approving or deleting a frame
   range; without a range the actions apply to the current frame.
 - The render panel shows a four-column grid of node cards after the plan is

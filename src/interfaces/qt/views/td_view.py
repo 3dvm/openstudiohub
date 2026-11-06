@@ -82,7 +82,13 @@ class ViewTD(BaseDashboardView):
         )
         self.vcs_audit_vm = VcsAuditViewModel(status_sink=status_sink)
         self.render_vm = RenderPanelViewModel(
-            RenderService(), production_service, status_sink=status_sink
+            RenderService(),
+            production_service,
+            status_sink=status_sink,
+            config_factory=config_factory,
+            auth_service=auth_service,
+            credential_vault=getattr(project_list_vm, "credential_vault", None),
+            vcs_prompt=getattr(project_list_vm, "vcs_prompt", None),
         )
 
         self.setObjectName("ViewTDBase")

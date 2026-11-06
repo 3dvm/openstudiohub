@@ -25,7 +25,10 @@ every shot as a collapsible card; the right side shows the selected shot.
 - **Per-shot actions:** **View** toggles play/stop for the shot sequence and the
   active shot keeps an orange outline. **Preview**, **Benchmark**, **Render**,
   **Retry**, **Approve**, **Delete** and a **More** menu with unapprove, video
-  creation and folder/.blend actions.
+  creation and folder/.blend actions. **Open .blend** uses the same task
+  sandbox as the task cards: it acquires the SVN lock, launches the isolated
+  Blender with the Kitsu task environment, and releases the lock when the
+  session closes.
 - **Selection:** only ready shots can be checked. Shots that are part of the
   active run are locked: their checkbox and render actions are disabled until
   the run finishes.

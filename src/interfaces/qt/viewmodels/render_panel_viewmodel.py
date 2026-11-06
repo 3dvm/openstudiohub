@@ -19,11 +19,18 @@ from pathlib import Path
 
 from PySide6.QtCore import Signal
 
+from src.application.services.launch_service import LaunchService
 from src.application.services.render_service import RenderService
+from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.status import RenderStatusStore
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
+from src.interfaces.qt.viewmodels.vcs_credential_gate import (
+    VcsPrompt,
+    ensure_vcs_credentials,
+    vcs_requires_credentials,
+)
 from src.interfaces.qt.workers.render_workers import (
     KitsuStatusesWorker,
     KitsuUploadWorker,
@@ -31,6 +38,7 @@ from src.interfaces.qt.workers.render_workers import (
     RenderBenchmarkWorker,
     RenderBurstWorker,
     RenderCandidatesWorker,
+    OpenShotBlendWorker,
     RenderPanelScanWorker,
     RenderPreviewVideoWorker,
     RenderPreviewWorker,
@@ -167,6 +175,7 @@ class RenderPanelViewModel(BaseViewModel):
     kitsu_statuses_ready = Signal(list)
     kitsu_status_error = Signal(str)
     kitsu_upload_finished = Signal(bool, str)
+    shot_launch_finished = Signal(str, bool, str)  # (relative path, ok, message)
 
     def __init__(
         self,
@@ -174,10 +183,25 @@ class RenderPanelViewModel(BaseViewModel):
         production_service=None,
         status_sink: StatusSink | None = None,
         parent=None,
+        *,
+        config_factory=None,
+        auth_service=None,
+        credential_vault=None,
+        vcs_prompt: VcsPrompt | None = None,
     ) -> None:
         super().__init__(status_sink, parent)
         self.service = service
         self.production_service = production_service
+        self.config_factory = config_factory
+        self.auth_service = auth_service
+        self.credential_vault = credential_vault
+        self.vcs_prompt = vcs_prompt
+        self.task_file_sync_service = (
+            TaskFileSyncService(config_factory) if config_factory is not None else None
+        )
+        self.launch_service = (
+            LaunchService(config_factory) if config_factory is not None else None
+        )
         self.workers = WorkerManager(self)
         self.burst_progress.connect(self._on_burst_progress_status)
         self.local_render_progress.connect(self._on_local_progress_status)
@@ -792,6 +816,88 @@ class RenderPanelViewModel(BaseViewModel):
         self._update_local_cards(reports)
         self._finish_shot_run(ok, sum(item.frames_rendered for item in reports))
         self.render_finished.emit(reports)
+
+    def _resolve_server(self, project_root: Path):
+        getter = getattr(self.config_factory, "get_server_for_project", None)
+        if callable(getter):
+            try:
+                server = getter(project_root)
+                if server is not None:
+                    return server
+            except Exception:  # noqa: BLE001
+                pass
+        getter = getattr(self.config_factory, "get_default_server", None)
+        return getter() if callable(getter) else None
+
+    def _ensure_vcs_credentials(self, project_root=None):
+        if self.credential_vault is None or self.config_factory is None:
+            return ("", "")
+        server = self._resolve_server(project_root)
+        return ensure_vcs_credentials(
+            required=vcs_requires_credentials(self.config_factory, server=server),
+            server_id=server.id if server is not None else "",
+            server_label=server.name if server is not None else "default",
+            needs_passphrase=bool(server is not None and server.is_remote),
+            credential_vault=self.credential_vault,
+            prompt=self.vcs_prompt,
+            report_status=self.report_status,
+        )
+
+    def open_shot_blend(self, shot: RenderShot) -> bool:
+        """Open the shot blend with the task sandbox and SVN lock protocol."""
+        if (
+            self.project_root is None
+            or self.config_factory is None
+            or self.launch_service is None
+            or self.task_file_sync_service is None
+            or self.credential_vault is None
+            or self.auth_service is None
+        ):
+            self.report_status("Opening the task environment is not available.", "red")
+            return False
+        if self.workers.is_running("shot_launch"):
+            self.report_status("A Blender session is already being opened.", "red")
+            return False
+        creds = self._ensure_vcs_credentials(self.project_root)
+        if creds is None:
+            return False
+        svn_user, svn_pwd = creds
+        kitsu_user, kitsu_pwd = self.credential_vault.get_kitsu_credentials()
+        if not kitsu_pwd:
+            self.report_status(
+                "Kitsu credentials are missing. Log out and log in again.", "red"
+            )
+            return False
+        try:
+            role = self.auth_service.current_role()
+            user_role = getattr(role, "value", str(role or "artist"))
+        except Exception:  # noqa: BLE001
+            user_role = "artist"
+        worker = OpenShotBlendWorker(
+            config_factory=self.config_factory,
+            launch_service=self.launch_service,
+            sync_service=self.task_file_sync_service,
+            production_service=self.production_service,
+            project_root=self.project_root,
+            project_id=self.project_id,
+            project_name=self.project_name,
+            shot=shot,
+            svn_user=svn_user,
+            svn_pwd=svn_pwd,
+            kitsu_user=kitsu_user or "",
+            kitsu_pwd=kitsu_pwd,
+            user_role=user_role,
+        )
+        worker.status.connect(self.report_status)
+        worker.finished_launch.connect(self._on_shot_launch_finished)
+        self.report_status(f"Opening {shot.name} in Blender...", "yellow")
+        return self.workers.start("shot_launch", worker, critical=True)
+
+    def _on_shot_launch_finished(
+        self, relative_path: str, ok: bool, message: str
+    ) -> None:
+        self.report_status(message, "green" if ok else "red")
+        self.shot_launch_finished.emit(relative_path, ok, message)
 
     def cancel_render(self) -> None:
         for key in ("render_burst", "render_local", "render_preview"):

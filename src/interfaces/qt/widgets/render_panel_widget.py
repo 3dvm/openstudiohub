@@ -505,6 +505,7 @@ class RenderPanelWidget(QFrame):
         self.vm.node_cards_ready.connect(self._on_node_cards_ready)
         self.vm.node_card_updated.connect(self._on_node_card_updated)
         self.vm.shot_reviews_ready.connect(self._on_shot_reviews_ready)
+        self.vm.shot_launch_finished.connect(self._on_shot_launch_finished)
         self.vm.scan_progress.connect(self._on_scan_progress)
         self.vm.scan_error.connect(self._on_error)
         self.vm.preview_ready.connect(self._on_preview_ready)
@@ -797,6 +798,13 @@ class RenderPanelWidget(QFrame):
     def _on_shot_reviews_ready(self, _reviews: list) -> None:
         self._sync_shot_cards()
 
+    def _on_shot_launch_finished(
+        self, relative_path: str, ok: bool, message: str
+    ) -> None:
+        self._append_log(message)
+        if not ok:
+            QMessageBox.warning(self, self.tr("Open .blend"), message)
+
     def _on_shot_selection_changed(self, relative_path: str, checked: bool) -> None:
         selected = [
             path
@@ -887,8 +895,7 @@ class RenderPanelWidget(QFrame):
             folder.mkdir(parents=True, exist_ok=True)
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
         elif action == "open_blend":
-            if shot.blend_path.is_file():
-                QDesktopServices.openUrl(QUrl.fromLocalFile(str(shot.blend_path)))
+            self.vm.open_shot_blend(shot)
         self._refresh_shot_progress()
 
     def _confirm_shot_render(self, shot: RenderShot, retry: bool) -> bool:
