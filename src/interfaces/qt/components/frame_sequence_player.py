@@ -37,6 +37,7 @@ class FrameSequencePlayer(QWidget):
     delete_frames_requested = Signal(list)
     approve_frames_requested = Signal(list, bool)
     position_changed = Signal(int)
+    playback_changed = Signal(bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -223,10 +224,12 @@ class FrameSequencePlayer(QWidget):
             return
         self._timer.start()
         self.btn_play.setText(self.tr("⏸ Pause"))
+        self.playback_changed.emit(True)
 
     def pause(self) -> None:
         self._timer.stop()
         self.btn_play.setText(self.tr("▶ Play"))
+        self.playback_changed.emit(False)
 
     def toggle_play(self) -> None:
         if self._timer.isActive():

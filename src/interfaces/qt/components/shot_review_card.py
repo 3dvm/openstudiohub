@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
+    QStyle,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -90,7 +91,9 @@ class ShotReviewCard(QFrame):
         content_layout.addWidget(self.lbl_warnings)
 
         primary = QHBoxLayout()
-        self.btn_view = self._action_button("View", "view", "View the rendered sequence")
+        self.btn_view = self._action_button("", "view", "View the rendered sequence")
+        self.btn_view.setFixedWidth(32)
+        self.set_view_playing(False)
         self.btn_preview = self._action_button(
             "Preview", "preview", "Render a preview frame for this shot"
         )
@@ -206,6 +209,18 @@ class ShotReviewCard(QFrame):
 
     def _on_selection_changed(self, checked: bool) -> None:
         self.selection_changed.emit(self._shot_path, bool(checked))
+
+    def set_view_playing(self, playing: bool) -> None:
+        icon = QStyle.SP_MediaStop if playing else QStyle.SP_MediaPlay
+        self.btn_view.setIcon(self.style().standardIcon(icon))
+        self.btn_view.setToolTip(
+            self.tr("Stop sequence playback") if playing else self.tr("View the rendered sequence")
+        )
+
+    def set_active(self, active: bool) -> None:
+        self.setProperty("active", bool(active))
+        self.style().unpolish(self)
+        self.style().polish(self)
 
     def _on_toggle(self) -> None:
         expanded = self.toggle.isChecked()

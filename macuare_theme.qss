@@ -420,6 +420,10 @@ QToolButton#ShotReviewToggle {
     font-size: 13px;
 }
 
+QFrame#ShotReviewCard[active="true"] {
+    border: 2px solid #F97316;
+}
+
 QFrame#SidebarSeparator {
     background-color: #141820;
     border: none;

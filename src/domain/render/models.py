@@ -266,6 +266,7 @@ class RenderShot:
     frame_start: int
     frame_end: int
     frame_step: int = 1
+    frames_override: int | None = None
     object_count: int = 0
     mesh_count: int = 0
     library_count: int = 0
@@ -281,6 +282,8 @@ class RenderShot:
 
     @property
     def frames(self) -> int:
+        if self.frames_override is not None:
+            return max(0, int(self.frames_override))
         if self.frame_end < self.frame_start:
             return 0
         step = max(1, self.frame_step)

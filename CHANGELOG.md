@@ -21,7 +21,9 @@ releases may include larger UI or workflow changes.
   button.
 - The shot table is now a collapsible card list with rendered/approved counts,
   status tooltips, per-shot render/preview/benchmark/video actions and a locked
-  state for shots already rendering.
+  state for shots already rendering. The sequence button toggles play/stop and
+  the active shot gets an orange outline.
+- Render plans now exclude approved frames and only schedule pending frames.
 - The sequence player supports In/Out points for approving or deleting a frame
   range; without a range the actions apply to the current frame.
 - The render panel shows a four-column grid of node cards after the plan is

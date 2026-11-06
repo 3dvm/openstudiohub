@@ -22,7 +22,8 @@ every shot as a collapsible card; the right side shows the selected shot.
   (all frames approved), `In review` (all rendered, not all approved),
   `With renders` (partially rendered) or `Ready`. Hovering the status shows a
   detailed tooltip.
-- **Per-shot actions:** **View**, **Preview**, **Benchmark**, **Render**,
+- **Per-shot actions:** **View** toggles play/stop for the shot sequence and the
+  active shot keeps an orange outline. **Preview**, **Benchmark**, **Render**,
   **Retry**, **Approve**, **Delete** and a **More** menu with unapprove, video
   creation and folder/.blend actions.
 - **Selection:** only ready shots can be checked. Shots that are part of the
@@ -37,8 +38,10 @@ every shot as a collapsible card; the right side shows the selected shot.
   default. Preview can run locally (default) or on a Vast node. The preview is
   the quickest way to catch a missing view layer or a broken compositor before
   the full render.
-- **Plan and node cards:** selected frames, GPU-hours, nodes, ETA, cost,
-  confidence and warnings. Before any instance is rented, the panel lists the
+- **Plan and node cards:** approved frames are excluded from the plan; frames
+  that are not approved yet count as pending work. The panel shows pending
+  frames, GPU-hours, nodes, ETA, cost, confidence and warnings. Before any
+  instance is rented, the panel lists the
   candidate offers for the required nodes in a four-column card grid
   (**Refresh candidates** re-queries Vast.ai). Each card then follows its own
   lifecycle: candidate, creating, booting, SSH, installing, staging, rendering,

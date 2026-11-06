@@ -306,6 +306,9 @@ class RenderPanelViewModel(BaseViewModel):
             self._save_settings()
             if ready:
                 selected = self.service.selected_shots(self.shots, self.settings)
+                pending = self.service.pending_shots(
+                    self.project_root, selected, task_type=self.settings.task_type
+                )
                 price = offer.price_per_hour if offer is not None else 0.0
                 self.plan = self._with_offer_warning(
                     self.service.adjust_plan_for_backend(
@@ -317,7 +320,7 @@ class RenderPanelViewModel(BaseViewModel):
                             price_per_hour=price,
                             max_nodes=self.settings.max_nodes,
                             budget=self.settings.budget,
-                            shots=selected,
+                            shots=pending,
                         ),
                         self.settings.render_backend,
                         self.settings.local_speed_factor,
@@ -587,6 +590,9 @@ class RenderPanelViewModel(BaseViewModel):
         if not self.shots or self.project_root is None:
             return
         selected = self.selected_shots
+        pending = self.service.pending_shots(
+            self.project_root, selected, task_type=self.settings.task_type
+        )
         price = self.offer.price_per_hour if self.offer is not None else 0.0
         self.plan = self._with_offer_warning(
             self.service.adjust_plan_for_backend(
@@ -598,7 +604,7 @@ class RenderPanelViewModel(BaseViewModel):
                     price_per_hour=price,
                     max_nodes=self.settings.max_nodes,
                     budget=self.settings.budget,
-                    shots=selected,
+                    shots=pending,
                 ),
                 self.settings.render_backend,
                 self.settings.local_speed_factor,

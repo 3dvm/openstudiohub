@@ -493,6 +493,7 @@ class RenderPanelWidget(QFrame):
     def _connect(self) -> None:
         self.player.delete_frames_requested.connect(self._delete_frames)
         self.player.approve_frames_requested.connect(self._approve_frames)
+        self.player.playback_changed.connect(self._on_playback_changed)
         self.combo_target.currentIndexChanged.connect(self._on_target_changed)
         self.combo_backend.currentIndexChanged.connect(self._sync_backend_sections)
         self.combo_preview_backend.currentIndexChanged.connect(self._sync_backend_sections)
@@ -776,6 +777,22 @@ class RenderPanelWidget(QFrame):
                 self.shots_layout.insertWidget(max(0, self.shots_layout.count() - 1), card)
                 self._shot_cards[model.relative_path] = card
             card.update_model(model)
+            card.set_active(
+                self._selected_shot is not None
+                and self._selected_shot.relative_path == model.relative_path
+            )
+
+    def _set_active_card(self, relative_path: str) -> None:
+        for path, card in self._shot_cards.items():
+            card.set_active(path == relative_path)
+
+    def _on_playback_changed(self, playing: bool) -> None:
+        for card in self._shot_cards.values():
+            card.set_view_playing(False)
+        if playing and self._selected_shot is not None:
+            card = self._shot_cards.get(self._selected_shot.relative_path)
+            if card is not None:
+                card.set_view_playing(True)
 
     def _on_shot_reviews_ready(self, _reviews: list) -> None:
         self._sync_shot_cards()
@@ -799,6 +816,7 @@ class RenderPanelWidget(QFrame):
         if shot is None:
             return
         self._selected_shot = shot
+        self._set_active_card(shot.relative_path)
         self.player.pause()
         self.preview_stack.setCurrentWidget(self.preview_label)
         self._show_setup(shot)
@@ -813,7 +831,14 @@ class RenderPanelWidget(QFrame):
         if shot is None:
             return
         if action == "view":
-            self._show_sequence_for_shot(shot)
+            if (
+                self._selected_shot is not None
+                and self._selected_shot.relative_path == shot.relative_path
+                and self.player.is_playing()
+            ):
+                self.player.pause()
+            else:
+                self._show_sequence_for_shot(shot)
             return
         if action == "preview":
             self.preview_stack.setCurrentWidget(self.preview_label)
@@ -979,6 +1004,7 @@ class RenderPanelWidget(QFrame):
             )
             return
         self._selected_shot = shot
+        self._set_active_card(shot.relative_path)
         fps = shot.setup.fps if shot.setup else 24.0
         self.preview_stack.setCurrentWidget(self.player)
         self.player.set_sequence(

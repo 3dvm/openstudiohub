@@ -530,6 +530,29 @@ class RenderService:
         blueprint = self.load_blueprint(root)
         return LocalRenderRunner(self.resolve_blender(root, blueprint))
 
+    def pending_shots(
+        self,
+        project_root: Path | str,
+        shots: Sequence[RenderShot],
+        *,
+        task_type: str = "render",
+    ) -> list[RenderShot]:
+        """Return shots adjusted to the frames that still need rendering.
+
+        Approved frames are excluded from the plan; rendered but unapproved
+        frames stay in the count so the plan reflects what still needs review.
+        """
+        pending: list[RenderShot] = []
+        for shot in shots:
+            approved = len(
+                self.frame_state_store(project_root, shot, task_type).approved_frames()
+            )
+            count = max(0, int(shot.frames) - approved)
+            if count <= 0:
+                continue
+            pending.append(replace(shot, frames_override=count))
+        return pending
+
     def selected_shots(
         self,
         shots: Sequence[RenderShot],

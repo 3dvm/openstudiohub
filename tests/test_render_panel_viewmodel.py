@@ -185,3 +185,31 @@ def test_unapprove_and_delete_unapproved_use_the_frame_sidecar(qapp, tmp_path):
     ok, _message = viewmodel.delete_unapproved(shot)
     assert ok is True
     assert viewmodel.shot_reviews()[0].rendered == 0
+
+
+def test_pending_shots_exclude_approved_frames(qapp, tmp_path):
+    viewmodel, shot = _review_vm(tmp_path, frames_rendered=20, approved=20)
+
+    pending = viewmodel.service.pending_shots(tmp_path, [shot])
+
+    assert pending and pending[0].frames == 76
+    assert pending[0].frame_start == shot.frame_start
+
+
+def test_recalculate_plans_only_pending_frames(qapp, tmp_path):
+    viewmodel, shot = _review_vm(tmp_path, frames_rendered=20, approved=20)
+    viewmodel.settings = RenderSettings(
+        selected_shots=(shot.relative_path,), render_backend="local"
+    )
+    captured = {}
+    original = viewmodel.service.plan
+
+    def spy(*args, **kwargs):
+        captured["shots"] = list(kwargs.get("shots") or [])
+        return original(*args, **kwargs)
+
+    viewmodel.service.plan = spy
+
+    viewmodel.recalculate()
+
+    assert captured["shots"][0].frames == 76

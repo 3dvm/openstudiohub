@@ -116,6 +116,9 @@ class RenderPanelScanWorker(ManagedWorker):
                 progress=self.scan_progress.emit,
             )
             selected = self.service.selected_shots(shots, self.settings)
+            pending = self.service.pending_shots(
+                self.project_root, selected, task_type=self.settings.task_type
+            )
             offer = None
             balance = 0.0
             price = 0.0
@@ -149,7 +152,7 @@ class RenderPanelScanWorker(ManagedWorker):
                 price_per_hour=price,
                 max_nodes=self.settings.max_nodes,
                 budget=self.settings.budget,
-                shots=selected,
+                shots=pending,
             )
             plan = self.service.adjust_plan_for_backend(
                 plan, self.settings.render_backend, self.settings.local_speed_factor
