@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections import deque
 import tempfile
 import threading
 import time
@@ -29,6 +30,8 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 from src.domain.render.models import RenderPlan, RenderShot
+from src.infrastructure.render.frame_state import RenderFrameStateStore
+from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.vast import (
     DEFAULT_DISK_GB,
     DEFAULT_IMAGE,
@@ -149,6 +152,7 @@ class NodeResult:
     wall_seconds: float
     cost: float
     missing: tuple[int, ...] = ()
+    stage: str = ""
 
 
 @dataclass
@@ -161,6 +165,7 @@ class BurstReport:
     missing: tuple[int, ...]
     wall_seconds: float
     cost: float
+    run_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -194,6 +199,10 @@ class RenderBurstRunner:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
+        audit: RenderRunAuditLogger | None = None,
+        canary: bool = True,
+        skip_existing: bool = False,
+        run_id: str = "",
     ) -> None:
         self.provider = provider
         self.project_root = Path(project_root)
@@ -211,10 +220,18 @@ class RenderBurstRunner:
         self.min_inet_down_mbps = float(min_inet_down_mbps or 0.0)
         self.min_inet_up_mbps = float(min_inet_up_mbps or 0.0)
         self.bake_particles = bool(bake_particles)
+        self.audit = audit
+        self.canary = bool(canary)
+        self.skip_existing = bool(skip_existing)
         self._instances: dict[int, VastInstance] = {}
+        self._node_stage: dict[int, str] = {}
         self._lock = threading.Lock()
         self._cancel = threading.Event()
-        self._run_id = uuid.uuid4().hex[:8]
+        self._run_id = str(run_id or uuid.uuid4().hex[:8])
+
+    @property
+    def run_id(self) -> str:
+        return self._run_id
 
     # ------------------------------------------------------------------
     # Public API
@@ -239,9 +256,12 @@ class RenderBurstRunner:
         if not self.ssh_key_path.is_file():
             raise BurstError(f"SSH key not found: {self.ssh_key_path}")
 
-        assignments = self._assign(shots, max(1, plan.required_nodes))
-        assignments = [assignment for assignment in assignments if assignment]
-        if not assignments:
+        initial_assignments = [
+            assignment
+            for assignment in self._assign(shots, max(1, plan.required_nodes))
+            if assignment
+        ]
+        if not initial_assignments:
             return BurstReport(
                 ok=False,
                 message="No ready shots with frames to render.",
@@ -262,7 +282,7 @@ class RenderBurstRunner:
 
         offers = self.provider.choose_offers(
             plan.gpu_profile,
-            count=len(assignments),
+            count=len(initial_assignments),
             max_price_per_hour=self.max_price_per_hour or plan.price_per_hour,
             min_disk_gb=self.disk_gb,
             preferred_region=self.preferred_region,
@@ -272,19 +292,105 @@ class RenderBurstRunner:
         if not offers:
             raise BurstError("No Vast.ai offer is available for this GPU profile.")
 
+        if len(offers) < len(initial_assignments):
+            initial_assignments = [
+                assignment
+                for assignment in self._assign(shots, len(offers))
+                if assignment
+            ]
+            if not initial_assignments:
+                return BurstReport(
+                    ok=False,
+                    message="No ready shots with frames to render.",
+                    nodes=(),
+                    frames_expected=0,
+                    frames_rendered=0,
+                    missing=(),
+                    wall_seconds=0.0,
+                    cost=0.0,
+                )
+
+        self._audit(
+            "run_start",
+            project=self.project_root.name,
+            plan_frames=plan.total_frames,
+            nodes=len(initial_assignments),
+            gpu_profile=plan.gpu_profile,
+            estimated_cost=plan.estimated_cost,
+            balance=balance,
+        )
+
         started = time.monotonic()
         results: list[NodeResult] = []
+        expected_total = sum(
+            len(task.frames) for tasks in initial_assignments for task in tasks
+        )
+
         try:
-            with ThreadPoolExecutor(max_workers=len(assignments)) as pool:
+            if self.canary:
+                canary_task = self._canary_task(initial_assignments[0])
+                canary = self._run_node(0, [canary_task], offers[0], progress)
+                results.append(canary)
+                self._audit(
+                    "canary_finished",
+                    ok=canary.ok,
+                    stage=canary.stage,
+                    message=canary.message,
+                    instance_id=canary.instance_id,
+                )
+                if not canary.ok:
+                    missing = tuple(
+                        frame
+                        for tasks in initial_assignments
+                        for task in tasks
+                        for frame in task.frames
+                    )
+                    report = BurstReport(
+                        ok=False,
+                        message=(
+                            "Canary failed before renting the remaining nodes: "
+                            + canary.message
+                        ),
+                        nodes=(canary,),
+                        frames_expected=expected_total,
+                        frames_rendered=canary.frames_done,
+                        missing=missing,
+                        wall_seconds=time.monotonic() - started,
+                        cost=canary.cost,
+                        run_id=self._run_id,
+                    )
+                    self._finish_audit(report)
+                    return report
+                initial_assignments = [
+                    assignment
+                    for assignment in self._assign(shots, len(initial_assignments))
+                    if assignment
+                ]
+                if not initial_assignments:
+                    report = BurstReport(
+                        ok=True,
+                        message="Canary rendered the only pending frame.",
+                        nodes=(canary,),
+                        frames_expected=expected_total,
+                        frames_rendered=canary.frames_done,
+                        missing=(),
+                        wall_seconds=time.monotonic() - started,
+                        cost=canary.cost,
+                        run_id=self._run_id,
+                    )
+                    self._finish_audit(report)
+                    return report
+
+            with ThreadPoolExecutor(max_workers=len(initial_assignments)) as pool:
                 futures = {
                     pool.submit(
                         self._run_node,
-                        index,
+                        index + 1 if self.canary else index,
                         tasks,
                         offers[index % len(offers)],
                         progress,
                     ): index
-                    for index, tasks in enumerate(assignments)
+                    for index, tasks in enumerate(initial_assignments)
                 }
                 for future in as_completed(futures):
                     node = futures[future]
@@ -293,25 +399,30 @@ class RenderBurstRunner:
                     except Exception as error:  # noqa: BLE001
                         results.append(
                             NodeResult(
-                                node=node,
+                                node=node + 1 if self.canary else node,
                                 instance_id=0,
                                 ok=False,
                                 message=str(error),
                                 frames_done=0,
-                                frames_expected=sum(len(task.frames) for task in assignments[node]),
+                                frames_expected=sum(
+                                    len(task.frames)
+                                    for task in initial_assignments[node]
+                                ),
                                 wall_seconds=0.0,
                                 cost=0.0,
+                                stage="unknown",
                             )
                         )
+        except Exception as error:  # noqa: BLE001
+            self._audit("run_error", message=str(error))
+            raise
         finally:
             self.cancel()
 
         wall_seconds = time.monotonic() - started
-        expected = sum(len(task.frames) for tasks in assignments for task in tasks)
+        expected = expected_total
         rendered = sum(result.frames_done for result in results)
-        missing = tuple(
-            frame for result in results for frame in result.missing
-        )
+        missing = tuple(frame for result in results for frame in result.missing)
         cost = sum(result.cost for result in results)
         ok = bool(results) and all(result.ok for result in results) and not missing
         message = (
@@ -319,7 +430,7 @@ class RenderBurstRunner:
             if ok
             else f"Rendered {rendered}/{expected} frame(s); {len(missing)} missing."
         )
-        return BurstReport(
+        report = BurstReport(
             ok=ok,
             message=message,
             nodes=tuple(sorted(results, key=lambda item: item.node)),
@@ -328,7 +439,68 @@ class RenderBurstRunner:
             missing=missing,
             wall_seconds=wall_seconds,
             cost=cost,
+            run_id=self._run_id,
         )
+        self._finish_audit(report)
+        return report
+
+    def _canary_task(self, assignment: list[BurstTask]) -> BurstTask:
+        task = assignment[0]
+        return BurstTask(
+            shot=task.shot,
+            frames=(task.frames[0],),
+            output_subdir=task.output_subdir,
+        )
+
+    def _audit(self, event: str, **fields) -> None:
+        if self.audit is None:
+            return
+        try:
+            self.audit.log(event, run_id=self._run_id, **fields)
+        except Exception:  # noqa: BLE001 - audit must never break a render
+            pass
+
+    def _finish_audit(self, report: BurstReport) -> None:
+        if self.audit is None:
+            return
+        self._audit(
+            "run_finished",
+            ok=report.ok,
+            message=report.message,
+            frames_expected=report.frames_expected,
+            frames_rendered=report.frames_rendered,
+            missing=list(report.missing),
+            cost=report.cost,
+            wall_seconds=report.wall_seconds,
+        )
+        try:
+            self.audit.write_summary(
+                self._run_id,
+                {
+                    "ok": report.ok,
+                    "message": report.message,
+                    "frames_expected": report.frames_expected,
+                    "frames_rendered": report.frames_rendered,
+                    "missing": list(report.missing),
+                    "cost": report.cost,
+                    "wall_seconds": report.wall_seconds,
+                    "nodes": [
+                        {
+                            "node": node.node,
+                            "instance_id": node.instance_id,
+                            "ok": node.ok,
+                            "stage": node.stage,
+                            "message": node.message,
+                            "frames_done": node.frames_done,
+                            "frames_expected": node.frames_expected,
+                            "cost": node.cost,
+                        }
+                        for node in report.nodes
+                    ],
+                },
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------
     # Assignment
@@ -338,8 +510,20 @@ class RenderBurstRunner:
         for shot in shots:
             if not shot.is_ready:
                 continue
+            sequence = shot.sequence or "shots"
+            output_subdir = f"shots/{sequence}/{shot.name}.{self.task_type}"
+            state = RenderFrameStateStore(self.output_root / output_subdir)
+            approved = state.approved_frames()
             step = max(1, shot.frame_step)
             for frame in range(shot.frame_start, shot.frame_end + 1, step):
+                if self.skip_existing:
+                    path = (
+                        self.output_root
+                        / output_subdir
+                        / f"frame_{frame:04d}.png"
+                    )
+                    if path.is_file() or frame in approved:
+                        continue
                 entries.append((shot, frame))
         if not entries:
             return []
@@ -389,9 +573,11 @@ class RenderBurstRunner:
         expected = sum(len(task.frames) for task in tasks)
         rendered = 0
         missing: list[int] = []
+        stage = "offer"
         label = f"osh-render-{self.project_root.name}-{self._run_id}-{index}"
         try:
             self._emit(progress, index, "offer", f"renting {offer.gpu_name} at ${offer.price_per_hour:.2f}/h")
+            stage = "create"
             instance = self.provider.create_instance(
                 offer.id,
                 label=label,
@@ -401,14 +587,18 @@ class RenderBurstRunner:
             with self._lock:
                 self._instances[instance.id] = instance
             self._emit(progress, index, "boot", f"instance {instance.id} created", instance_id=instance.id)
+            stage = "boot"
             instance = self.provider.wait_running(
                 instance.id,
                 progress=lambda message: self._emit(
                     progress, index, "boot", message, instance_id=instance.id
                 ),
             )
+            stage = "ssh"
             self._wait_for_ssh(instance, index, progress)
+            stage = "install"
             self._install_blender(instance, index, progress)
+            stage = "stage"
             self._stage_project(instance, index, progress)
 
             with tempfile.TemporaryDirectory(prefix="openstudio_burst_") as temp_dir:
@@ -420,19 +610,23 @@ class RenderBurstRunner:
                 for task in tasks:
                     if self._cancel.is_set():
                         raise BurstError("Render cancelled.")
+                    stage = "render"
                     rendered += self._render_task(
                         instance, task, index, progress, rendered, expected, temp
                     )
+                    stage = "sync"
                     self._sync_task_output(instance, task, index, progress)
                     if self.bake_particles:
+                        stage = "bake"
                         self._sync_bake_cache(instance, task, index, progress)
 
+            stage = "validate"
             for task in tasks:
                 for frame in task.frames:
                     local = self._local_frame_path(task, frame)
                     if not local.is_file():
                         missing.append(frame)
-            return NodeResult(
+            result = NodeResult(
                 node=index,
                 instance_id=instance.id,
                 ok=not missing,
@@ -442,9 +636,22 @@ class RenderBurstRunner:
                 wall_seconds=time.monotonic() - started,
                 cost=instance.price_per_hour * (time.monotonic() - started) / 3600.0,
                 missing=tuple(missing),
+                stage=stage,
             )
+            self._audit(
+                "node_finished",
+                node=index,
+                instance_id=instance.id,
+                stage=stage,
+                ok=result.ok,
+                message=result.message,
+                frames_done=rendered,
+                frames_expected=expected,
+                cost=result.cost,
+            )
+            return result
         except Exception as error:  # noqa: BLE001
-            return NodeResult(
+            result = NodeResult(
                 node=index,
                 instance_id=instance.id if instance is not None else 0,
                 ok=False,
@@ -458,20 +665,50 @@ class RenderBurstRunner:
                     else 0.0
                 ),
                 missing=tuple(missing),
+                stage=stage,
             )
+            self._audit(
+                "node_failed",
+                node=index,
+                instance_id=result.instance_id,
+                stage=stage,
+                message=str(error),
+                frames_done=rendered,
+                frames_expected=expected,
+                cost=result.cost,
+            )
+            if self.audit is not None:
+                self.audit.write_node_log(
+                    self._run_id,
+                    index,
+                    f"stage: {stage}\n{error}",
+                )
+            return result
         finally:
             if instance is not None:
+                reason = "cancelled" if self._cancel.is_set() else "cleanup"
                 try:
                     self.provider.destroy_instance(instance.id)
                     self._emit(
                         progress,
                         index,
                         "destroy",
-                        f"instance {instance.id} destroyed",
+                        f"instance {instance.id} destroyed ({reason})",
                         instance_id=instance.id,
                     )
-                except VastError:
-                    pass
+                    self._audit(
+                        "instance_destroyed",
+                        node=index,
+                        instance_id=instance.id,
+                        reason=reason,
+                    )
+                except VastError as error:
+                    self._audit(
+                        "instance_destroy_failed",
+                        node=index,
+                        instance_id=instance.id,
+                        message=str(error),
+                    )
                 with self._lock:
                     self._instances.pop(instance.id, None)
 
@@ -597,8 +834,10 @@ class RenderBurstRunner:
             bufsize=1,
         )
         done = rendered_before
+        tail: deque[str] = deque(maxlen=40)
         try:
             for line in process.stdout or ():
+                tail.append(line.rstrip())
                 if self._cancel.is_set():
                     process.terminate()
                     break
@@ -634,6 +873,12 @@ class RenderBurstRunner:
             if process.poll() is None:
                 process.kill()
         if process.returncode != 0:
+            if self.audit is not None:
+                self.audit.write_node_log(
+                    self._run_id,
+                    index,
+                    "\n".join(tail),
+                )
             raise BurstError(
                 f"Blender failed on node {index} for {task.output_subdir} "
                 f"(exit {process.returncode})."
@@ -807,8 +1052,8 @@ class RenderBurstRunner:
     # ------------------------------------------------------------------
     # Progress helper
     # ------------------------------------------------------------------
-    @staticmethod
     def _emit(
+        self,
         callback: ProgressCallback | None,
         node: int,
         stage: str,
@@ -818,6 +1063,17 @@ class RenderBurstRunner:
         frames_total: int = 0,
         instance_id: int = 0,
     ) -> None:
+        self._node_stage[node] = stage
+        if self.audit is not None and stage != "frame":
+            self._audit(
+                "node_progress",
+                node=node,
+                stage=stage,
+                message=message,
+                frames_done=frames_done,
+                frames_total=frames_total,
+                instance_id=instance_id,
+            )
         if callback is None:
             return
         try:

@@ -57,6 +57,7 @@ class RenderVideoService:
         *,
         crf: int = 18,
         preset: str = "medium",
+        video_filter: str = "",
     ) -> Path:
         if not self.available:
             raise RenderVideoError(
@@ -94,18 +95,24 @@ class RenderVideoService:
             str(source / "frame_%04d.png"),
             "-frames:v",
             str(last - first + 1),
-            "-c:v",
-            "libx264",
-            "-preset",
-            preset,
-            "-crf",
-            str(int(crf)),
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            str(destination),
         ]
+        if video_filter:
+            command.extend(["-vf", str(video_filter)])
+        command.extend(
+            [
+                "-c:v",
+                "libx264",
+                "-preset",
+                preset,
+                "-crf",
+                str(int(crf)),
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(destination),
+            ]
+        )
         try:
             result = subprocess.run(
                 command,

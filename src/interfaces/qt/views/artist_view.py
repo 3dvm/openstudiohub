@@ -88,7 +88,7 @@ class ViewArtist(BaseDashboardView):
 
         self.add_sidebar_button("projects", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._switch_panel("projects"), active=True)
         self.add_sidebar_button("my_tasks", self.tr("My Tasks"), "📋", "list.svg", lambda: self._switch_panel("my_tasks"))
-        self.add_sidebar_button("render", self.tr("Render"), "🎬", "film.svg", lambda: self._switch_panel("render"))
+        self.add_sidebar_button("render", self.tr("Render"), "🎬", "clapperboard.svg", lambda: self._switch_panel("render"))
         self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 
         self._build_content()

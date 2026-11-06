@@ -27,6 +27,12 @@ every shot with a checkbox; the right side shows the selected shot.
 - **Plan:** selected frames, GPU-hours, nodes, ETA, cost, confidence and
   warnings. The plan is recalculated from the shared settings.
 - **Final render:** Vast.ai on-demand or local headless, one project at a time. GPU profiles: RTX 3070, 3080, 4070, 3090, 4090 and A6000.
+- **Final sequence player:** the panel replays the rendered PNG sequence with
+  play/pause, scrubbing and frame stepping. The current frame can be moved to
+  `.frame_trash/` (render error) or approved; approved frames are protected from
+  deletion and from future renders.
+- **Preview video:** a fast, half-resolution MP4 for quick review. It is
+  created separately from the per-shot review videos.
 - **Review video:** ffmpeg creates the Kitsu review MP4 and the
   Blender-Studio-style render-review copy.
 - **Kitsu:** the panel can upload the review video and set the task status. The
@@ -78,6 +84,12 @@ Frames are written in the same layout that Blender Studio Tools expects:
 
 The render-review video is also written next to the frames as
 `<shot>-<first>-<last>.mp4`, so Blender Kitsu's render review can find it.
+The quick preview video lives under `.previews/` and is generated on demand,
+independently from the review videos.
+
+Approved frames are recorded in `.frame_state.json` next to the frames. The
+player can move a bad frame to `.frame_trash/`; a new render fills only the
+missing frames.
 
 The review copy goes to the Kitsu footage folder:
 
@@ -93,9 +105,15 @@ changed in the panel.
 
 ## Rendering
 
-- **Vast.ai:** the Hub rents on-demand instances, installs the project's exact
-  Blender, stages the production folder, renders contiguous frame chunks and
-  syncs the frames back. Every instance is destroyed in a `finally` block.
+- **Vast.ai:** the Hub validates setup with a single canary node, then rents
+  the remaining on-demand instances, installs the project's exact Blender,
+  stages the production folder, renders contiguous frame chunks and syncs the
+  frames back. Every instance is destroyed in a `finally` block.
+- When a run is partial, **Retry missing frames** renders only the frames that
+  are absent. Approved frames are skipped.
+- Each run writes a local audit trail:
+  `~/.openstudio/state/render_runs.jsonl` plus per-node logs under
+  `~/.openstudio/state/render_runs/<run_id>/`. The panel has **Open run logs**.
 - **Local:** the project's isolated Blender runs headlessly on the workstation
   and writes the same path. This is useful for simple shots or when there is
   enough time. The plan shows an estimated local slowdown factor

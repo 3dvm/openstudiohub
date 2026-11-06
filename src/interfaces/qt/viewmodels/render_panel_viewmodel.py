@@ -21,6 +21,7 @@ from PySide6.QtCore import Signal
 
 from src.application.services.render_service import RenderService
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
+from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.status import RenderStatusStore
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.workers.render_workers import (
@@ -30,6 +31,7 @@ from src.interfaces.qt.workers.render_workers import (
     RenderBenchmarkWorker,
     RenderBurstWorker,
     RenderPanelScanWorker,
+    RenderPreviewVideoWorker,
     RenderPreviewWorker,
     RenderVideoWorker,
 )
@@ -58,6 +60,7 @@ class RenderPanelViewModel(BaseViewModel):
     video_ready = Signal(str, str)
     video_error = Signal(str)
     videos_finished = Signal(int, int)
+    preview_video_ready = Signal(str, str)
 
     kitsu_statuses_ready = Signal(list)
     kitsu_status_error = Signal(str)
@@ -93,6 +96,10 @@ class RenderPanelViewModel(BaseViewModel):
         self.kitsu_statuses: list[dict] = []
         self.read_only = False
         self.status_store: RenderStatusStore | None = None
+        self.audit = RenderRunAuditLogger()
+        self._active_run_id = ""
+        self.last_burst_report = None
+        self.preview_video_paths: dict[str, Path] = {}
         self._progress_by_shot: dict[str, int] = {}
 
     # ------------------------------------------------------------------
@@ -320,7 +327,7 @@ class RenderPanelViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Render
     # ------------------------------------------------------------------
-    def start_render(self) -> bool:
+    def start_render(self, retry: bool = False) -> bool:
         if self.project_root is None or self.read_only or self.plan is None:
             return False
         if not self.plan.shots:
@@ -334,11 +341,13 @@ class RenderPanelViewModel(BaseViewModel):
         if self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
             return False
         if self.settings.render_backend == "local":
+            self._start_audit("local")
             worker = LocalRenderWorker(
                 self.service,
                 self.project_root,
                 list(self.plan.shots),
                 self.settings,
+                skip_existing=retry,
             )
             worker.render_progress.connect(self.local_render_progress)
             worker.finished_render.connect(self._on_local_finished)
@@ -360,6 +369,7 @@ class RenderPanelViewModel(BaseViewModel):
             )
             return self.workers.start("render_local", worker, critical=True)
 
+        self._start_audit("vast")
         worker = RenderBurstWorker(
             self.service,
             self.project_root,
@@ -368,6 +378,10 @@ class RenderPanelViewModel(BaseViewModel):
             preferred_region=self.settings.preferred_region,
             min_inet_down_mbps=self.settings.min_inet_down_mbps,
             min_inet_up_mbps=self.settings.min_inet_up_mbps,
+            audit=self.audit,
+            canary=True,
+            run_id=self._active_run_id,
+            skip_existing=retry,
         )
         worker.burst_progress.connect(self.burst_progress)
         worker.report_ready.connect(self._handle_burst_finished)
@@ -396,8 +410,8 @@ class RenderPanelViewModel(BaseViewModel):
             message=f"Local render: {rendered} frame(s).",
             frames_done=rendered,
         )
+        self._finish_audit(ok=all(item.ok for item in reports), message="Local render finished.")
         self.render_finished.emit(reports)
-        self._maybe_create_videos()
 
     def cancel_render(self) -> None:
         for key in ("render_burst", "render_local", "render_preview"):
@@ -413,18 +427,45 @@ class RenderPanelViewModel(BaseViewModel):
             frames_done=getattr(report, "frames_rendered", 0),
             cost=getattr(report, "cost", 0.0),
         )
+        self.last_burst_report = report
+        self._finish_audit(
+            ok=bool(getattr(report, "ok", False)),
+            message=getattr(report, "message", ""),
+        )
         self.render_finished.emit(report)
-        if getattr(report, "ok", False):
-            self._maybe_create_videos()
 
-    def _maybe_create_videos(self) -> None:
-        if self.settings.video_enabled:
-            self.create_videos()
+    def run_log_dir(self) -> Path:
+        """Folder that contains the detailed node logs for the last run."""
+        return self.audit.root
+
+    def _start_audit(self, backend: str) -> None:
+        import uuid
+
+        self._active_run_id = uuid.uuid4().hex[:12]
+        self.audit.log(
+            "run_start",
+            run_id=self._active_run_id,
+            backend=backend,
+            project=self.project_name,
+            frames=self.plan.total_frames if self.plan else 0,
+            nodes=self.plan.required_nodes if self.plan else 0,
+            cost=self.plan.estimated_cost if self.plan else 0.0,
+        )
+
+    def _finish_audit(self, *, ok: bool, message: str) -> None:
+        if not self._active_run_id:
+            return
+        self.audit.log(
+            "run_finished",
+            run_id=self._active_run_id,
+            ok=bool(ok),
+            message=str(message or ""),
+        )
 
     # ------------------------------------------------------------------
     # Video
     # ------------------------------------------------------------------
-    def create_videos(self, shots: list[RenderShot] | None = None) -> bool:
+    def create_review_videos(self, shots: list[RenderShot] | None = None) -> bool:
         if self.project_root is None or self.read_only:
             return False
         if self.workers.is_running("render_video"):
@@ -441,14 +482,77 @@ class RenderPanelViewModel(BaseViewModel):
         self.report_status("Creating review video(s) with ffmpeg...", "yellow")
         return self.workers.start("render_video", worker, critical=True)
 
+    def create_preview_videos(self, shots: list[RenderShot] | None = None) -> bool:
+        if self.project_root is None or self.read_only:
+            return False
+        if self.workers.is_running("render_preview_video"):
+            return False
+        targets = list(shots or self.selected_shots)
+        if not targets:
+            return False
+        worker = RenderPreviewVideoWorker(
+            self.service, self.project_root, targets, self.settings
+        )
+        worker.video_ready.connect(self._on_preview_video_ready)
+        worker.error.connect(self.video_error)
+        worker.finished_videos.connect(self._on_videos_finished)
+        self.report_status("Creating preview video(s) with ffmpeg...", "yellow")
+        return self.workers.start("render_preview_video", worker, critical=True)
+
     def _on_video_ready(self, shot_name: str, video_path: str) -> None:
         path = Path(video_path)
         self.video_paths[shot_name] = path
         self._write_status(video=str(path))
         self.video_ready.emit(shot_name, str(path))
 
+    def _on_preview_video_ready(self, shot_name: str, video_path: str) -> None:
+        path = Path(video_path)
+        self.preview_video_paths[shot_name] = path
+        self.preview_video_ready.emit(shot_name, str(path))
+
     def _on_videos_finished(self, created: int, total: int) -> None:
         self.videos_finished.emit(created, total)
+
+    # ------------------------------------------------------------------
+    # Frame review (sequence player)
+    # ------------------------------------------------------------------
+    def sequence_entries(self, shot: RenderShot) -> list[tuple[int, Path | None]]:
+        if self.project_root is None:
+            return []
+        return self.service.sequence_entries(
+            self.project_root, shot, self.settings.task_type
+        )
+
+    def approved_frames(self, shot: RenderShot) -> set[int]:
+        if self.project_root is None:
+            return set()
+        return self.service.frame_state_store(
+            self.project_root, shot, self.settings.task_type
+        ).approved_frames()
+
+    def delete_frame(self, shot: RenderShot, frame: int) -> tuple[bool, str]:
+        if self.project_root is None or self.read_only:
+            return False, "The render panel is read-only."
+        result = self.service.delete_frame(
+            self.project_root, shot, frame, self.settings.task_type
+        )
+        self.report_status(result[1], "green" if result[0] else "red")
+        return result
+
+    def approve_frame(
+        self, shot: RenderShot, frame: int, approved: bool
+    ) -> tuple[bool, str]:
+        if self.project_root is None or self.read_only:
+            return False, "The render panel is read-only."
+        result = self.service.approve_frame(
+            self.project_root,
+            shot,
+            frame,
+            approved,
+            task_type=self.settings.task_type,
+        )
+        self.report_status(result[1], "green" if result[0] else "red")
+        return result
 
     # ------------------------------------------------------------------
     # Kitsu
@@ -538,6 +642,7 @@ class RenderPanelViewModel(BaseViewModel):
 
     def _on_error_status(self, message: str) -> None:
         self.set_busy(False)
+        self._finish_audit(ok=False, message=message)
         self._write_status(status="failed", message=message)
 
     # ------------------------------------------------------------------

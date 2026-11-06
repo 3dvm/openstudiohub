@@ -9,6 +9,20 @@ releases may include larger UI or workflow changes.
 
 ### Added
 
+- Render runs now keep a local audit trail:
+  - `~/.openstudio/state/render_runs.jsonl` records stages, failures and
+    instance destruction reasons;
+  - detail logs live under `~/.openstudio/state/render_runs/<run_id>/`;
+  - a canary node validates setup before the rest of the Vast.ai nodes are
+    rented;
+  - partial runs expose **Retry missing frames** and skip frames that already
+    exist or are approved.
+- The render panel has an integrated PNG sequence player for finished renders,
+  with per-frame **Delete** (moves the frame to `.frame_trash/`) and
+  **Approve** (locks the frame against deletion and future renders).
+- The log moved below the shot list in a vertical splitter, leaving the log and
+  the central divider with dedicated space.
+- Preview videos are now created separately from the per-shot review videos.
 - Publish window handles files deleted from disk:
   - missing files are listed separately and are not selected by default;
   - **Restore selected** brings them back with `svn revert`;

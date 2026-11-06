@@ -108,3 +108,48 @@ def test_video_command_and_metadata(tmp_path, monkeypatch):
     metadata = service.write_review_metadata(tmp_path / "review", output.name, frames)
     data = json.loads(metadata.read_text(encoding="utf-8"))
     assert data[output.name] == str(frames)
+
+
+def test_preview_video_uses_fast_half_resolution_encode(tmp_path):
+    root = _project(tmp_path)
+    service = RenderService()
+    shot = _shot()
+    calls = []
+
+    class FakeVideo:
+        def create_video(self, source, first, last, fps, output, **kwargs):
+            calls.append((source, first, last, fps, output, kwargs))
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(b"x")
+            return output
+
+    service.video = FakeVideo()
+
+    path = service.create_preview_video(root, shot, service.load_settings(root))
+
+    assert path.parent.name == ".previews"
+    assert calls and calls[0][5]["crf"] == 28
+    assert calls[0][5]["video_filter"] == "scale=iw/2:-2"
+
+
+def test_frame_delete_moves_to_trash_and_respects_approval(tmp_path):
+    root = _project(tmp_path)
+    service = RenderService()
+    shot = _shot()
+    output = service.shot_output_dir(root, shot)
+    output.mkdir(parents=True)
+    frame = output / "frame_0101.png"
+    frame.write_bytes(b"x")
+    service.approve_frame(root, shot, 101, True)
+
+    ok, message = service.delete_frame(root, shot, 101)
+
+    assert ok is False
+    assert "approved" in message.lower()
+    service.approve_frame(root, shot, 101, False)
+
+    ok, message = service.delete_frame(root, shot, 101)
+
+    assert ok is True
+    assert not frame.exists()
+    assert (output / ".frame_trash" / "frame_0101.png").is_file()

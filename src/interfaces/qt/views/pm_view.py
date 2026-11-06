@@ -82,7 +82,7 @@ class ViewPM(BaseDashboardView):
 
         self.add_sidebar_button("btn_projects", self.tr("Projects"), "📁", "folder.svg", lambda: self._switch_panel("btn_projects"), active=True)
         self.add_sidebar_button("btn_tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("btn_tasks"))
-        self.add_sidebar_button("btn_render", self.tr("Render"), "🎬", "film.svg", lambda: self._switch_panel("btn_render"))
+        self.add_sidebar_button("btn_render", self.tr("Render"), "🎬", "clapperboard.svg", lambda: self._switch_panel("btn_render"))
         self.add_sidebar_button("btn_batch", self.tr("Batch Creation"), "📦", "box.svg", lambda: self._switch_panel("btn_batch"))
         self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))
 

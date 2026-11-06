@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -39,6 +40,8 @@ from PySide6.QtWidgets import (
 
 from src.domain.render.capacity import default_seconds_per_frame
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
+from src.interfaces.qt.components.collapsible_section import CollapsibleSection
+from src.interfaces.qt.components.frame_sequence_player import FrameSequencePlayer
 from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderPanelViewModel
 
 
@@ -107,14 +110,23 @@ class RenderPanelWidget(QFrame):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(10)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.setSpacing(8)
         left_label = QLabel(self.tr("Shots"))
         left_label.setObjectName("SectionTitle")
         left_layout.addWidget(left_label)
+
+        left_splitter = QSplitter(Qt.Vertical)
+        left_splitter.setChildrenCollapsible(False)
+        left_splitter.setHandleWidth(8)
+        shots_panel = QWidget()
+        shots_layout = QVBoxLayout(shots_panel)
+        shots_layout.setContentsMargins(0, 0, 0, 0)
+        shots_layout.setSpacing(8)
         self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
             [
@@ -144,27 +156,38 @@ class RenderPanelWidget(QFrame):
         self.table.setMinimumHeight(260)
         self.table.itemSelectionChanged.connect(self._on_shot_selected)
         self.table.itemChanged.connect(self._on_check_changed)
-        left_layout.addWidget(self.table, 1)
+        shots_layout.addWidget(self.table, 1)
+        left_splitter.addWidget(shots_panel)
+
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumBlockCount(600)
+        self.log.setMinimumHeight(120)
+        self.log_section = CollapsibleSection(self.tr("Log"))
+        self.log_section.add_widget(self.log)
+        left_splitter.addWidget(self.log_section)
+        left_splitter.setStretchFactor(0, 3)
+        left_splitter.setStretchFactor(1, 2)
+        left_layout.addWidget(left_splitter, 1)
         splitter.addWidget(left)
 
         right = QWidget()
         right_layout = QVBoxLayout(right)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(4, 0, 0, 0)
         right_layout.setSpacing(10)
 
-        preview_frame = QFrame()
-        preview_frame.setObjectName("CardFrame")
-        preview_layout = QVBoxLayout(preview_frame)
-        preview_layout.setContentsMargins(12, 12, 12, 12)
-        preview_title = QLabel(self.tr("Preview (composite)"))
-        preview_title.setObjectName("SectionTitle")
-        preview_layout.addWidget(preview_title)
+        preview_frame = CollapsibleSection(self.tr("Preview (composite)"))
+        self.preview_section = preview_frame
         self.preview_label = QLabel(self.tr("Select a shot to see its preview."))
         self.preview_label.setObjectName("MutedLabel")
         self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setMinimumHeight(250)
+        self.preview_label.setMinimumHeight(220)
         self.preview_label.setWordWrap(True)
-        preview_layout.addWidget(self.preview_label, 1)
+        self.preview_stack = QStackedWidget()
+        self.preview_stack.addWidget(self.preview_label)
+        self.player = FrameSequencePlayer()
+        self.preview_stack.addWidget(self.player)
+        preview_frame.add_widget(self.preview_stack)
         preview_buttons = QHBoxLayout()
         self.btn_preview_selected = QPushButton(self.tr("Preview selected"))
         self.btn_preview_selected.setObjectName("SecondaryButton")
@@ -175,22 +198,28 @@ class RenderPanelWidget(QFrame):
         self.btn_benchmark = QPushButton(self.tr("Benchmark selected"))
         self.btn_benchmark.setObjectName("SecondaryButton")
         self.btn_benchmark.clicked.connect(self._benchmark_selected)
+        self.btn_play_final = QPushButton(self.tr("Play final sequence"))
+        self.btn_play_final.setObjectName("SecondaryButton")
+        self.btn_play_final.clicked.connect(self._play_final_sequence)
         preview_buttons.addWidget(self.btn_preview_selected)
         preview_buttons.addWidget(self.btn_preview_all)
+        preview_buttons.addWidget(self.btn_play_final)
         preview_buttons.addWidget(self.btn_benchmark)
         preview_buttons.addStretch()
-        preview_layout.addLayout(preview_buttons)
+        preview_frame.add_layout(preview_buttons)
         right_layout.addWidget(preview_frame)
 
+        self.setup_section = CollapsibleSection(self.tr("Shot setup"), expanded=False)
         self.lbl_setup = QLabel(self.tr("Render setup: select a shot."))
         self.lbl_setup.setObjectName("InfoLabel")
         self.lbl_setup.setWordWrap(True)
-        right_layout.addWidget(self.lbl_setup)
+        self.setup_section.add_widget(self.lbl_setup)
 
         self.lbl_warnings = QLabel("")
         self.lbl_warnings.setObjectName("MutedLabel")
         self.lbl_warnings.setWordWrap(True)
-        right_layout.addWidget(self.lbl_warnings)
+        self.setup_section.add_widget(self.lbl_warnings)
+        right_layout.addWidget(self.setup_section)
 
         self._build_settings(right_layout)
         right_layout.addWidget(self._build_summary_frame())
@@ -201,11 +230,6 @@ class RenderPanelWidget(QFrame):
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
         right_layout.addWidget(self.progress)
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setMaximumBlockCount(600)
-        self.log.setMinimumHeight(100)
-        right_layout.addWidget(self.log)
         right_layout.addStretch()
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 3)
@@ -218,9 +242,12 @@ class RenderPanelWidget(QFrame):
                 self.btn_preview_selected,
                 self.btn_preview_all,
                 self.btn_benchmark,
+                self.btn_play_final,
                 self.btn_start,
                 self.btn_cancel,
                 self.btn_video,
+                self.btn_preview_video,
+                self.btn_retry_render,
                 self.btn_upload_kitsu,
             ):
                 widget.setVisible(False)
@@ -234,16 +261,54 @@ class RenderPanelWidget(QFrame):
         outer.addWidget(scroll)
 
     def _build_settings(self, layout: QVBoxLayout) -> None:
-        self.settings_frame = QFrame()
-        self.settings_frame.setObjectName("CardFrame")
-        form = QFormLayout(self.settings_frame)
-        form.setContentsMargins(12, 12, 12, 12)
-        form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(6)
+        self.settings_frame = CollapsibleSection(self.tr("Render settings"))
+        self.final_settings_section = CollapsibleSection(self.tr("Final render"))
+        self.preview_settings_section = CollapsibleSection(self.tr("Preview render"))
+        self.vast_section = CollapsibleSection(self.tr("Vast.ai plan"))
 
-        title = QLabel(self.tr("Final render settings"))
-        title.setObjectName("SectionTitle")
-        form.addRow(title)
+        final_widget = QWidget()
+        final_form = QFormLayout(final_widget)
+        final_form.setContentsMargins(0, 0, 0, 0)
+        final_form.setHorizontalSpacing(12)
+        final_form.setVerticalSpacing(6)
+
+        self.combo_backend = QComboBox()
+        self.combo_backend.addItem(self.tr("Vast.ai (on-demand)"), "vast")
+        self.combo_backend.addItem(self.tr("Local headless"), "local")
+        final_form.addRow(self.tr("Backend"), self.combo_backend)
+
+        self.combo_samples = QComboBox()
+        self.combo_samples.addItems(["128", "256"])
+        final_form.addRow(self.tr("Samples"), self.combo_samples)
+        self.final_settings_section.add_widget(final_widget)
+
+        preview_widget = QWidget()
+        preview_form = QFormLayout(preview_widget)
+        preview_form.setContentsMargins(0, 0, 0, 0)
+        preview_form.setHorizontalSpacing(12)
+        preview_form.setVerticalSpacing(6)
+
+        self.combo_preview_backend = QComboBox()
+        self.combo_preview_backend.addItem(self.tr("Local"), "local")
+        self.combo_preview_backend.addItem(self.tr("Vast.ai"), "vast")
+        preview_form.addRow(self.tr("Backend"), self.combo_preview_backend)
+
+        self.combo_preview_res = QComboBox()
+        self.combo_preview_res.addItem("25%", 25)
+        self.combo_preview_res.addItem("50%", 50)
+        self.combo_preview_res.addItem("100%", 100)
+        preview_form.addRow(self.tr("Resolution"), self.combo_preview_res)
+
+        self.combo_preview_samples = QComboBox()
+        self.combo_preview_samples.addItems(["16", "32", "64"])
+        preview_form.addRow(self.tr("Samples"), self.combo_preview_samples)
+        self.preview_settings_section.add_widget(preview_widget)
+
+        vast_widget = QWidget()
+        vast_form = QFormLayout(vast_widget)
+        vast_form.setContentsMargins(0, 0, 0, 0)
+        vast_form.setHorizontalSpacing(12)
+        vast_form.setVerticalSpacing(6)
 
         self.combo_target = QComboBox()
         self.combo_target.addItem(self.tr("1 hour"), 1.0)
@@ -256,11 +321,7 @@ class RenderPanelWidget(QFrame):
         target_row = QHBoxLayout()
         target_row.addWidget(self.combo_target, 2)
         target_row.addWidget(self.spin_hours, 1)
-        form.addRow(self.tr("Target wall time"), target_row)
-
-        self.combo_samples = QComboBox()
-        self.combo_samples.addItems(["128", "256"])
-        form.addRow(self.tr("Samples"), self.combo_samples)
+        vast_form.addRow(self.tr("Target wall time"), target_row)
 
         self.combo_gpu = QComboBox()
         self.combo_gpu.addItem(self.tr("RTX 4070 12 GB"), "rtx_4070")
@@ -269,7 +330,7 @@ class RenderPanelWidget(QFrame):
         self.combo_gpu.addItem(self.tr("RTX 3090 24 GB"), "rtx_3090")
         self.combo_gpu.addItem(self.tr("RTX 4090 24 GB"), "rtx_4090")
         self.combo_gpu.addItem(self.tr("RTX A6000 48 GB"), "rtx_a6000")
-        form.addRow(self.tr("GPU"), self.combo_gpu)
+        vast_form.addRow(self.tr("GPU"), self.combo_gpu)
 
         limits = QHBoxLayout()
         self.spin_price = QDoubleSpinBox()
@@ -290,28 +351,7 @@ class RenderPanelWidget(QFrame):
         limits.addWidget(QLabel(self.tr("Budget")))
         limits.addWidget(self.spin_budget)
         limits.addStretch()
-        form.addRow(self.tr("Limits"), limits)
-
-        self.combo_backend = QComboBox()
-        self.combo_backend.addItem(self.tr("Vast.ai (on-demand)"), "vast")
-        self.combo_backend.addItem(self.tr("Local headless"), "local")
-        form.addRow(self.tr("Render backend"), self.combo_backend)
-
-        preview_limits = QHBoxLayout()
-        self.combo_preview_backend = QComboBox()
-        self.combo_preview_backend.addItem(self.tr("Local"), "local")
-        self.combo_preview_backend.addItem(self.tr("Vast.ai"), "vast")
-        self.combo_preview_res = QComboBox()
-        self.combo_preview_res.addItem("25%", 25)
-        self.combo_preview_res.addItem("50%", 50)
-        self.combo_preview_res.addItem("100%", 100)
-        self.combo_preview_samples = QComboBox()
-        self.combo_preview_samples.addItems(["16", "32", "64"])
-        preview_limits.addWidget(self.combo_preview_backend)
-        preview_limits.addWidget(self.combo_preview_res)
-        preview_limits.addWidget(self.combo_preview_samples)
-        preview_limits.addStretch()
-        form.addRow(self.tr("Preview"), preview_limits)
+        vast_form.addRow(self.tr("Limits"), limits)
 
         network_row = QHBoxLayout()
         self.combo_region = QComboBox()
@@ -328,52 +368,53 @@ class RenderPanelWidget(QFrame):
         network_row.addWidget(self.spin_min_down)
         network_row.addWidget(self.spin_min_up)
         network_row.addStretch()
-        form.addRow(self.tr("Network"), network_row)
+        vast_form.addRow(self.tr("Network"), network_row)
+        self.vast_section.add_widget(vast_widget)
 
-        self.chk_video = QCheckBox(self.tr("Create review video when the render finishes"))
-        form.addRow(self.chk_video)
-        video_row = QHBoxLayout()
-        self.edit_video_task = QLineEdit("render")
-        self.edit_video_version = QLineEdit()
-        self.edit_video_version.setPlaceholderText(self.tr("auto"))
-        video_row.addWidget(QLabel(self.tr("Task type")))
-        video_row.addWidget(self.edit_video_task)
-        video_row.addWidget(QLabel(self.tr("Version")))
-        video_row.addWidget(self.edit_video_version)
-        form.addRow(self.tr("Video"), video_row)
+        self.settings_frame.add_widget(self.final_settings_section)
+        self.settings_frame.add_widget(self.preview_settings_section)
+        self.settings_frame.add_widget(self.vast_section)
 
         self.btn_recalculate = QPushButton(self.tr("Recalculate plan"))
         self.btn_recalculate.setObjectName("SecondaryButton")
         self.btn_recalculate.clicked.connect(self._scan)
-        form.addRow(self.btn_recalculate)
+        self.settings_frame.add_widget(self.btn_recalculate)
+
         layout.addWidget(self.settings_frame)
+        self._sync_backend_sections()
 
     def _build_summary_frame(self) -> QFrame:
-        frame = QFrame()
-        frame.setObjectName("CardFrame")
-        frame_layout = QVBoxLayout(frame)
-        frame_layout.setContentsMargins(12, 12, 12, 12)
-        title = QLabel(self.tr("Plan"))
-        title.setObjectName("SectionTitle")
-        frame_layout.addWidget(title)
+        frame = CollapsibleSection(self.tr("Plan"))
         self.lbl_summary = QLabel(self.tr("Scan a project to calculate the plan."))
         self.lbl_summary.setObjectName("InfoLabel")
         self.lbl_summary.setWordWrap(True)
-        frame_layout.addWidget(self.lbl_summary)
+        frame.add_widget(self.lbl_summary)
         return frame
 
     def _build_video_frame(self) -> QFrame:
-        self.video_frame = QFrame()
-        self.video_frame.setObjectName("CardFrame")
-        frame_layout = QVBoxLayout(self.video_frame)
-        frame_layout.setContentsMargins(12, 12, 12, 12)
-        title = QLabel(self.tr("Review video / Kitsu"))
-        title.setObjectName("SectionTitle")
-        frame_layout.addWidget(title)
+        self.video_frame = CollapsibleSection(self.tr("Review video / Kitsu"), expanded=False)
+        video_widget = QWidget()
+        video_form = QFormLayout(video_widget)
+        video_form.setContentsMargins(0, 0, 0, 0)
+        video_form.setHorizontalSpacing(12)
+        video_form.setVerticalSpacing(6)
+        self.chk_video = QCheckBox(self.tr("Create review video when the render finishes"))
+        video_form.addRow(self.chk_video)
+        self.edit_video_task = QLineEdit("render")
+        self.edit_video_version = QLineEdit()
+        self.edit_video_version.setPlaceholderText(self.tr("auto"))
+        video_row = QHBoxLayout()
+        video_row.addWidget(QLabel(self.tr("Task type")))
+        video_row.addWidget(self.edit_video_task)
+        video_row.addWidget(QLabel(self.tr("Version")))
+        video_row.addWidget(self.edit_video_version)
+        video_form.addRow(self.tr("Video"), video_row)
+        self.video_frame.add_widget(video_widget)
+
         self.lbl_video = QLabel(self.tr("No review video yet."))
         self.lbl_video.setObjectName("MutedLabel")
         self.lbl_video.setWordWrap(True)
-        frame_layout.addWidget(self.lbl_video)
+        self.video_frame.add_widget(self.lbl_video)
         self.combo_kitsu_status = QComboBox()
         self.combo_kitsu_status.setObjectName("StandardComboBox")
         self.combo_kitsu_status.setMinimumWidth(180)
@@ -386,7 +427,7 @@ class RenderPanelWidget(QFrame):
         self.btn_upload_kitsu.setObjectName("SuccessButton")
         self.btn_upload_kitsu.clicked.connect(self._upload_kitsu)
         row.addWidget(self.btn_upload_kitsu)
-        frame_layout.addLayout(row)
+        self.video_frame.add_layout(row)
         return self.video_frame
 
     def _build_actions(self) -> QHBoxLayout:
@@ -399,16 +440,29 @@ class RenderPanelWidget(QFrame):
         self.btn_cancel.setObjectName("DangerButton")
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self._cancel_render)
-        self.btn_video = QPushButton(self.tr("Create video"))
+        self.btn_retry_render = QPushButton(self.tr("Retry missing frames"))
+        self.btn_retry_render.setObjectName("SecondaryButton")
+        self.btn_retry_render.clicked.connect(self._retry_render)
+        self.btn_retry_render.hide()
+        self.btn_preview_video = QPushButton(self.tr("Create preview video"))
+        self.btn_preview_video.setObjectName("SecondaryButton")
+        self.btn_preview_video.clicked.connect(self._create_preview_video)
+        self.btn_video = QPushButton(self.tr("Create review videos"))
         self.btn_video.setObjectName("SecondaryButton")
         self.btn_video.clicked.connect(self._create_video)
+        self.btn_open_logs = QPushButton(self.tr("Open run logs"))
+        self.btn_open_logs.setObjectName("SecondaryButton")
+        self.btn_open_logs.clicked.connect(self._open_run_logs)
         self.btn_output = QPushButton(self.tr("Open output folder"))
         self.btn_output.setObjectName("SecondaryButton")
         self.btn_output.clicked.connect(self._open_output)
         actions.addWidget(self.btn_start)
         actions.addWidget(self.btn_cancel)
+        actions.addWidget(self.btn_retry_render)
+        actions.addWidget(self.btn_preview_video)
         actions.addWidget(self.btn_video)
         actions.addStretch()
+        actions.addWidget(self.btn_open_logs)
         actions.addWidget(self.btn_output)
         return actions
 
@@ -416,7 +470,11 @@ class RenderPanelWidget(QFrame):
     # Wiring
     # ------------------------------------------------------------------
     def _connect(self) -> None:
+        self.player.delete_requested.connect(self._delete_frame)
+        self.player.approve_requested.connect(self._approve_frame)
         self.combo_target.currentIndexChanged.connect(self._on_target_changed)
+        self.combo_backend.currentIndexChanged.connect(self._sync_backend_sections)
+        self.combo_preview_backend.currentIndexChanged.connect(self._sync_backend_sections)
         projects_loaded = getattr(self.project_list_vm, "projects_loaded", None)
         if projects_loaded is not None:
             projects_loaded.connect(self._on_projects_loaded)
@@ -436,6 +494,7 @@ class RenderPanelWidget(QFrame):
         self.vm.render_finished.connect(self._on_render_finished)
         self.vm.render_error.connect(self._on_error)
         self.vm.video_ready.connect(self._on_video_ready)
+        self.vm.preview_video_ready.connect(self._on_preview_video_ready)
         self.vm.video_error.connect(self._on_error)
         self.vm.videos_finished.connect(self._on_videos_finished)
         self.vm.kitsu_statuses_ready.connect(self._on_kitsu_statuses)
@@ -513,6 +572,11 @@ class RenderPanelWidget(QFrame):
         self.spin_hours.setEnabled(custom)
         if not custom:
             self.spin_hours.setValue(float(self.combo_target.currentData()))
+
+    def _sync_backend_sections(self, _index: int = 0) -> None:
+        final_vast = self.combo_backend.currentData() == "vast"
+        preview_vast = self.combo_preview_backend.currentData() == "vast"
+        self.vast_section.setVisible(final_vast or preview_vast)
 
     def _settings_from_ui(self) -> RenderSettings:
         base = replace(self.vm.settings)
@@ -603,6 +667,7 @@ class RenderPanelWidget(QFrame):
             ):
                 widget.blockSignals(False)
         self._on_target_changed()
+        self._sync_backend_sections()
 
     def _scan(self) -> None:
         settings = self._settings_from_ui()
@@ -619,6 +684,7 @@ class RenderPanelWidget(QFrame):
         self.lbl_balance.setText(
             self.tr("Vast.ai balance: ${0:.2f}").format(balance)
             if self.vm.settings.render_backend == "vast"
+            or self.vm.settings.preview_backend == "vast"
             else self.tr("Render backend: local")
         )
         self._fill_table()
@@ -707,6 +773,8 @@ class RenderPanelWidget(QFrame):
         if row < 0 or row >= len(self._shots):
             return
         self._selected_shot = self._shots[row]
+        self.player.pause()
+        self.preview_stack.setCurrentWidget(self.preview_label)
         self._show_setup(self._selected_shot)
         self._show_latest_preview(self._selected_shot)
         self._show_video(self._selected_shot)
@@ -770,10 +838,59 @@ class RenderPanelWidget(QFrame):
     # ------------------------------------------------------------------
     def _preview_selected(self) -> None:
         if self._selected_shot is not None:
+            self.preview_stack.setCurrentWidget(self.preview_label)
             self.vm.preview_shots([self._selected_shot])
 
     def _preview_all(self) -> None:
+        self.preview_stack.setCurrentWidget(self.preview_label)
         self.vm.preview_shots(self.vm.selected_shots)
+
+    def _play_final_sequence(self) -> None:
+        if self._selected_shot is None:
+            QMessageBox.warning(self, self.tr("Render"), self.tr("Select a shot first."))
+            return
+        entries = self.vm.sequence_entries(self._selected_shot)
+        rendered = [entry for entry in entries if entry[1] is not None]
+        if not rendered:
+            QMessageBox.information(
+                self,
+                self.tr("Render"),
+                self.tr("No rendered frames were found for this shot."),
+            )
+            return
+        fps = self._selected_shot.setup.fps if self._selected_shot.setup else 24.0
+        self.preview_stack.setCurrentWidget(self.player)
+        self.player.set_sequence(
+            rendered,
+            fps=fps,
+            approved=self.vm.approved_frames(self._selected_shot),
+            autoplay=True,
+        )
+        self._append_log(
+            f"Playing final sequence for {self._selected_shot.name} "
+            f"({len(rendered)} frame(s))."
+        )
+
+    def _delete_frame(self, frame: int) -> None:
+        if self._selected_shot is None:
+            return
+        ok, message = self.vm.delete_frame(self._selected_shot, frame)
+        self._append_log(message)
+        if ok:
+            self.player.remove_frame(frame)
+        else:
+            QMessageBox.warning(self, self.tr("Delete frame"), message)
+
+    def _approve_frame(self, frame: int, approved: bool) -> None:
+        if self._selected_shot is None:
+            return
+        ok, message = self.vm.approve_frame(self._selected_shot, frame, approved)
+        self._append_log(message)
+        if ok:
+            self.player.set_frame_approved(frame, approved)
+        else:
+            self.player.set_frame_approved(frame, not approved)
+            QMessageBox.warning(self, self.tr("Approve frame"), message)
 
     def _benchmark_selected(self) -> None:
         if self._selected_shot is None:
@@ -881,7 +998,24 @@ class RenderPanelWidget(QFrame):
         self.vm.cancel_render()
 
     def _create_video(self) -> None:
-        self.vm.create_videos()
+        self.vm.create_review_videos()
+
+    def _create_preview_video(self) -> None:
+        if self._selected_shot is None:
+            QMessageBox.warning(self, self.tr("Render"), self.tr("Select a shot first."))
+            return
+        self.vm.create_preview_videos([self._selected_shot])
+
+    def _retry_render(self) -> None:
+        if not self.vm.start_render(retry=True):
+            return
+        self.btn_retry_render.hide()
+        self._append_log("Retrying the missing frames...")
+
+    def _open_run_logs(self) -> None:
+        folder = self.vm.run_log_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
     def _on_local_progress(self, shot_name: str, done: int, total: int, seconds: float) -> None:
         self.progress.setRange(0, max(1, total))
@@ -899,6 +1033,8 @@ class RenderPanelWidget(QFrame):
     def _on_render_finished(self, report) -> None:
         self.progress.setValue(self.progress.maximum())
         self.btn_cancel.setEnabled(False)
+        missing = self._report_missing_frames(report)
+        self.btn_retry_render.setVisible(bool(missing))
         self.btn_start.setEnabled(
             self._plan is not None
             and self._plan.total_frames > 0
@@ -916,16 +1052,27 @@ class RenderPanelWidget(QFrame):
         else:
             message = getattr(report, "message", "Render finished.")
         self._append_log(message)
+        if not missing and self._selected_shot is not None:
+            self._play_final_sequence()
         QMessageBox.information(self, self.tr("Render finished"), message)
 
     def _on_video_ready(self, shot_name: str, video_path: str) -> None:
-        self._append_log(f"Video ready for {shot_name}: {video_path}")
+        self._append_log(f"Review video ready for {shot_name}: {video_path}")
         if self._selected_shot is not None and self._selected_shot.name == shot_name:
             self.lbl_video.setText(video_path)
         self._populate_kitsu_statuses()
 
+    def _on_preview_video_ready(self, shot_name: str, video_path: str) -> None:
+        self._append_log(f"Preview video ready for {shot_name}: {video_path}")
+
     def _on_videos_finished(self, created: int, total: int) -> None:
         self._append_log(f"Videos created: {created}/{total}")
+
+    @staticmethod
+    def _report_missing_frames(report) -> int:
+        if isinstance(report, list):
+            return sum(len(item.missing) for item in report)
+        return len(getattr(report, "missing", ()) or ())
 
     def _show_video(self, shot: RenderShot) -> None:
         path = self.vm.video_paths.get(shot.name)
@@ -980,6 +1127,10 @@ class RenderPanelWidget(QFrame):
             self.btn_preview_selected,
             self.btn_preview_all,
             self.btn_benchmark,
+            self.btn_play_final,
+            self.btn_preview_video,
+            self.btn_video,
+            self.btn_open_logs,
         ):
             widget.setEnabled(not busy)
         if busy:

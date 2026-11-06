@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
@@ -39,11 +40,13 @@ from src.infrastructure.render.probe import (
     RenderProbeResult,
     iter_blend_files,
 )
+from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.profiles import (
     PROFILES_FILENAME,
     RenderProfileStore,
 )
 from src.infrastructure.render.settings import SETTINGS_FILENAME, RenderSettingsStore
+from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.local import LocalRenderReport, LocalRenderRunner
 from src.infrastructure.render.vast import (
     VastProvider,
@@ -617,6 +620,109 @@ class RenderService:
             return max(shot.frame_start, min(shot.frame_end, settings.preview_frame))
         return (shot.frame_start + shot.frame_end) // 2
 
+    def frame_state_store(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        task_type: str = "render",
+    ) -> RenderFrameStateStore:
+        return RenderFrameStateStore(
+            self.shot_output_dir(project_root, shot, task_type)
+        )
+
+    def sequence_entries(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        task_type: str = "render",
+    ) -> list[tuple[int, Path | None]]:
+        """Return the shot frame range with the existing PNG path for each frame."""
+        folder = self.shot_output_dir(project_root, shot, task_type)
+        entries: list[tuple[int, Path | None]] = []
+        step = max(1, int(shot.frame_step or 1))
+        for frame in range(shot.frame_start, shot.frame_end + 1, step):
+            path = folder / f"frame_{frame:04d}.png"
+            entries.append((frame, path if path.is_file() else None))
+        return entries
+
+    def delete_frame(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        frame: int,
+        task_type: str = "render",
+    ) -> tuple[bool, str]:
+        """Move one rendered frame to a local trash folder."""
+        folder = self.shot_output_dir(project_root, shot, task_type)
+        source = folder / f"frame_{int(frame):04d}.png"
+        if not source.is_file():
+            return False, f"Frame {frame} was not found."
+        store = RenderFrameStateStore(folder)
+        if store.is_approved(frame):
+            return False, "This frame is approved. Unlock it before deleting."
+        trash = folder / ".frame_trash"
+        trash.mkdir(parents=True, exist_ok=True)
+        destination = trash / source.name
+        try:
+            if destination.exists():
+                destination = trash / f"{source.stem}-{int(datetime.now().timestamp())}{source.suffix}"
+            shutil.move(str(source), str(destination))
+        except OSError as error:
+            return False, f"Could not move the frame to the trash: {error}"
+        return True, f"Frame {frame} moved to {destination}."
+
+    def approve_frame(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        frame: int,
+        approved: bool,
+        *,
+        user: str = "",
+        task_type: str = "render",
+    ) -> tuple[bool, str]:
+        """Lock or unlock a rendered frame so future renders skip it."""
+        folder = self.shot_output_dir(project_root, shot, task_type)
+        path = folder / f"frame_{int(frame):04d}.png"
+        if approved and not path.is_file():
+            return False, "Only rendered frames can be approved."
+        store = RenderFrameStateStore(folder)
+        try:
+            if approved:
+                store.approve(frame, user=user)
+            else:
+                store.unapprove(frame)
+        except OSError as error:
+            return False, f"Could not update the frame state: {error}"
+        state = "approved" if approved else "unlocked"
+        return True, f"Frame {frame} {state}."
+
+    def create_preview_video(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        settings: RenderSettings,
+    ) -> Path:
+        """Create a fast, half-resolution MP4 for quick review."""
+        root = Path(project_root)
+        source = self.shot_output_dir(root, shot, settings.task_type)
+        preview_dir = self.preview_dir(root, shot, task_type=settings.task_type)
+        preview_dir.mkdir(parents=True, exist_ok=True)
+        path = preview_dir / (
+            f"{shot.name}-preview-{shot.frame_start}-{shot.frame_end}.mp4"
+        )
+        self.video.create_video(
+            source,
+            shot.frame_start,
+            shot.frame_end,
+            shot.setup.fps if shot.setup else 24.0,
+            path,
+            crf=28,
+            preset="veryfast",
+            video_filter="scale=iw/2:-2",
+        )
+        return path
+
     def create_review_video(
         self,
         project_root: Path | str,
@@ -691,6 +797,10 @@ class RenderService:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
+        audit: RenderRunAuditLogger | None = None,
+        canary: bool = True,
+        run_id: str = "",
+        skip_existing: bool = False,
     ) -> RenderBurstRunner:
         root = Path(project_root)
         blueprint = self.load_blueprint(root)
@@ -708,6 +818,10 @@ class RenderService:
             min_inet_down_mbps=min_inet_down_mbps,
             min_inet_up_mbps=min_inet_up_mbps,
             bake_particles=bake_particles,
+            audit=audit,
+            canary=canary,
+            run_id=run_id,
+            skip_existing=skip_existing,
         )
 
     def start_burst(

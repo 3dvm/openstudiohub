@@ -89,7 +89,7 @@ class ViewTD(BaseDashboardView):
 
         self.add_sidebar_button("proyectos", self.tr("Projects"), "🗂️", "folder.svg", lambda: self._switch_panel("proyectos"), active=True)
         self.add_sidebar_button("tasks", self.tr("Tasks"), "📋", "list.svg", lambda: self._switch_panel("tasks"))
-        self.add_sidebar_button("render", self.tr("Render"), "🎬", "film.svg", lambda: self._switch_panel("render"))
+        self.add_sidebar_button("render", self.tr("Render"), "🎬", "clapperboard.svg", lambda: self._switch_panel("render"))
         self.add_sidebar_button("infra", self.tr("Infrastructure"), "⚙️", "server.svg", lambda: self._switch_panel("infra"))
         self.add_sidebar_button("audit", self.tr("VCS Audit"), "", "list.svg", lambda: self._switch_panel("audit"))
         self.add_footer_button("settings", self.tr("Settings"), "🔧", "settings.svg", lambda: self._switch_panel("settings"))

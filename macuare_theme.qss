@@ -428,6 +428,20 @@ QLabel#SectionTitle {
     font-weight: bold;
 }
 
+QToolButton#SectionToggle {
+    background-color: transparent;
+    color: #F8FAFC;
+    border: none;
+    padding: 2px 0;
+    font-size: 15px;
+    font-weight: bold;
+}
+
+QToolButton#SectionToggle:hover {
+    color: #F97316;
+    background-color: transparent;
+}
+
 QLabel#MutedLabel {
     color: #94A3B8;
     font-size: 12px;

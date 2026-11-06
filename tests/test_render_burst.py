@@ -88,3 +88,45 @@ def test_plan_matches_the_p0005_benchmark():
     assert plan.total_gpu_seconds == 3888
     assert plan.estimated_wall_seconds < 3600
     assert plan.estimated_cost < 0.5
+
+
+def test_assign_skips_existing_and_approved_frames(tmp_path):
+    from src.infrastructure.render.frame_state import RenderFrameStateStore
+
+    shot = _shot("sh010", frames=10, start=101)
+    output_root = tmp_path / "03_render"
+    output = output_root / "shots" / "sq010" / "sh010.render"
+    output.mkdir(parents=True)
+    (output / "frame_0101.png").write_bytes(b"x")
+    RenderFrameStateStore(output).approve(102)
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=output_root,
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+        skip_existing=True,
+    )
+
+    assignments = runner._assign([shot], 1)
+
+    assert [task.frames for task in assignments[0]] == [(103, 104, 105, 106, 107, 108, 109, 110)]
+
+
+def test_canary_task_uses_the_first_pending_frame(tmp_path):
+    shot = _shot("sh010", frames=4, start=101)
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+    )
+    assignment = runner._assign([shot], 1)[0]
+
+    canary = runner._canary_task(assignment)
+
+    assert canary.frames == (101,)
+    assert canary.output_subdir == assignment[0].output_subdir

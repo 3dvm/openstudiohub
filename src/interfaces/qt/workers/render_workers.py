@@ -24,6 +24,7 @@ from PySide6.QtCore import Signal
 from src.application.services.render_service import RenderService
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.qt_worker import ManagedWorker
+from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.local import LocalRenderReport
 from src.infrastructure.render.vast import VastOfferError
 
@@ -44,6 +45,10 @@ class RenderBurstWorker(ManagedWorker):
         preferred_region: str = "prefer_us",
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
+        audit=None,
+        canary: bool = True,
+        run_id: str = "",
+        skip_existing: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
@@ -53,6 +58,10 @@ class RenderBurstWorker(ManagedWorker):
         self.preferred_region = str(preferred_region or "prefer_us")
         self.min_inet_down_mbps = float(min_inet_down_mbps or 0.0)
         self.min_inet_up_mbps = float(min_inet_up_mbps or 0.0)
+        self.audit = audit
+        self.canary = bool(canary)
+        self.run_id = str(run_id or "")
+        self.skip_existing = bool(skip_existing)
         self.runner = None
 
     def run(self) -> None:
@@ -64,6 +73,10 @@ class RenderBurstWorker(ManagedWorker):
                 preferred_region=self.preferred_region,
                 min_inet_down_mbps=self.min_inet_down_mbps,
                 min_inet_up_mbps=self.min_inet_up_mbps,
+                audit=self.audit,
+                canary=self.canary,
+                run_id=self.run_id,
+                skip_existing=self.skip_existing,
             )
             report = self.runner.run(
                 self.plan.shots,
@@ -110,7 +123,11 @@ class RenderPanelScanWorker(ManagedWorker):
             balance = 0.0
             price = 0.0
             offer_warning = ""
-            if self.settings.render_backend == "vast":
+            needs_vast_offer = (
+                self.settings.render_backend == "vast"
+                or self.settings.preview_backend == "vast"
+            )
+            if needs_vast_offer:
                 try:
                     offer = self.service.cheapest_offer(
                         self.settings.gpu_profile,
@@ -119,7 +136,8 @@ class RenderPanelScanWorker(ManagedWorker):
                         min_inet_down_mbps=self.settings.min_inet_down_mbps,
                         min_inet_up_mbps=self.settings.min_inet_up_mbps,
                     )
-                    price = offer.price_per_hour
+                    if self.settings.render_backend == "vast":
+                        price = offer.price_per_hour
                 except VastOfferError as error:
                     offer_warning = str(error)
                 try:
@@ -227,12 +245,14 @@ class LocalRenderWorker(ManagedWorker):
         project_root: Path,
         shots: list[RenderShot],
         settings: RenderSettings,
+        skip_existing: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
         self.project_root = Path(project_root)
         self.shots = list(shots)
         self.settings = settings
+        self.skip_existing = bool(skip_existing)
         self.runner = None
 
     def run(self) -> None:
@@ -240,14 +260,23 @@ class LocalRenderWorker(ManagedWorker):
         try:
             self.runner = self.service.local_runner(self.project_root)
             for shot in self.shots:
-                frames = range(
-                    shot.frame_start,
-                    shot.frame_end + 1,
-                    max(1, shot.frame_step),
-                )
                 output_dir = self.service.shot_output_dir(
                     self.project_root, shot, self.settings.task_type
                 )
+                state = RenderFrameStateStore(output_dir)
+                approved = state.approved_frames()
+                frames = [
+                    frame
+                    for frame in range(
+                        shot.frame_start,
+                        shot.frame_end + 1,
+                        max(1, shot.frame_step),
+                    )
+                    if not (self.skip_existing and (output_dir / f"frame_{frame:04d}.png").is_file())
+                    and frame not in approved
+                ]
+                if not frames:
+                    continue
                 report = self.runner.render(
                     shot.blend_path,
                     shot.quality,
@@ -293,6 +322,38 @@ class RenderVideoWorker(ManagedWorker):
         for shot in self.shots:
             try:
                 path = self.service.create_review_video(
+                    self.project_root, shot, self.settings
+                )
+                created += 1
+                self.video_ready.emit(shot.name, str(path))
+            except Exception as error:  # noqa: BLE001
+                self.error.emit(f"{shot.name}: {error}")
+        self.finished_videos.emit(created, len(self.shots))
+
+
+class RenderPreviewVideoWorker(ManagedWorker):
+    video_ready = Signal(str, str)  # shot name, video path
+    error = Signal(str)
+    finished_videos = Signal(int, int)
+
+    def __init__(
+        self,
+        service: RenderService,
+        project_root: Path,
+        shots: list[RenderShot],
+        settings: RenderSettings,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.project_root = Path(project_root)
+        self.shots = list(shots)
+        self.settings = settings
+
+    def run(self) -> None:
+        created = 0
+        for shot in self.shots:
+            try:
+                path = self.service.create_preview_video(
                     self.project_root, shot, self.settings
                 )
                 created += 1
