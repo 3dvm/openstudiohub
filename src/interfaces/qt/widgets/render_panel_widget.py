@@ -1157,14 +1157,8 @@ class RenderPanelWidget(QFrame):
         )
 
     def _show_latest_preview(self, shot: RenderShot) -> None:
-        path = self.vm.preview_paths.get(shot.name)
-        if path is None or not path.is_file():
-            base = self.vm.service.preview_dir(
-                self.vm.project_root, shot, task_type=self.vm.settings.task_type
-            )
-            candidates = sorted(base.glob("*/frame_*.png"), reverse=True)
-            path = candidates[0] if candidates else None
-        if path is not None and Path(path).is_file():
+        path = self.vm.latest_preview_path(shot)
+        if path is not None and path.is_file():
             self._load_preview_image(Path(path))
         else:
             self._clear_preview(self.tr("No preview yet. Click Preview selected."))

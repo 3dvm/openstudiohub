@@ -13,6 +13,7 @@ widgets and forwards user actions.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -258,6 +259,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.offer = None
         self.preview_paths = {}
         self.video_paths = {}
+        self._load_preview_paths()
         self.node_cards = []
         self.candidate_offers = []
         self._locked_shots = set()
@@ -711,7 +713,13 @@ class RenderPanelViewModel(BaseViewModel):
     def _on_preview_ready(self, shot_name: str, image_path: str) -> None:
         path = Path(image_path)
         self.preview_paths[shot_name] = path
-        self._write_status(preview=str(path))
+        self._save_preview_index()
+        self._write_status(
+            preview=str(path),
+            previews={
+                name: str(item) for name, item in self.preview_paths.items()
+            },
+        )
         self.preview_ready.emit(shot_name, str(path))
 
     def _on_previews_finished(
@@ -889,6 +897,82 @@ class RenderPanelViewModel(BaseViewModel):
         self._update_local_cards(reports)
         self._finish_shot_run(ok, sum(item.frames_rendered for item in reports))
         self.render_finished.emit(reports)
+
+    def _preview_index_path(self) -> Path | None:
+        if self.project_root is None:
+            return None
+        return self.service.render_root(self.project_root) / ".previews" / "index.json"
+
+    def _load_preview_paths(self) -> None:
+        paths: dict[str, Path] = {}
+        if self.status_store is not None:
+            data = self.status_store.read()
+            previews = data.get("previews")
+            if isinstance(previews, dict):
+                for name, value in previews.items():
+                    candidate = Path(str(value))
+                    if candidate.is_file():
+                        paths[str(name)] = candidate
+        index_path = self._preview_index_path()
+        if index_path is not None and index_path.is_file():
+            try:
+                data = json.loads(index_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
+            if isinstance(data, dict):
+                for name, value in data.items():
+                    candidate = Path(str(value))
+                    if candidate.is_file():
+                        paths[str(name)] = candidate
+        self.preview_paths = paths
+
+    def _save_preview_index(self) -> None:
+        index_path = self._preview_index_path()
+        if index_path is None:
+            return
+        try:
+            index_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = index_path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(
+                    {name: str(path) for name, path in self.preview_paths.items()},
+                    indent=2,
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(index_path)
+        except OSError:
+            pass
+
+    def latest_preview_path(self, shot: RenderShot) -> Path | None:
+        known = self.preview_paths.get(shot.name)
+        if known is not None and known.is_file():
+            return known
+        if self.project_root is None:
+            return None
+        root = self.service.render_root(self.project_root)
+        sequence = shot.sequence or "shots"
+        patterns = (
+            f".previews/*/shots/{sequence}/{shot.name}.render/frame_*.png",
+            f"shots/{sequence}/{shot.name}.render/.previews/*/frame_*.png",
+            f"shots/{sequence}/{shot.name}.render/.previews/frame_*.png",
+        )
+        candidates: list[Path] = []
+        for pattern in patterns:
+            try:
+                candidates.extend(
+                    path for path in root.glob(pattern) if path.is_file()
+                )
+            except OSError:
+                continue
+        if not candidates:
+            return None
+        newest = max(candidates, key=lambda path: path.stat().st_mtime)
+        self.preview_paths[shot.name] = newest
+        self._save_preview_index()
+        return newest
 
     def _resolve_server(self, project_root: Path):
         getter = getattr(self.config_factory, "get_server_for_project", None)

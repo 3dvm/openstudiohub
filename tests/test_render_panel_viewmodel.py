@@ -230,3 +230,42 @@ def test_preview_message_uses_the_selected_backend(qapp, tmp_path, monkeypatch):
     assert viewmodel.preview_shots([viewmodel.shots[0]]) is True
 
     assert any("on Vast.ai" in message for message in messages)
+
+
+def test_preview_paths_persist_in_the_project_index(qapp, tmp_path):
+    from src.infrastructure.render.status import RenderStatusStore
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.status_store = RenderStatusStore.for_project(tmp_path)
+    viewmodel.shots = [_shot()]
+    image = tmp_path / "preview.png"
+    image.write_bytes(b"x")
+
+    viewmodel._on_preview_ready("sh010", str(image))
+
+    second = RenderPanelViewModel(RenderService())
+    second.project_root = tmp_path
+    second.status_store = RenderStatusStore.for_project(tmp_path)
+    second._load_preview_paths()
+
+    assert second.preview_paths["sh010"] == image
+
+
+def test_latest_preview_path_finds_run_level_vast_previews(qapp, tmp_path):
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    shot = _shot()
+    image = (
+        viewmodel.service.render_root(tmp_path)
+        / ".previews"
+        / "20261106-182230"
+        / "shots"
+        / "sq010"
+        / "sh010.render"
+        / "frame_0101.png"
+    )
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"x")
+
+    assert viewmodel.latest_preview_path(shot) == image

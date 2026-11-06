@@ -39,6 +39,10 @@ every shot as a collapsible card; the right side shows the selected shot.
 - **Render setup audit:** compositing on/off, view layers and whether each one
   is connected to the compositor output, output format/color, camera, fps and
   the output path.
+- **Preview lookup:** preview images are remembered per shot in
+  `.render_status.json` and `03_render/.previews/index.json`. When a run is
+  reopened, the panel also searches the timestamped Vast preview folders, so a
+  finished preview stays attached to its shot after a reload.
 - **Preview:** one frame of the composite is rendered at 50% / 32 samples by
   default. Preview can run locally (default) or on a Vast node. The preview is
   the quickest way to catch a missing view layer or a broken compositor before

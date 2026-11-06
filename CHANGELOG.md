@@ -26,6 +26,8 @@ releases may include larger UI or workflow changes.
 - Render plans now exclude approved frames and only schedule pending frames.
 - Render nodes copy their remote Blender logs and diagnostics before being
   destroyed, even on success or cancellation.
+- Preview images are persisted per shot and recovered from the timestamped
+  Vast preview folders after a project reload.
 - Preview and final renders always show a result dialog with a summary, log
   access and retry actions. Preview reporting now uses the correct Vast.ai or
   local message.
