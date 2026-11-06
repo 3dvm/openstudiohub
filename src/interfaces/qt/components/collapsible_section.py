@@ -24,6 +24,7 @@ class CollapsibleSection(QFrame):
     def __init__(self, title: str, parent=None, *, expanded: bool = True) -> None:
         super().__init__(parent)
         self.setObjectName("CardFrame")
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 10, 12, 10)
