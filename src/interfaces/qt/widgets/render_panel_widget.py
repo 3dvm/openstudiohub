@@ -187,6 +187,11 @@ class RenderPanelWidget(QFrame):
         right_layout.setSpacing(10)
         right_layout.addLayout(self._build_actions())
 
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        right_layout.addWidget(self.progress)
+
         preview_frame = CollapsibleSection(self.tr("Preview (composite)"))
         self.preview_section = preview_frame
         self.preview_label = QLabel(self.tr("Select a shot to see its preview."))
@@ -235,11 +240,6 @@ class RenderPanelWidget(QFrame):
         self._build_settings(right_layout)
         right_layout.addWidget(self._build_summary_frame())
         right_layout.addWidget(self._build_video_frame())
-
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 1)
-        self.progress.setValue(0)
-        right_layout.addWidget(self.progress)
         right_layout.addStretch()
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
