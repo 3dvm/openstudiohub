@@ -565,6 +565,22 @@ class RenderPanelViewModel(BaseViewModel):
             if worker is not None and hasattr(worker, "cancel"):
                 worker.cancel()
 
+    def stop_all_processes(self) -> None:
+        """Cancel every cancellable render-related worker."""
+        self.cancel_render()
+        for key in (
+            "render_scan",
+            "render_candidates",
+            "render_benchmark",
+            "render_video",
+            "render_preview_video",
+            "kitsu_upload",
+        ):
+            worker = self.workers.get(key)
+            if worker is not None and hasattr(worker, "cancel"):
+                worker.cancel()
+        self.report_status("Stopping all render processes...", "yellow")
+
     def _handle_burst_finished(self, report) -> None:
         self.set_busy(False)
         self._write_status(
@@ -714,6 +730,19 @@ class RenderPanelViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Frame review (sequence player)
     # ------------------------------------------------------------------
+    def shot_progress(self, shot: RenderShot) -> tuple[int, int]:
+        if self.project_root is None:
+            return 0, int(shot.frames)
+        folder = self.service.shot_output_dir(
+            self.project_root, shot, self.settings.task_type
+        )
+        step = max(1, int(shot.frame_step or 1))
+        done = 0
+        for frame in range(shot.frame_start, shot.frame_end + 1, step):
+            if (folder / f"frame_{frame:04d}.png").is_file():
+                done += 1
+        return done, int(shot.frames)
+
     def sequence_entries(self, shot: RenderShot) -> list[tuple[int, Path | None]]:
         if self.project_root is None:
             return []
@@ -729,10 +758,14 @@ class RenderPanelViewModel(BaseViewModel):
         ).approved_frames()
 
     def delete_frame(self, shot: RenderShot, frame: int) -> tuple[bool, str]:
+        ok, message, _deleted = self.delete_frames(shot, [frame])
+        return ok, message
+
+    def delete_frames(self, shot: RenderShot, frames: list[int]):
         if self.project_root is None or self.read_only:
-            return False, "The render panel is read-only."
-        result = self.service.delete_frame(
-            self.project_root, shot, frame, self.settings.task_type
+            return False, "The render panel is read-only.", ()
+        result = self.service.delete_frames(
+            self.project_root, shot, frames, self.settings.task_type
         )
         self.report_status(result[1], "green" if result[0] else "red")
         return result
@@ -740,12 +773,17 @@ class RenderPanelViewModel(BaseViewModel):
     def approve_frame(
         self, shot: RenderShot, frame: int, approved: bool
     ) -> tuple[bool, str]:
+        return self.approve_frames(shot, [frame], approved)
+
+    def approve_frames(
+        self, shot: RenderShot, frames: list[int], approved: bool
+    ) -> tuple[bool, str]:
         if self.project_root is None or self.read_only:
             return False, "The render panel is read-only."
-        result = self.service.approve_frame(
+        result = self.service.approve_frames(
             self.project_root,
             shot,
-            frame,
+            frames,
             approved,
             task_type=self.settings.task_type,
         )

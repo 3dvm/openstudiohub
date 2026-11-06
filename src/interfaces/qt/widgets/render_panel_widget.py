@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -67,6 +67,9 @@ class RenderPanelWidget(QFrame):
         self._populating = False
         self._current_preview = ""
         self._node_card_widgets: dict[int, RenderNodeCard] = {}
+        self._shot_progress_timer = QTimer(self)
+        self._shot_progress_timer.setInterval(2000)
+        self._shot_progress_timer.timeout.connect(self._refresh_shot_progress)
 
         self.setObjectName("RenderPanelBase")
         self._build_ui()
@@ -130,7 +133,7 @@ class RenderPanelWidget(QFrame):
         shots_layout = QVBoxLayout(shots_panel)
         shots_layout.setContentsMargins(0, 0, 0, 0)
         shots_layout.setSpacing(8)
-        self.table = QTableWidget(0, 8)
+        self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(
             [
                 "",
@@ -141,6 +144,8 @@ class RenderPanelWidget(QFrame):
                 self.tr("Layers"),
                 self.tr("s/frame"),
                 self.tr("Cost"),
+                self.tr("Rendered"),
+                self.tr("Preview"),
             ]
         )
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -156,6 +161,8 @@ class RenderPanelWidget(QFrame):
         header_view.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(6, QHeaderView.ResizeToContents)
         header_view.setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(8, QHeaderView.ResizeToContents)
+        header_view.setSectionResizeMode(9, QHeaderView.ResizeToContents)
         self.table.setMinimumHeight(260)
         self.table.itemSelectionChanged.connect(self._on_shot_selected)
         self.table.itemChanged.connect(self._on_check_changed)
@@ -178,6 +185,7 @@ class RenderPanelWidget(QFrame):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(4, 0, 0, 0)
         right_layout.setSpacing(10)
+        right_layout.addLayout(self._build_actions())
 
         preview_frame = CollapsibleSection(self.tr("Preview (composite)"))
         self.preview_section = preview_frame
@@ -227,7 +235,6 @@ class RenderPanelWidget(QFrame):
         self._build_settings(right_layout)
         right_layout.addWidget(self._build_summary_frame())
         right_layout.addWidget(self._build_video_frame())
-        right_layout.addLayout(self._build_actions())
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 1)
@@ -235,8 +242,8 @@ class RenderPanelWidget(QFrame):
         right_layout.addWidget(self.progress)
         right_layout.addStretch()
         splitter.addWidget(right)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
         layout.addWidget(splitter, 1)
 
         if self.read_only:
@@ -248,6 +255,7 @@ class RenderPanelWidget(QFrame):
                 self.btn_play_final,
                 self.btn_start,
                 self.btn_cancel,
+                self.btn_stop_all,
                 self.btn_video,
                 self.btn_preview_video,
                 self.btn_retry_render,
@@ -473,6 +481,9 @@ class RenderPanelWidget(QFrame):
         self.btn_cancel.setObjectName("DangerButton")
         self.btn_cancel.setEnabled(False)
         self.btn_cancel.clicked.connect(self._cancel_render)
+        self.btn_stop_all = QPushButton(self.tr("Stop all processes"))
+        self.btn_stop_all.setObjectName("DangerButton")
+        self.btn_stop_all.clicked.connect(self._stop_all)
         self.btn_retry_render = QPushButton(self.tr("Retry missing frames"))
         self.btn_retry_render.setObjectName("SecondaryButton")
         self.btn_retry_render.clicked.connect(self._retry_render)
@@ -491,6 +502,7 @@ class RenderPanelWidget(QFrame):
         self.btn_output.clicked.connect(self._open_output)
         actions.addWidget(self.btn_start)
         actions.addWidget(self.btn_cancel)
+        actions.addWidget(self.btn_stop_all)
         actions.addWidget(self.btn_retry_render)
         actions.addWidget(self.btn_preview_video)
         actions.addWidget(self.btn_video)
@@ -503,8 +515,8 @@ class RenderPanelWidget(QFrame):
     # Wiring
     # ------------------------------------------------------------------
     def _connect(self) -> None:
-        self.player.delete_requested.connect(self._delete_frame)
-        self.player.approve_requested.connect(self._approve_frame)
+        self.player.delete_frames_requested.connect(self._delete_frames)
+        self.player.approve_frames_requested.connect(self._approve_frames)
         self.combo_target.currentIndexChanged.connect(self._on_target_changed)
         self.combo_backend.currentIndexChanged.connect(self._sync_backend_sections)
         self.combo_preview_backend.currentIndexChanged.connect(self._sync_backend_sections)
@@ -812,6 +824,20 @@ class RenderPanelWidget(QFrame):
                 )
             cost = shot.frames * seconds / 3600.0 * max(0.0, price)
             self.table.setItem(row, 7, QTableWidgetItem(f"${cost:.2f}"))
+            done, expected = self.vm.shot_progress(shot)
+            percent = (done / expected * 100.0) if expected else 0.0
+            self.table.setItem(
+                row,
+                8,
+                QTableWidgetItem(f"{done}/{expected} ({percent:.0f}%)"),
+            )
+            play = QPushButton(self.tr("View"))
+            play.setObjectName("SecondaryButton")
+            play.setEnabled(bool(shot.is_ready))
+            play.clicked.connect(
+                lambda _checked=False, target=shot: self._show_sequence_for_shot(target)
+            )
+            self.table.setCellWidget(row, 9, play)
         self._populating = False
 
     @staticmethod
@@ -915,7 +941,10 @@ class RenderPanelWidget(QFrame):
         if self._selected_shot is None:
             QMessageBox.warning(self, self.tr("Render"), self.tr("Select a shot first."))
             return
-        entries = self.vm.sequence_entries(self._selected_shot)
+        self._show_sequence_for_shot(self._selected_shot)
+
+    def _show_sequence_for_shot(self, shot: RenderShot) -> None:
+        entries = self.vm.sequence_entries(shot)
         rendered = [entry for entry in entries if entry[1] is not None]
         if not rendered:
             QMessageBox.information(
@@ -924,39 +953,51 @@ class RenderPanelWidget(QFrame):
                 self.tr("No rendered frames were found for this shot."),
             )
             return
-        fps = self._selected_shot.setup.fps if self._selected_shot.setup else 24.0
+        self._selected_shot = shot
+        fps = shot.setup.fps if shot.setup else 24.0
         self.preview_stack.setCurrentWidget(self.player)
         self.player.set_sequence(
             rendered,
             fps=fps,
-            approved=self.vm.approved_frames(self._selected_shot),
+            approved=self.vm.approved_frames(shot),
             autoplay=True,
         )
         self._append_log(
-            f"Playing final sequence for {self._selected_shot.name} "
-            f"({len(rendered)} frame(s))."
+            f"Playing final sequence for {shot.name} ({len(rendered)} frame(s))."
         )
 
-    def _delete_frame(self, frame: int) -> None:
-        if self._selected_shot is None:
+    def _refresh_shot_progress(self) -> None:
+        if not self._shots:
             return
-        ok, message = self.vm.delete_frame(self._selected_shot, frame)
-        self._append_log(message)
-        if ok:
-            self.player.remove_frame(frame)
-        else:
-            QMessageBox.warning(self, self.tr("Delete frame"), message)
+        for row, shot in enumerate(self._shots):
+            done, expected = self.vm.shot_progress(shot)
+            percent = (done / expected * 100.0) if expected else 0.0
+            item = self.table.item(row, 8)
+            if item is None:
+                item = QTableWidgetItem()
+                self.table.setItem(row, 8, item)
+            item.setText(f"{done}/{expected} ({percent:.0f}%)")
 
-    def _approve_frame(self, frame: int, approved: bool) -> None:
-        if self._selected_shot is None:
+    def _delete_frames(self, frames: list) -> None:
+        if self._selected_shot is None or not frames:
             return
-        ok, message = self.vm.approve_frame(self._selected_shot, frame, approved)
+        ok, message, deleted = self.vm.delete_frames(self._selected_shot, frames)
         self._append_log(message)
         if ok:
-            self.player.set_frame_approved(frame, approved)
+            self.player.remove_frames(list(deleted))
         else:
-            self.player.set_frame_approved(frame, not approved)
-            QMessageBox.warning(self, self.tr("Approve frame"), message)
+            QMessageBox.warning(self, self.tr("Delete frames"), message)
+
+    def _approve_frames(self, frames: list, approved: bool) -> None:
+        if self._selected_shot is None or not frames:
+            return
+        ok, message = self.vm.approve_frames(self._selected_shot, frames, approved)
+        self._append_log(message)
+        if ok:
+            self.player.set_frames_approved(frames, approved)
+        else:
+            self.player.set_frames_approved(frames, not approved)
+            QMessageBox.warning(self, self.tr("Approve frames"), message)
 
     def _benchmark_selected(self) -> None:
         if self._selected_shot is None:
@@ -1057,6 +1098,7 @@ class RenderPanelWidget(QFrame):
         self.btn_start.setEnabled(False)
         self.btn_cancel.setEnabled(True)
         self._append_log("Starting render...")
+        self._shot_progress_timer.start()
         self.vm.start_render()
 
     def _cancel_render(self) -> None:
@@ -1072,10 +1114,16 @@ class RenderPanelWidget(QFrame):
             return
         self.vm.create_preview_videos([self._selected_shot])
 
+    def _stop_all(self) -> None:
+        self._shot_progress_timer.stop()
+        self.vm.stop_all_processes()
+        self._append_log("Stopping every render process...")
+
     def _retry_render(self) -> None:
         if not self.vm.start_render(retry=True):
             return
         self.btn_retry_render.hide()
+        self._shot_progress_timer.start()
         self._append_log("Retrying the missing frames...")
 
     def _open_run_logs(self) -> None:
@@ -1092,6 +1140,8 @@ class RenderPanelWidget(QFrame):
         self._append_log(
             f"[node {event.node}] {event.stage}: {event.message}"
         )
+        if getattr(event, "stage", "") not in ("frame", "device", "bake"):
+            self._refresh_shot_progress()
         if event.frames_total > 0:
             self.progress.setRange(0, event.frames_total)
             self.progress.setValue(min(event.frames_done, event.frames_total))
@@ -1117,6 +1167,8 @@ class RenderPanelWidget(QFrame):
             )
         else:
             message = getattr(report, "message", "Render finished.")
+        self._shot_progress_timer.stop()
+        self._refresh_shot_progress()
         self._append_log(message)
         if not missing and self._selected_shot is not None:
             self._play_final_sequence()
@@ -1213,6 +1265,7 @@ class RenderPanelWidget(QFrame):
         )
 
     def _on_error(self, message: str) -> None:
+        self._shot_progress_timer.stop()
         self._append_log(message)
         self.btn_cancel.setEnabled(False)
         QMessageBox.critical(self, self.tr("Render"), message)

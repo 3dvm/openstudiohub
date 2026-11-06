@@ -407,10 +407,13 @@ class RenderVideoWorker(ManagedWorker):
         self.project_root = Path(project_root)
         self.shots = list(shots)
         self.settings = settings
+        self._cancelled = False
 
     def run(self) -> None:
         created = 0
         for shot in self.shots:
+            if self._cancelled:
+                break
             try:
                 path = self.service.create_review_video(
                     self.project_root, shot, self.settings
@@ -420,6 +423,9 @@ class RenderVideoWorker(ManagedWorker):
             except Exception as error:  # noqa: BLE001
                 self.error.emit(f"{shot.name}: {error}")
         self.finished_videos.emit(created, len(self.shots))
+
+    def cancel(self) -> None:
+        self._cancelled = True
 
 
 class RenderPreviewVideoWorker(ManagedWorker):
@@ -439,10 +445,13 @@ class RenderPreviewVideoWorker(ManagedWorker):
         self.project_root = Path(project_root)
         self.shots = list(shots)
         self.settings = settings
+        self._cancelled = False
 
     def run(self) -> None:
         created = 0
         for shot in self.shots:
+            if self._cancelled:
+                break
             try:
                 path = self.service.create_preview_video(
                     self.project_root, shot, self.settings
@@ -452,6 +461,9 @@ class RenderPreviewVideoWorker(ManagedWorker):
             except Exception as error:  # noqa: BLE001
                 self.error.emit(f"{shot.name}: {error}")
         self.finished_videos.emit(created, len(self.shots))
+
+    def cancel(self) -> None:
+        self._cancelled = True
 
 
 class KitsuStatusesWorker(ManagedWorker):
@@ -547,6 +559,7 @@ class RenderBenchmarkWorker(ManagedWorker):
         self.shot = shot
         self.settings = settings
         self.offer = offer
+        self.runner = None
 
     def run(self) -> None:
         try:
@@ -601,6 +614,7 @@ class RenderBenchmarkWorker(ManagedWorker):
                 min_inet_down_mbps=self.settings.min_inet_down_mbps,
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
             )
+            self.runner = runner
             timings: list[float] = []
 
             def on_progress(event) -> None:

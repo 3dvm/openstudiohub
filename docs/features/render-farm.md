@@ -16,7 +16,11 @@ The project selector at the top chooses the production. The left side lists
 every shot with a checkbox; the right side shows the selected shot.
 
 - **Shot selection:** only ready shots can be checked. Empty template scenes are
-  listed as not ready and are never rented for.
+  listed as not ready and are never rented for. Each row shows how many frames
+  are rendered (`120/140 · 86%`) and has a **View** button that opens the
+  rendered sequence player for that shot.
+- **Run controls:** Start, Cancel, **Stop all processes**, preview/review video
+  actions and log access sit at the top of the panel, above the preview.
 - **Render setup audit:** compositing on/off, view layers and whether each one
   is connected to the compositor output, output format/color, camera, fps and
   the output path.
@@ -31,6 +35,9 @@ every shot with a checkbox; the right side shows the selected shot.
   lifecycle: candidate, creating, booting, SSH, installing, staging, rendering,
   syncing, completed, failed or destroyed. At the end, the card exposes buttons
   that open its Hub log, summary and raw Blender log directly.
+- **Frame ranges:** the sequence player has **In point** / **Out point** and
+  **Clear range** controls. **Approve selection** and **Delete selection** act
+  on the selected frame range, or on the current frame when no range is set.
 - **Final render:** Vast.ai on-demand or local headless, one project at a time. GPU profiles: RTX 3070, 3080, 4070, 3090, 4090 and A6000.
 - **Final sequence player:** the panel replays the rendered PNG sequence with
   play/pause, scrubbing and frame stepping. The current frame can be moved to

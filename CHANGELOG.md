@@ -17,6 +17,12 @@ releases may include larger UI or workflow changes.
     Blender output file;
   - partial runs expose **Retry missing frames** and skip frames that already
     exist or are approved.
+- Render controls now sit at the top of the panel, with a **Stop all processes**
+  button.
+- Each shot row shows rendered-frame progress and a **View** button for its
+  image sequence.
+- The sequence player supports In/Out points for approving or deleting a frame
+  range; without a range the actions apply to the current frame.
 - The render panel shows a four-column grid of node cards after the plan is
   calculated: candidate offers before renting, live per-node status during the
   run, and buttons to open the Hub, summary and Blender logs when each node

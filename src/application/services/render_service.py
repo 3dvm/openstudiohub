@@ -679,23 +679,50 @@ class RenderService:
         task_type: str = "render",
     ) -> tuple[bool, str]:
         """Move one rendered frame to a local trash folder."""
+        ok, message, _deleted = self.delete_frames(
+            project_root, shot, [frame], task_type=task_type
+        )
+        return ok, message
+
+    def delete_frames(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        frames: list[int],
+        task_type: str = "render",
+    ) -> tuple[bool, str, tuple[int, ...]]:
+        """Move rendered frames to a local trash folder, skipping approved ones."""
         folder = self.shot_output_dir(project_root, shot, task_type)
-        source = folder / f"frame_{int(frame):04d}.png"
-        if not source.is_file():
-            return False, f"Frame {frame} was not found."
         store = RenderFrameStateStore(folder)
-        if store.is_approved(frame):
-            return False, "This frame is approved. Unlock it before deleting."
+        approved = store.approved_frames()
+        deleted: list[int] = []
+        skipped = 0
         trash = folder / ".frame_trash"
-        trash.mkdir(parents=True, exist_ok=True)
-        destination = trash / source.name
-        try:
-            if destination.exists():
-                destination = trash / f"{source.stem}-{int(datetime.now().timestamp())}{source.suffix}"
-            shutil.move(str(source), str(destination))
-        except OSError as error:
-            return False, f"Could not move the frame to the trash: {error}"
-        return True, f"Frame {frame} moved to {destination}."
+        for frame in sorted({int(item) for item in frames or ()}):
+            source = folder / f"frame_{frame:04d}.png"
+            if not source.is_file():
+                skipped += 1
+                continue
+            if frame in approved:
+                skipped += 1
+                continue
+            trash.mkdir(parents=True, exist_ok=True)
+            destination = trash / source.name
+            try:
+                if destination.exists():
+                    destination = trash / (
+                        f"{source.stem}-{int(datetime.now().timestamp())}{source.suffix}"
+                    )
+                shutil.move(str(source), str(destination))
+            except OSError as error:
+                return False, f"Could not move the frames to the trash: {error}", tuple(deleted)
+            deleted.append(frame)
+        if not deleted:
+            return False, "No frames were deleted (approved or missing).", ()
+        message = f"Moved {len(deleted)} frame(s) to {trash}."
+        if skipped:
+            message += f" Skipped {skipped} approved or missing frame(s)."
+        return True, message, tuple(deleted)
 
     def approve_frame(
         self,
@@ -708,20 +735,44 @@ class RenderService:
         task_type: str = "render",
     ) -> tuple[bool, str]:
         """Lock or unlock a rendered frame so future renders skip it."""
+        return self.approve_frames(
+            project_root,
+            shot,
+            [frame],
+            approved,
+            user=user,
+            task_type=task_type,
+        )
+
+    def approve_frames(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        frames: list[int],
+        approved: bool,
+        *,
+        user: str = "",
+        task_type: str = "render",
+    ) -> tuple[bool, str]:
         folder = self.shot_output_dir(project_root, shot, task_type)
-        path = folder / f"frame_{int(frame):04d}.png"
-        if approved and not path.is_file():
-            return False, "Only rendered frames can be approved."
+        selected = sorted({int(item) for item in frames or ()})
+        if not selected:
+            return False, "Select at least one frame."
+        if approved:
+            missing = [
+                frame
+                for frame in selected
+                if not (folder / f"frame_{frame:04d}.png").is_file()
+            ]
+            if missing:
+                return False, "Only rendered frames can be approved."
         store = RenderFrameStateStore(folder)
         try:
-            if approved:
-                store.approve(frame, user=user)
-            else:
-                store.unapprove(frame)
+            store.set_approved(selected, approved, user=user)
         except OSError as error:
             return False, f"Could not update the frame state: {error}"
         state = "approved" if approved else "unlocked"
-        return True, f"Frame {frame} {state}."
+        return True, f"{len(selected)} frame(s) {state}."
 
     def create_preview_video(
         self,

@@ -153,3 +153,24 @@ def test_frame_delete_moves_to_trash_and_respects_approval(tmp_path):
     assert ok is True
     assert not frame.exists()
     assert (output / ".frame_trash" / "frame_0101.png").is_file()
+
+
+def test_frame_ranges_can_be_approved_and_deleted_in_one_operation(tmp_path):
+    root = _project(tmp_path)
+    service = RenderService()
+    shot = _shot()
+    output = service.shot_output_dir(root, shot)
+    output.mkdir(parents=True)
+    for frame in (101, 102, 103):
+        (output / f"frame_{frame:04d}.png").write_bytes(b"x")
+
+    ok, _message = service.approve_frames(root, shot, [101, 102], True)
+    assert ok is True
+    approvals = service.frame_state_store(root, shot).approved_frames()
+    assert approvals == {101, 102}
+
+    ok, _message, deleted = service.delete_frames(root, shot, [101, 102, 103])
+    assert ok is True
+    assert deleted == (103,)
+    assert not (output / "frame_0103.png").exists()
+    assert (output / "frame_0101.png").is_file()

@@ -52,6 +52,33 @@ class RenderFrameStateStore:
     def unapprove(self, frame: int) -> None:
         self._update(frame, approved=False, user="")
 
+    def set_approved(self, frames, approved: bool, user: str = "") -> None:
+        """Approve or unlock several frames with a single atomic write."""
+        frames = {int(frame) for frame in frames or ()}
+        if not frames:
+            return
+        with self._lock:
+            data = self.read()
+            entries = data.get("approved")
+            if not isinstance(entries, dict):
+                entries = {}
+            for frame in frames:
+                if approved:
+                    entries[str(frame)] = {
+                        "at": datetime.now(timezone.utc).isoformat(),
+                        "by": str(user or ""),
+                    }
+                else:
+                    entries.pop(str(frame), None)
+            data["approved"] = entries
+            self.shot_dir.mkdir(parents=True, exist_ok=True)
+            temporary = self.path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self.path)
+
     def _update(self, frame: int, *, approved: bool, user: str) -> None:
         frame = int(frame)
         with self._lock:

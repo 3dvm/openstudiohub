@@ -34,8 +34,8 @@ _CACHE_SIZE = 12
 class FrameSequencePlayer(QWidget):
     """Play a list of ``(frame_number, path_or_none)`` entries at a fixed fps."""
 
-    delete_requested = Signal(int)
-    approve_requested = Signal(int, bool)
+    delete_frames_requested = Signal(list)
+    approve_frames_requested = Signal(list, bool)
     position_changed = Signal(int)
 
     def __init__(self, parent=None) -> None:
@@ -45,6 +45,8 @@ class FrameSequencePlayer(QWidget):
         self._cache: OrderedDict[int, QPixmap] = OrderedDict()
         self._fps = 24.0
         self._index = 0
+        self._in_point: int | None = None
+        self._out_point: int | None = None
         self._updating = False
 
         self._timer = QTimer(self)
@@ -72,15 +74,39 @@ class FrameSequencePlayer(QWidget):
         controls.addWidget(self.lbl_frame)
         controls.addStretch()
 
+        self.btn_in = QPushButton(self.tr("In point"))
+        self.btn_in.setObjectName("SecondaryButton")
+        self.btn_in.clicked.connect(self._set_in_point)
+        controls.addWidget(self.btn_in)
+
+        self.btn_out = QPushButton(self.tr("Out point"))
+        self.btn_out.setObjectName("SecondaryButton")
+        self.btn_out.clicked.connect(self._set_out_point)
+        controls.addWidget(self.btn_out)
+
+        self.btn_clear_range = QPushButton(self.tr("Clear range"))
+        self.btn_clear_range.setObjectName("SecondaryButton")
+        self.btn_clear_range.clicked.connect(self._clear_range)
+        controls.addWidget(self.btn_clear_range)
+
         self.chk_approve = QCheckBox(self.tr("Approved"))
         self.chk_approve.toggled.connect(self._on_approve_toggled)
         controls.addWidget(self.chk_approve)
 
-        self.btn_delete = QPushButton(self.tr("Delete frame"))
+        self.btn_approve_selection = QPushButton(self.tr("Approve selection"))
+        self.btn_approve_selection.setObjectName("SuccessButton")
+        self.btn_approve_selection.clicked.connect(self._on_approve_selection)
+        controls.addWidget(self.btn_approve_selection)
+
+        self.btn_delete = QPushButton(self.tr("Delete selection"))
         self.btn_delete.setObjectName("DangerButton")
         self.btn_delete.clicked.connect(self._on_delete)
         controls.addWidget(self.btn_delete)
         layout.addLayout(controls)
+
+        self.lbl_range = QLabel(self.tr("Selection: current frame"))
+        self.lbl_range.setObjectName("MutedLabel")
+        layout.addWidget(self.lbl_range)
 
         self.slider = QSlider(Qt.Horizontal)
         self.slider.valueChanged.connect(self._on_slider_changed)
@@ -103,6 +129,8 @@ class FrameSequencePlayer(QWidget):
         self._approved = set(approved or ())
         self._cache.clear()
         self._index = 0
+        self._in_point = None
+        self._out_point = None
         self._fps = max(1.0, float(fps or 24.0))
         self._timer.setInterval(max(1, int(round(1000.0 / self._fps))))
         self._updating = True
@@ -111,6 +139,7 @@ class FrameSequencePlayer(QWidget):
         self._updating = False
         self._set_controls_enabled(bool(self._entries))
         self._show_index(0)
+        self._update_range_label()
         if autoplay and self._entries:
             self.play()
 
@@ -136,6 +165,7 @@ class FrameSequencePlayer(QWidget):
         if had_entries and not self._timer.isActive():
             self.pause()
         self._show_index(self._index)
+        self._update_range_label()
         self.position_changed.emit(self.current_frame() or 0)
 
     def set_frame_approved(self, frame: int, approved: bool) -> None:
@@ -146,6 +176,31 @@ class FrameSequencePlayer(QWidget):
             self._approved.discard(frame)
         if self.current_frame() == frame:
             self._refresh_approval()
+
+    def set_frames_approved(self, frames: list[int], approved: bool) -> None:
+        for frame in frames or []:
+            if approved:
+                self._approved.add(int(frame))
+            else:
+                self._approved.discard(int(frame))
+        self._refresh_approval()
+
+    def remove_frames(self, frames: list[int]) -> None:
+        for frame in frames or []:
+            self.remove_frame(frame)
+
+    def _set_controls_enabled(self, enabled: bool) -> None:
+        for widget in (
+            self.btn_play,
+            self.slider,
+            self.chk_approve,
+            self.btn_approve_selection,
+            self.btn_delete,
+            self.btn_in,
+            self.btn_out,
+            self.btn_clear_range,
+        ):
+            widget.setEnabled(enabled)
 
     def current_frame(self) -> int | None:
         if not self._entries:
@@ -218,6 +273,57 @@ class FrameSequencePlayer(QWidget):
         self._refresh_approval()
         self.position_changed.emit(frame)
 
+    def selected_frames(self) -> list[int]:
+        if not self._entries:
+            return []
+        current = self.current_frame()
+        if current is None:
+            return []
+        if self._in_point is not None and self._out_point is not None:
+            first, last = sorted((self._in_point, self._out_point))
+            return [
+                frame
+                for frame, path in self._entries
+                if first <= frame <= last and path is not None
+            ]
+        return [current]
+
+    def _set_in_point(self) -> None:
+        frame = self.current_frame()
+        if frame is not None:
+            self._in_point = frame
+            if self._out_point is not None and self._out_point < frame:
+                self._out_point = frame
+            self._update_range_label()
+
+    def _set_out_point(self) -> None:
+        frame = self.current_frame()
+        if frame is not None:
+            self._out_point = frame
+            if self._in_point is None:
+                self._in_point = frame
+            elif self._out_point < self._in_point:
+                self._in_point, self._out_point = self._out_point, self._in_point
+            self._update_range_label()
+
+    def _clear_range(self) -> None:
+        self._in_point = None
+        self._out_point = None
+        self._update_range_label()
+
+    def _update_range_label(self) -> None:
+        if self._in_point is not None and self._out_point is not None:
+            first, last = sorted((self._in_point, self._out_point))
+            count = len(self.selected_frames())
+            self.lbl_range.setText(
+                self.tr("Selection: frames {0}–{1} ({2} frames)").format(
+                    first, last, count
+                )
+            )
+        else:
+            self.lbl_range.setText(self.tr("Selection: current frame"))
+        self._refresh_approval()
+
     def _refresh_approval(self) -> None:
         frame = self.current_frame()
         has_frame = frame is not None and self.current_path() is not None
@@ -225,7 +331,11 @@ class FrameSequencePlayer(QWidget):
         self.chk_approve.setChecked(bool(frame is not None and frame in self._approved))
         self._updating = False
         self.chk_approve.setEnabled(has_frame)
-        self.btn_delete.setEnabled(has_frame and not self.chk_approve.isChecked())
+        selected = self.selected_frames()
+        self.btn_approve_selection.setEnabled(bool(selected))
+        self.btn_delete.setEnabled(
+            bool(selected) and any(frame not in self._approved for frame in selected)
+        )
 
     def _pixmap_for(self, frame: int, path: Path) -> QPixmap:
         cached = self._cache.get(frame)
@@ -245,15 +355,15 @@ class FrameSequencePlayer(QWidget):
         frame = self.current_frame()
         if frame is None:
             return
-        self.approve_requested.emit(frame, bool(checked))
+        self.approve_frames_requested.emit([frame], bool(checked))
+
+    def _on_approve_selection(self) -> None:
+        frames = self.selected_frames()
+        if frames:
+            self.approve_frames_requested.emit(frames, True)
 
     def _on_delete(self) -> None:
-        frame = self.current_frame()
-        if frame is not None:
-            self.delete_requested.emit(frame)
+        frames = self.selected_frames()
+        if frames:
+            self.delete_frames_requested.emit(frames)
 
-    def _set_controls_enabled(self, enabled: bool) -> None:
-        self.btn_play.setEnabled(enabled)
-        self.slider.setEnabled(enabled)
-        self.chk_approve.setEnabled(enabled)
-        self.btn_delete.setEnabled(enabled)
