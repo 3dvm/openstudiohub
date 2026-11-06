@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
 
 STATUS_LABELS = {
@@ -60,20 +61,35 @@ class VcsPublishDialog(QDialog):
             if getattr(card, "task_file_path", "")
             else "task files"
         )
-        self.checklist_items = self._completed_checklist_items()
+        self._checklist_items: list[dict] = []
+        self._checklist_boxes: dict[tuple[str, int], QCheckBox] = {}
+        self._checklist_saving = False
         self._auto_message = ""
         self._busy = False
         self._connected = False
         self._conflict_connected = False
+        self._checklist_connected = False
+        self._checklist_saving_connected = False
+        self._paths_connected = False
 
         self._build_ui(task_label)
         self._populate_changes()
+        self._load_checklist()
         self._refresh_auto_message()
         self.vm.vcs_publish_finished.connect(self._on_publish_finished)
         self._connected = True
         if hasattr(self.vm, "vcs_conflict_resolved"):
             self.vm.vcs_conflict_resolved.connect(self._on_conflict_resolved)
             self._conflict_connected = True
+        if hasattr(self.vm, "task_checklist_ready"):
+            self.vm.task_checklist_ready.connect(self._on_task_checklist_ready)
+            self._checklist_connected = True
+        if hasattr(self.vm, "task_checklist_saving"):
+            self.vm.task_checklist_saving.connect(self._on_task_checklist_saving)
+            self._checklist_saving_connected = True
+        if hasattr(self.vm, "vcs_paths_handled"):
+            self.vm.vcs_paths_handled.connect(self._on_vcs_paths_handled)
+            self._paths_connected = True
 
     # ------------------------------------------------------------------
     # UI
@@ -123,6 +139,37 @@ class VcsPublishDialog(QDialog):
         self.btn_resolve_conflict.hide()
         layout.addWidget(self.btn_resolve_conflict)
 
+        self.lbl_missing = QLabel(self.tr("Missing files (deleted from disk)"))
+        self.lbl_missing.setObjectName("WarningLabel")
+        self.lbl_missing.hide()
+        layout.addWidget(self.lbl_missing)
+
+        self.missing_list = QListWidget()
+        self.missing_list.setObjectName("DataList")
+        self.missing_list.setMaximumHeight(110)
+        self.missing_list.itemChanged.connect(self._on_missing_selection_changed)
+        self.missing_list.hide()
+        layout.addWidget(self.missing_list)
+
+        self.missing_actions = QHBoxLayout()
+        self.btn_select_all_missing = QPushButton(self.tr("Select all missing"))
+        self.btn_select_all_missing.setObjectName("SecondaryButton")
+        self.btn_select_all_missing.clicked.connect(self._select_all_missing)
+        self.missing_actions.addWidget(self.btn_select_all_missing)
+
+        self.btn_restore_missing = QPushButton(self.tr("Restore selected"))
+        self.btn_restore_missing.setObjectName("SecondaryButton")
+        self.btn_restore_missing.clicked.connect(self._restore_missing)
+        self.missing_actions.addWidget(self.btn_restore_missing)
+
+        self.btn_delete_missing = QPushButton(self.tr("Delete from repository"))
+        self.btn_delete_missing.setObjectName("SecondaryButton")
+        self.btn_delete_missing.clicked.connect(self._delete_missing)
+        self.missing_actions.addWidget(self.btn_delete_missing)
+        self.missing_actions.addStretch()
+        layout.addLayout(self.missing_actions)
+        self._set_missing_actions_visible(False)
+
         self.chk_show_untracked = QCheckBox(self.tr("Show untracked files"))
         self.chk_show_untracked.setChecked(True)
         self.chk_show_untracked.toggled.connect(self._toggle_untracked)
@@ -142,11 +189,28 @@ class VcsPublishDialog(QDialog):
         self.untracked_container.addWidget(self.untracked_list)
         layout.addLayout(self.untracked_container)
 
-        self.lbl_checklist = QLabel("")
-        self.lbl_checklist.setObjectName("TipBox")
-        self.lbl_checklist.setWordWrap(True)
+        self.lbl_checklist = QLabel(self.tr("Tasks completed"))
+        self.lbl_checklist.setObjectName("SectionTitle")
         self.lbl_checklist.hide()
         layout.addWidget(self.lbl_checklist)
+
+        self.lbl_checklist_hint = QLabel(
+            self.tr(
+                "Tick the tasks you finished. Each tick is saved to Kitsu and only "
+                "checked items are added to the commit message."
+            )
+        )
+        self.lbl_checklist_hint.setObjectName("HintLabel")
+        self.lbl_checklist_hint.setWordWrap(True)
+        self.lbl_checklist_hint.hide()
+        layout.addWidget(self.lbl_checklist_hint)
+
+        self.checklist_container = QWidget()
+        self.checklist_layout = QVBoxLayout(self.checklist_container)
+        self.checklist_layout.setContentsMargins(0, 0, 0, 0)
+        self.checklist_layout.setSpacing(4)
+        self.checklist_container.hide()
+        layout.addWidget(self.checklist_container)
 
         lbl_message = QLabel(self.tr("Commit message"))
         lbl_message.setObjectName("SectionTitle")
@@ -160,8 +224,8 @@ class VcsPublishDialog(QDialog):
 
         hint = QLabel(
             self.tr(
-                "Completed checklist items are included automatically. "
-                "New files are added to version control only when selected."
+                "New files are added to version control only when selected. "
+                "Only the tasks you tick are included in the commit message."
             )
         )
         hint.setObjectName("HintLabel")
@@ -192,10 +256,19 @@ class VcsPublishDialog(QDialog):
         conflicted = [
             change for change in self.changes if getattr(change, "is_conflicted", False)
         ]
+        missing = [
+            change
+            for change in self.changes
+            if not change.is_unversioned
+            and not getattr(change, "is_conflicted", False)
+            and getattr(change, "is_missing", change.status == "!")
+        ]
         tracked = [
             change
             for change in self.changes
-            if not change.is_unversioned and not getattr(change, "is_conflicted", False)
+            if not change.is_unversioned
+            and not getattr(change, "is_conflicted", False)
+            and change not in missing
         ]
         untracked = [change for change in self.changes if change.is_unversioned]
 
@@ -203,6 +276,22 @@ class VcsPublishDialog(QDialog):
             item = QListWidgetItem(self._label_for(change))
             item.setData(Qt.UserRole, change)
             self.conflict_list.addItem(item)
+
+        for change in missing:
+            item = QListWidgetItem(self._label_for(change))
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setData(Qt.UserRole, change)
+            self.missing_list.addItem(item)
+
+        has_missing = bool(missing)
+        supports_restore = callable(getattr(self.vm, "restore_vcs_paths", None))
+        supports_delete = callable(getattr(self.vm, "schedule_delete_vcs_paths", None))
+        self.lbl_missing.setVisible(has_missing)
+        self.missing_list.setVisible(has_missing)
+        self._set_missing_actions_visible(has_missing)
+        self.btn_restore_missing.setVisible(has_missing and supports_restore)
+        self.btn_delete_missing.setVisible(has_missing and supports_delete)
 
         has_conflicts = bool(conflicted)
         self.lbl_conflicts.setVisible(has_conflicts)
@@ -237,13 +326,6 @@ class VcsPublishDialog(QDialog):
             self.lbl_untracked.hide()
             self.untracked_list.hide()
 
-        if self.checklist_items:
-            lines = "\n".join(f"- [x] {item}" for item in self.checklist_items)
-            self.lbl_checklist.setText(
-                self.tr("Completed checklist items included in the message:\n{0}").format(lines)
-            )
-            self.lbl_checklist.show()
-
     @staticmethod
     def _label_for(change) -> str:
         state = STATUS_LABELS.get(change.status, change.status or "Change")
@@ -254,33 +336,202 @@ class VcsPublishDialog(QDialog):
     # ------------------------------------------------------------------
     def selected_changes(self) -> list:
         selected = []
-        for widget in (self.list_widget, self.untracked_list):
+        for widget in (self.list_widget, self.missing_list, self.untracked_list):
             for index in range(widget.count()):
                 item = widget.item(index)
                 if item.checkState() == Qt.Checked:
                     selected.append(item.data(Qt.UserRole))
         return selected
 
+    def selected_missing_changes(self) -> list:
+        selected = []
+        for index in range(self.missing_list.count()):
+            item = self.missing_list.item(index)
+            if item.checkState() == Qt.Checked:
+                selected.append(item.data(Qt.UserRole))
+        return selected
+
+    def _set_missing_actions_visible(self, visible: bool) -> None:
+        self.btn_select_all_missing.setVisible(visible)
+        self.btn_restore_missing.setVisible(visible)
+        self.btn_delete_missing.setVisible(visible)
+        self.btn_select_all_missing.setEnabled(visible)
+        self.btn_restore_missing.setEnabled(False)
+        self.btn_delete_missing.setEnabled(False)
+
+    def _on_missing_selection_changed(self, _item=None) -> None:
+        has_selection = bool(self.selected_missing_changes()) and not self._busy
+        self.btn_restore_missing.setEnabled(
+            has_selection and callable(getattr(self.vm, "restore_vcs_paths", None))
+        )
+        self.btn_delete_missing.setEnabled(
+            has_selection and callable(getattr(self.vm, "schedule_delete_vcs_paths", None))
+        )
+
+    def _select_all_missing(self) -> None:
+        for index in range(self.missing_list.count()):
+            self.missing_list.item(index).setCheckState(Qt.Checked)
+
+    def _restore_missing(self) -> None:
+        self._handle_missing_paths(delete=False)
+
+    def _delete_missing(self) -> None:
+        self._handle_missing_paths(delete=True)
+
+    def _handle_missing_paths(self, delete: bool) -> None:
+        if self._busy:
+            return
+        selected = self.selected_missing_changes()
+        if not selected:
+            self._show_status(self.tr("Select at least one missing file."), error=True)
+            return
+
+        if delete:
+            box = QMessageBox(self)
+            box.setWindowTitle(self.tr("Delete from repository"))
+            box.setText(
+                self.tr(
+                    "Schedule {0} file(s) for deletion? The deletion is committed "
+                    "when you publish the selected changes."
+                ).format(len(selected))
+            )
+            confirm = box.addButton(self.tr("Schedule deletion"), QMessageBox.DestructiveRole)
+            box.addButton(QMessageBox.Cancel)
+            box.exec()
+            if box.clickedButton() is not confirm:
+                return
+
+        handler = (
+            getattr(self.vm, "schedule_delete_vcs_paths", None)
+            if delete
+            else getattr(self.vm, "restore_vcs_paths", None)
+        )
+        if not callable(handler):
+            self._show_status(
+                self.tr("This workspace does not support that action."), error=True
+            )
+            return
+
+        self._set_busy(True)
+        self._show_status(
+            self.tr("Scheduling the deletions...")
+            if delete
+            else self.tr("Restoring the missing files...")
+        )
+        if not handler(self.card, selected):
+            self._set_busy(False)
+
+    def _on_vcs_paths_handled(self, task_id: str, success: bool, message: str) -> None:
+        if task_id != self.task_id:
+            return
+        self._set_busy(False)
+        if success:
+            self._show_status(message)
+            self.accept()
+        else:
+            self._show_status(message, error=True)
+
     def commit_message(self) -> str:
         return self.entry_message.toPlainText().strip()
 
-    def _completed_checklist_items(self) -> list[str]:
-        getter = getattr(self.vm, "completed_checklist_items", None)
-        if not callable(getter):
-            return []
+    # ------------------------------------------------------------------
+    # Task checklist (interactive, persisted to Kitsu)
+    # ------------------------------------------------------------------
+    def _checklist_supported(self) -> bool:
+        return callable(getattr(self.vm, "task_checklist_items", None))
+
+    def _load_checklist(self) -> None:
+        if not self._checklist_supported() or self.task_id.startswith("__"):
+            return
+        getter = getattr(self.vm, "task_checklist_items", None)
         try:
-            return list(getter(self.task_id) or [])
+            self._set_checklist_items(list(getter(self.task_id) or []))
         except Exception:  # noqa: BLE001 - the dialog must remain usable
-            return []
+            self._set_checklist_items([])
+        refresh = getattr(self.vm, "refresh_task_checklist", None)
+        if callable(refresh):
+            try:
+                refresh(self.card)
+            except Exception:  # noqa: BLE001 - a stale list is better than no dialog
+                pass
+
+    def _set_checklist_items(self, items: list) -> None:
+        self._checklist_items = [dict(item) for item in items or []]
+        while self.checklist_layout.count():
+            entry = self.checklist_layout.takeAt(0)
+            widget = entry.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._checklist_boxes = {}
+
+        for item in self._checklist_items:
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            box = QCheckBox(text)
+            box.setChecked(bool(item.get("checked")))
+            box.setEnabled(bool(item.get("comment_id")) and not self._checklist_saving)
+            box.toggled.connect(
+                lambda checked, entry=dict(item): self._on_checklist_toggled(entry, checked)
+            )
+            self.checklist_layout.addWidget(box)
+            self._checklist_boxes[(str(item.get("comment_id") or ""), int(item.get("index", 0)))] = box
+
+        has_items = bool(self._checklist_items)
+        self.lbl_checklist.setVisible(has_items)
+        self.lbl_checklist_hint.setVisible(has_items)
+        self.checklist_container.setVisible(has_items)
+
+    def _checked_checklist_texts(self) -> list[str]:
+        texts: list[str] = []
+        seen: set[str] = set()
+        for item in self._checklist_items:
+            if not item.get("checked"):
+                continue
+            text = str(item.get("text") or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                texts.append(text)
+        return texts
+
+    def _on_checklist_toggled(self, item: dict, checked: bool) -> None:
+        if self._checklist_saving or self._busy:
+            return
+        setter = getattr(self.vm, "set_task_checklist_item", None)
+        if not callable(setter):
+            return
+        started = setter(
+            self.task_id,
+            str(item.get("comment_id") or ""),
+            int(item.get("index", 0)),
+            checked,
+        )
+        if not started:
+            self._on_task_checklist_saving(self.task_id, False)
+
+    def _on_task_checklist_ready(self, task_id: str, items: list) -> None:
+        if str(task_id) != self.task_id:
+            return
+        self._set_checklist_items(items)
+        self._refresh_auto_message()
+
+    def _on_task_checklist_saving(self, task_id: str, saving: bool) -> None:
+        if str(task_id) != self.task_id:
+            return
+        self._checklist_saving = bool(saving)
+        for box in self._checklist_boxes.values():
+            box.setEnabled(not saving and not self._busy)
+        self.btn_publish.setEnabled(not saving and not self._busy)
 
     def _build_auto_message(self, file_count: int) -> str:
         message = (
             f"OpenStudioHub: {file_count} file(s) for {self.project_name} "
             f"({self.file_name})."
         )
-        if self.checklist_items:
-            checklist = "\n".join(f"- [x] {item}" for item in self.checklist_items)
-            message += f"\n\nCompleted checklist:\n{checklist}"
+        checklist = self._checked_checklist_texts()
+        if checklist:
+            lines = "\n".join(f"- [x] {item}" for item in checklist)
+            message += f"\n\nCompleted checklist:\n{lines}"
         return message
 
     def _refresh_auto_message(self) -> None:
@@ -358,7 +609,7 @@ class VcsPublishDialog(QDialog):
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.btn_publish.setEnabled(not busy)
+        self.btn_publish.setEnabled(not busy and not self._checklist_saving)
         self.btn_postpone.setEnabled(not busy)
         self.list_widget.setEnabled(not busy)
         self.untracked_list.setEnabled(not busy)
@@ -368,6 +619,15 @@ class VcsPublishDialog(QDialog):
         )
         self.chk_show_untracked.setEnabled(not busy)
         self.entry_message.setEnabled(not busy)
+        self.missing_list.setEnabled(not busy)
+        self.btn_select_all_missing.setEnabled(not busy and self.missing_list.count() > 0)
+        if busy:
+            self.btn_restore_missing.setEnabled(False)
+            self.btn_delete_missing.setEnabled(False)
+        else:
+            self._on_missing_selection_changed()
+        for box in self._checklist_boxes.values():
+            box.setEnabled(not busy and not self._checklist_saving)
 
     def _show_status(self, message: str, error: bool = False) -> None:
         from src.interfaces.qt.ui_style import set_ui_state
@@ -376,12 +636,15 @@ class VcsPublishDialog(QDialog):
         set_ui_state(self.lbl_status, "error" if error else "success")
 
     def _publish(self) -> None:
-        if self._busy:
+        if self._busy or self._checklist_saving:
             return
         selected = self.selected_changes()
         if not selected:
             self._show_status(self.tr("Select at least one file to publish."), error=True)
             return
+        current = self.commit_message()
+        if current.strip() == self._auto_message.strip():
+            self._refresh_auto_message()
         message = self.commit_message()
         if not message:
             self._show_status(self.tr("The commit message cannot be empty."), error=True)
@@ -417,6 +680,24 @@ class VcsPublishDialog(QDialog):
             except (RuntimeError, TypeError):
                 pass
             self._conflict_connected = False
+        if self._checklist_connected:
+            try:
+                self.vm.task_checklist_ready.disconnect(self._on_task_checklist_ready)
+            except (RuntimeError, TypeError):
+                pass
+            self._checklist_connected = False
+        if self._checklist_saving_connected:
+            try:
+                self.vm.task_checklist_saving.disconnect(self._on_task_checklist_saving)
+            except (RuntimeError, TypeError):
+                pass
+            self._checklist_saving_connected = False
+        if self._paths_connected:
+            try:
+                self.vm.vcs_paths_handled.disconnect(self._on_vcs_paths_handled)
+            except (RuntimeError, TypeError):
+                pass
+            self._paths_connected = False
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
         self._disconnect()

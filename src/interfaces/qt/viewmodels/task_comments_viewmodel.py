@@ -175,6 +175,14 @@ class TaskCommentsViewModel(BaseViewModel):
     def _emit_comments(self) -> None:
         self.comments_loaded.emit(self._task_id, self._decorate(self._comments))
 
+    def apply_external_checklist(self, comment_id: str, checklist: list) -> None:
+        """Mirror a checklist saved elsewhere (for example the publish window)."""
+        comment = self._find_comment(comment_id)
+        if comment is None:
+            return
+        comment["checklist"] = normalize_checklist(checklist)
+        self._emit_comments()
+
     def toggle_checklist(self, comment_id: str, index: int, checked: bool) -> None:
         if self.production_service is None:
             return

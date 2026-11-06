@@ -521,6 +521,15 @@ class SVNAdapter(AbstractVCS):
         self._run_subprocess(cmd, cwd=self.workspace_dir)
         return True
 
+    def remove(self, paths: List[str]) -> bool:
+        """Schedule versioned paths for deletion (works for files missing on disk)."""
+        selected = [path for path in paths if path]
+        if not selected:
+            return True
+        cmd = ["svn", "delete", "--force", *selected]
+        self._run_subprocess(cmd, cwd=self.workspace_dir)
+        return True
+
     def _server_endpoint(self) -> Tuple[str, int]:
         """Derives the (host, port) of the VCS server from the repository URL."""
         parsed = urlsplit(self.repo_url)

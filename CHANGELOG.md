@@ -9,6 +9,15 @@ releases may include larger UI or workflow changes.
 
 ### Added
 
+- Publish window handles files deleted from disk:
+  - missing files are listed separately and are not selected by default;
+  - **Restore selected** brings them back with `svn revert`;
+  - **Delete from repository** schedules `svn delete --force`, and the deletion
+    is committed with the next publish;
+  - **Select all missing** marks every reported path at once.
+- The publish window shows the task checklist as interactive checkboxes. Each
+  tick is saved to the matching Kitsu comment, and only the items checked at
+  publish time are added to the commit message.
 - Incremental access profiles with view switching:
   - `TD` can use the TD, PM and Artist dashboards;
   - `PM` can use the PM and Artist dashboards;

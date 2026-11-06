@@ -109,6 +109,9 @@ class GitLFSAdapter(AbstractVCS):
     def add(self, paths: List[str]) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 
+    def remove(self, paths: List[str]) -> bool:
+        raise NotImplementedError("Git LFS support is currently under development.")
+
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
         raise NotImplementedError("Git LFS support is currently under development.")
 

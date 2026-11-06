@@ -50,9 +50,15 @@ from src.interfaces.qt.workers.artist_workers import (
     LaunchTaskWorker,
     PublishVcsChangesWorker,
     ResolveVcsConflictWorker,
+    RestoreVcsPathsWorker,
+    ScheduleDeleteVcsPathsWorker,
     UpdateVcsWorker,
 )
-from src.interfaces.qt.workers.comment_workers import FetchProjectsCommentsWorker
+from src.interfaces.qt.workers.comment_workers import (
+    FetchProjectsCommentsWorker,
+    FetchTaskCommentsWorker,
+    UpdateCommentChecklistWorker,
+)
 from src.interfaces.qt.workers.vcs_history_workers import (
     ExportVcsRevisionWorker,
     FetchVcsDiffWorker,
@@ -92,6 +98,7 @@ class ArtistViewModel(BaseViewModel):
     vcs_changes_ready = Signal(str, list)  # (task_id, list[FileChange])
     vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
     vcs_conflict_resolved = Signal(str, bool, str)  # (task_id, success, message)
+    vcs_paths_handled = Signal(str, bool, str)  # (task_id, success, message)
     vcs_history_ready = Signal(str, list)  # (task_id, revisions)
     vcs_history_failed = Signal(str, str)  # (task_id, message)
     vcs_diff_ready = Signal(str, str, str)  # (task_id, revision, diff)
@@ -101,6 +108,8 @@ class ArtistViewModel(BaseViewModel):
     task_locks_ready = Signal(dict)  # {task_id: {"owner": str, "is_mine": bool}}
     task_statuses_loaded = Signal(str, list)  # (project_id, list[dict])
     task_thumbnail_ready = Signal(str, bytes)  # (entity_id, image_bytes)
+    task_checklist_ready = Signal(str, list)  # (task_id, [checklist item dicts])
+    task_checklist_saving = Signal(str, bool)  # (task_id, saving)
 
     COMMENT_WIDTH_KEY = "comment_panel_width"
     DEFAULT_COMMENT_WIDTH = 360
@@ -149,8 +158,11 @@ class ArtistViewModel(BaseViewModel):
         self._thumbnail_cache: dict[str, bytes] = {}
         self._pending_thumbnail_ids: set[str] = set()
         self._comments_by_task: dict[str, list] = {}
+        self._checklist_reverts: dict[str, list] = {}
+        self._checklist_tasks: dict[str, str] = {}
         self._awaiting_lock_release: set[str] = set()
         self.workers = WorkerManager(self)
+        self.comments.comments_loaded.connect(self._on_task_comments_loaded)
 
     # ------------------------------------------------------------------
     # Data loading
@@ -813,6 +825,59 @@ class ArtistViewModel(BaseViewModel):
             if card is not None:
                 self.check_vcs_changes(card)
 
+    def restore_vcs_paths(self, card: ArtistTaskCardModel, changes: list) -> bool:
+        """Restore missing files from the repository pristine copy."""
+        return self._handle_missing_paths(card, changes, delete=False)
+
+    def schedule_delete_vcs_paths(self, card: ArtistTaskCardModel, changes: list) -> bool:
+        """Schedule missing files for deletion; publishing removes them from the VCS."""
+        return self._handle_missing_paths(card, changes, delete=True)
+
+    def _handle_missing_paths(
+        self, card: ArtistTaskCardModel, changes: list, delete: bool
+    ) -> bool:
+        if not card.project_root:
+            self.report_status("Cannot update the files: project folder is missing on NAS.", "red")
+            return False
+        key = "vcs_delete_missing" if delete else "vcs_restore_missing"
+        if self.workers.is_running(key):
+            self.report_status("A VCS cleanup is already in progress...", "red")
+            return False
+        paths = [
+            str(getattr(change, "relative_path", change) or "")
+            for change in changes or []
+        ]
+        paths = [path for path in paths if path]
+        if not paths:
+            self.report_status("No missing files selected.", "yellow")
+            return False
+
+        worker_class = ScheduleDeleteVcsPathsWorker if delete else RestoreVcsPathsWorker
+        worker = worker_class(
+            self.task_file_sync_service,
+            self._task_id(card),
+            card.project_root,
+            paths,
+        )
+        worker.finished_paths.connect(self._on_vcs_paths_handled)
+        self.workers.start(key, worker, critical=True)
+        self.report_status(
+            "Scheduling the deletions..." if delete else "Restoring the missing files...",
+            "yellow",
+        )
+        return True
+
+    def _on_vcs_paths_handled(self, task_id: str, success: bool, message: str) -> None:
+        self.report_status(message, "green" if success else "red")
+        self.vcs_paths_handled.emit(task_id, success, message)
+        if success:
+            card = next(
+                (candidate for candidate in self._cards if self._task_id(candidate) == task_id),
+                None,
+            )
+            if card is not None:
+                self.check_vcs_changes(card)
+
     def _on_vcs_publish_finished(self, task_id: str, success: bool, message: str) -> None:
         if success:
             for card in self._cards:
@@ -828,19 +893,150 @@ class ArtistViewModel(BaseViewModel):
             self.report_status(f"🔴 Publish Error: {message}", "red")
         self.vcs_publish_finished.emit(task_id, success, message)
 
+    def task_checklist_items(self, task_id: str) -> list[dict]:
+        """Return the task checklist items with their comment identity."""
+        items: list[dict] = []
+        for comment in self._comments_by_task.get(str(task_id), []):
+            comment_id = str(comment.get("id") or "")
+            for index, item in enumerate(normalize_checklist(comment.get("checklist"))):
+                text = str(item.get("text") or "").strip()
+                if not text:
+                    continue
+                items.append(
+                    {
+                        "comment_id": comment_id,
+                        "index": index,
+                        "text": text,
+                        "checked": bool(item.get("checked")),
+                    }
+                )
+        return items
+
     def completed_checklist_items(self, task_id: str) -> list[str]:
         """Return the deduplicated, completed checklist items for a task."""
         items: list[str] = []
         seen: set[str] = set()
-        for comment in self._comments_by_task.get(str(task_id), []):
-            for item in normalize_checklist(comment.get("checklist")):
-                if not item.get("checked"):
-                    continue
-                text = str(item.get("text") or "").strip()
-                if text and text not in seen:
-                    seen.add(text)
-                    items.append(text)
+        for item in self.task_checklist_items(task_id):
+            if not item.get("checked"):
+                continue
+            text = str(item.get("text") or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                items.append(text)
         return items
+
+    def _find_task_comment(self, task_id: str, comment_id: str):
+        for comment in self._comments_by_task.get(str(task_id), []):
+            if str(comment.get("id") or "") == str(comment_id):
+                return comment
+        return None
+
+    def _task_id_for_comment(self, comment_id: str) -> str:
+        for task_id, comments in self._comments_by_task.items():
+            for comment in comments:
+                if str(comment.get("id") or "") == str(comment_id):
+                    return str(task_id)
+        return ""
+
+    def _on_task_comments_loaded(self, task_id: str, comments: list) -> None:
+        """Keep the publish checklist in sync with the comment drawer."""
+        self._comments_by_task[str(task_id)] = [dict(comment) for comment in comments or []]
+        self.task_checklist_ready.emit(str(task_id), self.task_checklist_items(task_id))
+
+    def refresh_task_checklist(self, card: ArtistTaskCardModel) -> bool:
+        """Fetch the latest comments before the publish window shows the checklist."""
+        task_id = self._task_id(card)
+        key = f"checklist_fetch_{task_id}"
+        if self.workers.is_running(key):
+            return False
+        worker = FetchTaskCommentsWorker(self.production_service, task_id, card.task_data)
+        worker.data_ready.connect(self._on_task_checklist_fetched)
+        worker.error_occurred.connect(
+            lambda message, tid=task_id: self._on_task_checklist_failed(tid, message)
+        )
+        self.workers.start(key, worker)
+        return True
+
+    def _on_task_checklist_fetched(self, task_id: str, comments: list) -> None:
+        normalized = []
+        for comment in comments or []:
+            item = dict(comment)
+            item["checklist"] = normalize_checklist(item.get("checklist"))
+            normalized.append(item)
+        self._comments_by_task[str(task_id)] = normalized
+        self.task_checklist_ready.emit(str(task_id), self.task_checklist_items(task_id))
+
+    def _on_task_checklist_failed(self, task_id: str, message: str) -> None:
+        self.report_status(f"Could not load the task checklist: {message}", "red")
+        self.task_checklist_ready.emit(str(task_id), self.task_checklist_items(task_id))
+
+    def set_task_checklist_item(
+        self,
+        task_id: str,
+        comment_id: str,
+        index: int,
+        checked: bool,
+    ) -> bool:
+        """Tick a checklist item and persist the change to Kitsu."""
+        task_id = str(task_id)
+        comment_id = str(comment_id)
+        comment = self._find_task_comment(task_id, comment_id)
+        if comment is None or not comment_id:
+            return False
+        checklist = normalize_checklist(comment.get("checklist"))
+        if index < 0 or index >= len(checklist):
+            return False
+
+        original = [dict(item) for item in checklist]
+        checklist[index]["checked"] = bool(checked)
+        comment["checklist"] = checklist
+        self._checklist_reverts[comment_id] = original
+        self._checklist_tasks[comment_id] = task_id
+        self.task_checklist_saving.emit(task_id, True)
+        self.task_checklist_ready.emit(task_id, self.task_checklist_items(task_id))
+
+        worker = UpdateCommentChecklistWorker(
+            self.production_service, comment_id, checklist
+        )
+        worker.finished_update.connect(self._on_task_checklist_saved)
+        if not self.workers.start(f"checklist_{task_id}", worker):
+            self._checklist_reverts.pop(comment_id, None)
+            self._checklist_tasks.pop(comment_id, None)
+            comment["checklist"] = original
+            self.task_checklist_saving.emit(task_id, False)
+            self.task_checklist_ready.emit(task_id, self.task_checklist_items(task_id))
+            return False
+        return True
+
+    def _on_task_checklist_saved(
+        self, comment_id: str, success: bool, message: str, updated
+    ) -> None:
+        comment_id = str(comment_id)
+        task_id = self._checklist_tasks.pop(comment_id, "")
+        if not task_id:
+            task_id = self._task_id_for_comment(comment_id)
+        comment = self._find_task_comment(task_id, comment_id) if task_id else None
+        original = self._checklist_reverts.pop(comment_id, None)
+
+        if success:
+            if comment is not None and isinstance(updated, dict) and "checklist" in updated:
+                comment["checklist"] = normalize_checklist(updated.get("checklist"))
+            elif comment is not None:
+                comment["checklist"] = normalize_checklist(comment.get("checklist"))
+            if comment is not None:
+                self.comments.apply_external_checklist(
+                    comment_id, comment.get("checklist") or []
+                )
+            self.report_status("Checklist item saved to Kitsu.", "green")
+        else:
+            if comment is not None and original is not None:
+                comment["checklist"] = [dict(item) for item in original]
+                self.comments.apply_external_checklist(comment_id, original)
+            self.report_status(f"Could not save the checklist item: {message}", "red")
+
+        if task_id:
+            self.task_checklist_saving.emit(task_id, False)
+            self.task_checklist_ready.emit(task_id, self.task_checklist_items(task_id))
 
     def can_break_foreign_locks(self) -> bool:
         """Only the TD interface may break a lock owned by another user."""

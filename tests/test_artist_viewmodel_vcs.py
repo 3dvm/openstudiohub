@@ -271,3 +271,74 @@ def test_update_report_without_issues_does_not_open_review(tmp_path, qapp):
     vm._on_vcs_update_report("p1", VcsUpdateReport(True, "clean"))
 
     assert received == []
+
+
+def test_task_checklist_items_expose_comment_identity(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    vm._comments_by_task = {
+        "t1": [
+            {
+                "id": "c1",
+                "checklist": [
+                    {"text": "Model approved", "checked": True},
+                    {"text": "Pending item", "checked": False},
+                ],
+            }
+        ]
+    }
+
+    items = vm.task_checklist_items("t1")
+
+    assert items == [
+        {"comment_id": "c1", "index": 0, "text": "Model approved", "checked": True},
+        {"comment_id": "c1", "index": 1, "text": "Pending item", "checked": False},
+    ]
+    assert vm.completed_checklist_items("t1") == ["Model approved"]
+
+
+def test_task_comments_loaded_refreshes_the_checklist_cache(tmp_path, qapp):
+    vm = _vm(tmp_path)
+    received = []
+    vm.task_checklist_ready.connect(lambda task_id, items: received.append((task_id, items)))
+
+    vm._on_task_comments_loaded(
+        "t1",
+        [{"id": "c1", "checklist": [{"text": "Done", "checked": True}]}],
+    )
+
+    assert vm.completed_checklist_items("t1") == ["Done"]
+    assert received and received[-1][0] == "t1"
+
+
+def test_set_task_checklist_item_persists_and_emits(tmp_path, qapp, monkeypatch):
+    vm = _vm(tmp_path)
+    vm._comments_by_task = {
+        "t1": [{"id": "c1", "checklist": [{"text": "Done", "checked": False}]}]
+    }
+    started = []
+    monkeypatch.setattr(
+        vm.workers,
+        "start",
+        lambda key, worker, **kwargs: started.append((key, worker)) or True,
+    )
+
+    assert vm.set_task_checklist_item("t1", "c1", 0, True) is True
+
+    assert vm.completed_checklist_items("t1") == ["Done"]
+    assert started and started[0][0] == "checklist_t1"
+
+
+def test_schedule_delete_missing_paths_starts_a_worker(tmp_path, qapp, monkeypatch):
+    vm = _vm(tmp_path)
+    card = _card(tmp_path)
+    started = []
+    monkeypatch.setattr(
+        vm.workers,
+        "start",
+        lambda key, worker, **kwargs: started.append((key, worker)) or True,
+    )
+
+    assert vm.schedule_delete_vcs_paths(card, [FakeChange("pro/old.blend", "!")]) is True
+
+    assert started and started[0][0] == "vcs_delete_missing"
+    assert started[0][1].relative_paths == ["pro/old.blend"]

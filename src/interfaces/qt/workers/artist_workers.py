@@ -280,6 +280,62 @@ class ResolveVcsConflictWorker(ManagedWorker):
             self.finished_resolve.emit(self.task_id, False, str(error))
 
 
+class RestoreVcsPathsWorker(ManagedWorker):
+    """Restore missing workspace paths off the UI thread."""
+
+    finished_paths = Signal(str, bool, str)  # (task_id, success, message)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        task_id: str,
+        project_root: Path,
+        relative_paths: list,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.task_id = str(task_id)
+        self.project_root = project_root
+        self.relative_paths = list(relative_paths or [])
+
+    def run(self) -> None:
+        try:
+            success, message = self.sync_service.restore_paths(
+                self.project_root, self.relative_paths
+            )
+            self.finished_paths.emit(self.task_id, success, message)
+        except Exception as error:  # noqa: BLE001
+            self.finished_paths.emit(self.task_id, False, str(error))
+
+
+class ScheduleDeleteVcsPathsWorker(ManagedWorker):
+    """Schedule missing workspace paths for deletion off the UI thread."""
+
+    finished_paths = Signal(str, bool, str)  # (task_id, success, message)
+
+    def __init__(
+        self,
+        sync_service: TaskFileSyncService,
+        task_id: str,
+        project_root: Path,
+        relative_paths: list,
+    ) -> None:
+        super().__init__()
+        self.sync_service = sync_service
+        self.task_id = str(task_id)
+        self.project_root = project_root
+        self.relative_paths = list(relative_paths or [])
+
+    def run(self) -> None:
+        try:
+            success, message = self.sync_service.schedule_delete_paths(
+                self.project_root, self.relative_paths
+            )
+            self.finished_paths.emit(self.task_id, success, message)
+        except Exception as error:  # noqa: BLE001
+            self.finished_paths.emit(self.task_id, False, str(error))
+
+
 class PublishVcsChangesWorker(ManagedWorker):
     """Commits the selected task files to the VCS without freezing the UI."""
 

@@ -308,6 +308,79 @@ class TaskFileSyncService:
         return True, f"Moved '{relative_path}' aside to '{destination}'."
 
     # ------------------------------------------------------------------
+    # Missing files (restore or schedule deletion)
+    # ------------------------------------------------------------------
+    def _validated_workspace_paths(
+        self, project_root: Path, relative_paths: List[str]
+    ) -> List[str]:
+        workspace = self.workspace_root(project_root).resolve()
+        validated: List[str] = []
+        seen: set[str] = set()
+        for raw in relative_paths or []:
+            relative = str(raw or "").strip().replace("\\", "/")
+            if not relative or relative in seen:
+                continue
+            try:
+                candidate = (workspace / relative).resolve()
+                candidate.relative_to(workspace)
+            except (OSError, ValueError):
+                continue
+            seen.add(relative)
+            validated.append(relative)
+        return validated
+
+    def restore_paths(
+        self, project_root: Path, relative_paths: List[str]
+    ) -> Tuple[bool, str]:
+        """Restore missing paths from the working-copy pristine store."""
+        paths = self._validated_workspace_paths(project_root, relative_paths)
+        if not paths:
+            return False, "Select at least one missing path to restore."
+        if not self.is_vcs_enabled(project_root):
+            return False, "Version Control is not available for this project."
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not initialize the VCS adapter: {error}"
+        if adapter is None:
+            return False, "VCS enabled but no adapter is available."
+
+        try:
+            for path in paths:
+                adapter.revert(path)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not restore the missing files: {error}"
+        return True, f"Restored {len(paths)} missing file(s)."
+
+    def schedule_delete_paths(
+        self, project_root: Path, relative_paths: List[str]
+    ) -> Tuple[bool, str]:
+        """Schedule missing paths for deletion; publishing removes them from the VCS."""
+        paths = self._validated_workspace_paths(project_root, relative_paths)
+        if not paths:
+            return False, "Select at least one missing path to delete."
+        if not self.is_vcs_enabled(project_root):
+            return False, "Version Control is not available for this project."
+
+        try:
+            adapter = self._build_adapter(project_root)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not initialize the VCS adapter: {error}"
+        if adapter is None:
+            return False, "VCS enabled but no adapter is available."
+
+        try:
+            adapter.remove(paths)
+        except Exception as error:  # noqa: BLE001
+            return False, f"Could not schedule the deletion: {error}"
+        return (
+            True,
+            f"Scheduled {len(paths)} file(s) for deletion. "
+            "Publish the selected changes to remove them from the VCS.",
+        )
+
+    # ------------------------------------------------------------------
     # Local ignore list
     # ------------------------------------------------------------------
     def _local_ignore_file(self, project_root: Path) -> Path:

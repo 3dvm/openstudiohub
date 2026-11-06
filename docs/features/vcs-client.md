@@ -98,16 +98,27 @@ notifications.
 
 ## Publishing files
 
-The publish window separates the working copy into three groups:
+The publish window separates the working copy into four groups:
 
 * **Versioned changes** — selected by default.
 * **Conflicts** — shown separately and cannot be published until resolved.
+* **Missing files** — versioned paths deleted from disk. They are **not
+  selected by default**:
+  * **Restore selected** runs `svn revert` and brings the files back;
+  * **Delete from repository** schedules `svn delete --force`; the deletion is
+    committed with the next publish;
+  * **Select all missing** ticks every reported path.
 * **Untracked files** — **not selected by default**. They are only added to
   Subversion when the artist explicitly selects them. The list can be hidden.
 
 The window also provides an editable commit message. It is pre-filled with the
-project, task file and every **completed checklist item** from the task
-comments. The final message is sent to `svn commit -m`.
+project, task file and the task checklist. The checklist is interactive: each
+tick is written to the matching Kitsu comment, and only the items checked at
+that moment are included in the message. The final message is sent to
+`svn commit -m`.
+
+If a checklist update is in flight the publish button stays disabled until
+Kitsu confirms the change.
 
 ## Conflicts
 

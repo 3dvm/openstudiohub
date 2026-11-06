@@ -35,6 +35,8 @@ class FakeAdapter:
         self.pull_error = None
         self.lock_info = None
         self.needs_lock_calls = []
+        self.revert_calls = []
+        self.remove_calls = []
 
     def full_pull(self, username=None, password=None):
         self.full_pull_calls.append((username, password))
@@ -56,6 +58,14 @@ class FakeAdapter:
 
     def add(self, paths):
         self.add_calls.append(list(paths))
+        return True
+
+    def revert(self, path):
+        self.revert_calls.append(path)
+        return True
+
+    def remove(self, paths):
+        self.remove_calls.append(list(paths))
         return True
 
     def commit(self, message, paths=None, username=None, password=None):
@@ -506,3 +516,38 @@ def test_spawned_files_below_an_unversioned_directory_are_registered(tmp_path):
     assert ok is True
     assert adapter.add_calls == [["pro/shots/sq010/sh010/sh010-layout.blend"]]
     assert len(adapter.commit_calls) == 1
+
+
+def test_restore_paths_reverts_each_missing_path(tmp_path):
+    service, adapter = _service(tmp_path, {})
+
+    ok, message = service.restore_paths(
+        tmp_path / "My_Project", ["pro/a.blend", "pro/b.blend"]
+    )
+
+    assert ok is True
+    assert "Restored 2" in message
+    assert adapter.revert_calls == ["pro/a.blend", "pro/b.blend"]
+
+
+def test_restore_paths_rejects_paths_outside_the_workspace(tmp_path):
+    service, adapter = _service(tmp_path, {})
+
+    ok, message = service.restore_paths(tmp_path / "My_Project", ["../outside.blend"])
+
+    assert ok is False
+    assert "Select at least one" in message
+    assert adapter.revert_calls == []
+
+
+def test_schedule_delete_paths_calls_remove_without_committing(tmp_path):
+    service, adapter = _service(tmp_path, {})
+
+    ok, message = service.schedule_delete_paths(
+        tmp_path / "My_Project", ["pro/old.blend"]
+    )
+
+    assert ok is True
+    assert "Scheduled 1" in message
+    assert adapter.remove_calls == [["pro/old.blend"]]
+    assert adapter.commit_calls == []

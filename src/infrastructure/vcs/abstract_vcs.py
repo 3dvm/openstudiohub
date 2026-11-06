@@ -172,6 +172,11 @@ class AbstractVCS(ABC):
         pass
 
     @abstractmethod
+    def remove(self, paths: List[str]) -> bool:
+        """Schedule versioned paths for deletion from the repository."""
+        pass
+
+    @abstractmethod
     def create_server_repository(self, project_name: str, vfs_svn: str) -> bool:
         """
         Crea el repositorio remoto en el servidor para el nuevo proyecto 

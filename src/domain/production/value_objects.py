@@ -68,6 +68,11 @@ class FileChange:
         return self.status == UNVERSIONED_STATUS_CODE
 
     @property
+    def is_missing(self) -> bool:
+        """True when a versioned file was deleted from disk without a VCS delete."""
+        return self.status == "!"
+
+    @property
     def is_conflicted(self) -> bool:
         """True when the entry has a content, property or tree conflict."""
         return self.status == "C" or self.tree_conflicted or self.property_conflicted

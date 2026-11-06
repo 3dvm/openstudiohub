@@ -53,6 +53,8 @@ from src.interfaces.qt.workers.kitsu_migration_workers import (
 from src.interfaces.qt.workers.artist_workers import (
     CheckVcsChangesWorker,
     PublishVcsChangesWorker,
+    RestoreVcsPathsWorker,
+    ScheduleDeleteVcsPathsWorker,
 )
 from src.interfaces.qt.workers.project_list_workers import (
     BackfillSpawnedFilesWorker,
@@ -97,6 +99,7 @@ class ProjectListViewModel(BaseViewModel):
     publish_changes_ready = Signal(str, list)  # (project_name, list[FileChange])
     publish_up_to_date = Signal(str)  # project_name
     vcs_publish_finished = Signal(str, bool, str)  # (task_id, success, message)
+    vcs_paths_handled = Signal(str, bool, str)  # (task_id, success, message)
 
     # Reset VCS working copy (project card)
     reset_finished = Signal(str, bool, str)  # (project_name, success, message)
@@ -1199,6 +1202,56 @@ class ProjectListViewModel(BaseViewModel):
             ("🟢 " if success else "🔴 ") + message, "green" if success else "red"
         )
         self.vcs_publish_finished.emit(task_id, success, message)
+
+    def restore_vcs_paths(self, card, changes: list) -> bool:
+        """Restore missing project files from the repository pristine copy."""
+        return self._handle_missing_paths(card, changes, delete=False)
+
+    def schedule_delete_vcs_paths(self, card, changes: list) -> bool:
+        """Schedule missing project files for deletion before publishing."""
+        return self._handle_missing_paths(card, changes, delete=True)
+
+    def _handle_missing_paths(self, card, changes: list, delete: bool) -> bool:
+        project_name = str(getattr(card, "project_name", "") or "")
+        project_root = self._project_root_for(project_name)
+        if not project_root.exists():
+            self.report_status("Cannot update the files: project folder is missing on NAS.", "red")
+            return False
+        key = "publish_delete_missing" if delete else "publish_restore_missing"
+        if self.workers.is_running(key):
+            self.report_status("A VCS cleanup is already in progress...", "red")
+            return False
+        paths = [
+            str(getattr(change, "relative_path", change) or "")
+            for change in changes or []
+        ]
+        paths = [path for path in paths if path]
+        if not paths:
+            self.report_status("No missing files selected.", "yellow")
+            return False
+
+        task_id = str((getattr(card, "task_data", {}) or {}).get("id", "__publish__"))
+        worker_class = ScheduleDeleteVcsPathsWorker if delete else RestoreVcsPathsWorker
+        worker = worker_class(self.sync_service, task_id, project_root, paths)
+        worker.finished_paths.connect(
+            lambda tid, ok, message, name=project_name: self._on_vcs_paths_handled(
+                tid, ok, message, name
+            )
+        )
+        self.workers.start(key, worker, critical=True)
+        self.report_status(
+            "Scheduling the deletions..." if delete else "Restoring the missing files...",
+            "yellow",
+        )
+        return True
+
+    def _on_vcs_paths_handled(
+        self, task_id: str, success: bool, message: str, project_name: str = ""
+    ) -> None:
+        self.report_status(message, "green" if success else "red")
+        self.vcs_paths_handled.emit(task_id, success, message)
+        if success and project_name:
+            self.request_project_publish(project_name)
 
     # ------------------------------------------------------------------
     # Reset VCS working copy (project card)

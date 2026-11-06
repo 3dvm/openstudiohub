@@ -31,7 +31,7 @@ While you work, the Hub operates silently in the background:
 
 When you launch a task, the Hub locks the linked file. The lock is released only after a successful publish. If the session leaves changes unpublished, the card keeps the lock and reminds you to publish; if there are no changes, the lock is released automatically.
 
-The publish window lists versioned changes and conflicts first. Untracked files are kept in a separate section and are **not published unless you select them**. The commit message is editable and already includes the checklist items you completed in the task comments. Conflicts must be resolved with **Keep mine**, **Take theirs** or **Mark resolved** before publishing.
+The publish window lists versioned changes and conflicts first. Untracked files are kept in a separate section and are **not published unless you select them**. Files you deleted from disk appear under **Missing files**; use **Restore selected** to bring them back or **Delete from repository** to schedule their removal, then publish to commit it. The commit message is editable and lists the checklist items you tick in the same window; each tick is saved to Kitsu immediately. Conflicts must be resolved with **Keep mine**, **Take theirs** or **Mark resolved** before publishing.
 
 Use the task card context menu to open **View VCS History…** for the revision log, diffs and a safe export of an older revision.
 When your task is ready for review, run the Toolkit actions from the OpenStudio
