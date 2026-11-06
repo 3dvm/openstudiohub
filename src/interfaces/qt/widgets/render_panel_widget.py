@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -42,6 +43,7 @@ from src.domain.render.capacity import default_seconds_per_frame
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
 from src.interfaces.qt.components.collapsible_section import CollapsibleSection
 from src.interfaces.qt.components.frame_sequence_player import FrameSequencePlayer
+from src.interfaces.qt.components.render_node_card import RenderNodeCard
 from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderPanelViewModel
 
 
@@ -64,6 +66,7 @@ class RenderPanelWidget(QFrame):
         self._selected_shot: RenderShot | None = None
         self._populating = False
         self._current_preview = ""
+        self._node_card_widgets: dict[int, RenderNodeCard] = {}
 
         self.setObjectName("RenderPanelBase")
         self._build_ui()
@@ -385,10 +388,32 @@ class RenderPanelWidget(QFrame):
 
     def _build_summary_frame(self) -> QFrame:
         frame = CollapsibleSection(self.tr("Plan"))
+        header = QHBoxLayout()
         self.lbl_summary = QLabel(self.tr("Scan a project to calculate the plan."))
         self.lbl_summary.setObjectName("InfoLabel")
         self.lbl_summary.setWordWrap(True)
-        frame.add_widget(self.lbl_summary)
+        header.addWidget(self.lbl_summary, 1)
+        self.btn_refresh_candidates = QPushButton(self.tr("Refresh candidates"))
+        self.btn_refresh_candidates.setObjectName("SecondaryButton")
+        self.btn_refresh_candidates.clicked.connect(self._refresh_candidates)
+        header.addWidget(self.btn_refresh_candidates)
+        frame.add_layout(header)
+
+        self.node_grid_widget = QWidget()
+        self.node_grid_widget.setObjectName("TransparentGridContainer")
+        self.node_grid = QGridLayout(self.node_grid_widget)
+        self.node_grid.setContentsMargins(0, 0, 0, 0)
+        self.node_grid.setHorizontalSpacing(8)
+        self.node_grid.setVerticalSpacing(8)
+        self.node_grid_scroll = QScrollArea()
+        self.node_grid_scroll.setObjectName("InvisibleScrollArea")
+        self.node_grid_scroll.setWidgetResizable(True)
+        self.node_grid_scroll.setFrameShape(QFrame.NoFrame)
+        self.node_grid_scroll.setMinimumHeight(180)
+        self.node_grid_scroll.setMaximumHeight(380)
+        self.node_grid_scroll.setWidget(self.node_grid_widget)
+        self.node_grid_scroll.hide()
+        frame.add_widget(self.node_grid_scroll)
         return frame
 
     def _build_video_frame(self) -> QFrame:
@@ -480,6 +505,8 @@ class RenderPanelWidget(QFrame):
             projects_loaded.connect(self._on_projects_loaded)
 
         self.vm.shots_ready.connect(self._on_shots_ready)
+        self.vm.node_cards_ready.connect(self._on_node_cards_ready)
+        self.vm.node_card_updated.connect(self._on_node_card_updated)
         self.vm.scan_progress.connect(self._on_scan_progress)
         self.vm.scan_error.connect(self._on_error)
         self.vm.preview_ready.connect(self._on_preview_ready)
@@ -552,6 +579,7 @@ class RenderPanelWidget(QFrame):
         self.lbl_video.setText(self.tr("No review video yet."))
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
+        self._on_node_cards_ready([])
         self.btn_start.setEnabled(False)
         self.btn_cancel.setEnabled(False)
         self._clear_preview()
@@ -677,7 +705,9 @@ class RenderPanelWidget(QFrame):
     # ------------------------------------------------------------------
     # Shots
     # ------------------------------------------------------------------
-    def _on_shots_ready(self, shots: list, plan: RenderPlan, offer, balance: float) -> None:
+    def _on_shots_ready(
+        self, shots: list, plan: RenderPlan, offer, balance: float, _candidates: list
+    ) -> None:
         self._shots = list(shots)
         self._plan = plan
         self._apply_settings_to_ui()
@@ -703,6 +733,34 @@ class RenderPanelWidget(QFrame):
             f"Plan: {plan.total_frames} frame(s), {plan.required_nodes} node(s), "
             f"ETA {plan.estimated_wall_hours:.2f} h, ${plan.estimated_cost:.2f}."
         )
+
+    def _refresh_candidates(self) -> None:
+        if not self.vm.refresh_candidates():
+            self._append_log("Candidate refresh is not available right now.")
+
+    def _on_node_cards_ready(self, cards: list) -> None:
+        while self.node_grid.count():
+            item = self.node_grid.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._node_card_widgets = {}
+        for index, card in enumerate(cards or []):
+            widget = RenderNodeCard()
+            widget.update_model(card)
+            row, column = divmod(index, 4)
+            self.node_grid.addWidget(widget, row, column)
+            self._node_card_widgets[int(card.node)] = widget
+        self.node_grid_scroll.setVisible(bool(cards))
+        self.btn_refresh_candidates.setVisible(
+            self.vm.settings.render_backend == "vast"
+        )
+
+    def _on_node_card_updated(self, index: int) -> None:
+        widget = self._node_card_widgets.get(int(index))
+        if widget is None or index >= len(self.vm.node_cards):
+            return
+        widget.update_model(self.vm.node_cards[index])
 
     def _fill_table(self) -> None:
         selected = set(self.vm.settings.selected_shots or ())

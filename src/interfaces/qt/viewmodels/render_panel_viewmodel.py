@@ -13,7 +13,7 @@ widgets and forwards user actions.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,6 +30,7 @@ from src.interfaces.qt.workers.render_workers import (
     LocalRenderWorker,
     RenderBenchmarkWorker,
     RenderBurstWorker,
+    RenderCandidatesWorker,
     RenderPanelScanWorker,
     RenderPreviewVideoWorker,
     RenderPreviewWorker,
@@ -38,8 +39,49 @@ from src.interfaces.qt.workers.render_workers import (
 from src.interfaces.qt.workers.worker_manager import WorkerManager
 
 
+@dataclass
+class RenderNodeCardModel:
+    node: int
+    status: str = "candidate"
+    message: str = ""
+    instance_id: int = 0
+    gpu_name: str = ""
+    region: str = ""
+    price_per_hour: float = 0.0
+    reliability: float = 0.0
+    down_mbps: float = 0.0
+    up_mbps: float = 0.0
+    offer_id: int = 0
+    frames_done: int = 0
+    frames_expected: int = 0
+    cost: float = 0.0
+    stage: str = ""
+    hub_logs: tuple[Path, ...] = field(default_factory=tuple)
+    summary_logs: tuple[Path, ...] = field(default_factory=tuple)
+    blender_logs: tuple[Path, ...] = field(default_factory=tuple)
+    final: bool = False
+
+
+_STAGE_TO_STATUS = {
+    "offer": "creating",
+    "create": "creating",
+    "boot": "booting",
+    "ssh": "ssh",
+    "setup": "installing",
+    "stage": "staging",
+    "render": "rendering",
+    "frame": "rendering",
+    "sync": "syncing",
+    "bake": "baking",
+    "validate": "validating",
+    "destroy": "destroyed",
+}
+
+
 class RenderPanelViewModel(BaseViewModel):
-    shots_ready = Signal(list, object, object, float)
+    shots_ready = Signal(list, object, object, float, list)
+    node_cards_ready = Signal(list)
+    node_card_updated = Signal(int)
     scan_progress = Signal(str, int, int)
     scan_error = Signal(str)
 
@@ -100,7 +142,10 @@ class RenderPanelViewModel(BaseViewModel):
         self._active_run_id = ""
         self.last_burst_report = None
         self.preview_video_paths: dict[str, Path] = {}
+        self.node_cards: list[RenderNodeCardModel] = []
+        self.candidate_offers: list = []
         self._progress_by_shot: dict[str, int] = {}
+        self._progress_by_node: dict[int, int] = {}
 
     # ------------------------------------------------------------------
     # Project / settings
@@ -119,11 +164,15 @@ class RenderPanelViewModel(BaseViewModel):
         self.read_only = read_only
         self.status_store = RenderStatusStore.for_project(self.project_root)
         self._progress_by_shot = {}
+        self._progress_by_node = {}
         self.shots = []
         self.plan = None
         self.offer = None
         self.preview_paths = {}
         self.video_paths = {}
+        self.node_cards = []
+        self.candidate_offers = []
+        self.node_cards_ready.emit([])
         try:
             self.settings = self.service.load_settings(self.project_root)
         except Exception:  # noqa: BLE001
@@ -175,7 +224,9 @@ class RenderPanelViewModel(BaseViewModel):
         self.report_status("Scanning shots and render setup...", "yellow")
         return self.workers.start("render_scan", worker)
 
-    def _on_shots_ready(self, shots: list, plan: RenderPlan, offer, balance: float) -> None:
+    def _on_shots_ready(
+        self, shots: list, plan: RenderPlan, offer, balance: float, candidates: list
+    ) -> None:
         self.set_busy(False)
         self.shots = list(shots)
         self.plan = plan
@@ -213,8 +264,102 @@ class RenderPanelViewModel(BaseViewModel):
             nodes=plan.required_nodes,
             cost=plan.estimated_cost,
         )
+        self.candidate_offers = list(candidates or [])
+        self._build_node_cards(plan)
         self.report_status("Render plan ready.", "green")
-        self.shots_ready.emit(self.shots, plan, offer, balance)
+        self.shots_ready.emit(self.shots, plan, offer, balance, self.candidate_offers)
+
+    def _build_node_cards(self, plan: RenderPlan) -> None:
+        if self.settings.render_backend == "local":
+            cards = [
+                RenderNodeCardModel(
+                    node=0,
+                    status="candidate",
+                    message="Runs on this workstation.",
+                    gpu_name="Local workstation",
+                    final=True,
+                )
+            ]
+        else:
+            cards = []
+            for index in range(max(0, int(plan.required_nodes))):
+                offer = (
+                    self.candidate_offers[index]
+                    if index < len(self.candidate_offers)
+                    else None
+                )
+                if offer is None:
+                    cards.append(
+                        RenderNodeCardModel(
+                            node=index,
+                            status="candidate",
+                            message="No candidate offer.",
+                        )
+                    )
+                    continue
+                cards.append(
+                    RenderNodeCardModel(
+                        node=index,
+                        status="candidate",
+                        message="Candidate offer.",
+                        gpu_name=str(getattr(offer, "gpu_name", "") or ""),
+                        region=str(getattr(offer, "geolocation", "") or ""),
+                        price_per_hour=float(getattr(offer, "price_per_hour", 0.0) or 0.0),
+                        reliability=float(getattr(offer, "reliability", 0.0) or 0.0),
+                        down_mbps=float(getattr(offer, "inet_down_mbps", 0.0) or 0.0),
+                        up_mbps=float(getattr(offer, "inet_up_mbps", 0.0) or 0.0),
+                        offer_id=int(getattr(offer, "id", 0) or 0),
+                    )
+                )
+        self.node_cards = cards
+        self.node_cards_ready.emit(list(cards))
+
+    def refresh_candidates(self) -> bool:
+        if (
+            self.project_root is None
+            or self.read_only
+            or self.plan is None
+            or self.settings.render_backend != "vast"
+        ):
+            return False
+        if self.workers.is_running("render_candidates"):
+            return False
+        worker = RenderCandidatesWorker(
+            self.service,
+            self.plan.required_nodes,
+            self.settings,
+        )
+        worker.candidates_ready.connect(self._on_candidates_ready)
+        worker.error.connect(self.scan_error)
+        self.report_status("Refreshing Vast.ai candidate offers...", "yellow")
+        return self.workers.start("render_candidates", worker)
+
+    def _on_candidates_ready(self, candidates: list) -> None:
+        self.candidate_offers = list(candidates or [])
+        if self.plan is not None:
+            self._build_node_cards(self.plan)
+        self.report_status("Candidate offers refreshed.", "green")
+
+    def _ensure_node_card(self, index: int) -> RenderNodeCardModel:
+        while len(self.node_cards) <= index:
+            self.node_cards.append(
+                RenderNodeCardModel(node=len(self.node_cards), status="queued")
+            )
+        return self.node_cards[index]
+
+    def _mark_cards_queued(self) -> None:
+        for card in self.node_cards:
+            card.status = "queued"
+            card.final = False
+            card.message = "Waiting for a node."
+            card.instance_id = 0
+            card.frames_done = 0
+            card.frames_expected = 0
+            card.cost = 0.0
+            card.hub_logs = ()
+            card.summary_logs = ()
+            card.blender_logs = ()
+        self.node_cards_ready.emit(list(self.node_cards))
 
     def recalculate(self) -> None:
         if not self.shots or self.project_root is None:
@@ -237,7 +382,10 @@ class RenderPanelViewModel(BaseViewModel):
                 self.settings.local_speed_factor,
             )
         )
-        self.shots_ready.emit(self.shots, self.plan, self.offer, self.balance)
+        self._build_node_cards(self.plan)
+        self.shots_ready.emit(
+            self.shots, self.plan, self.offer, self.balance, self.candidate_offers
+        )
 
     # ------------------------------------------------------------------
     # Preview
@@ -280,14 +428,9 @@ class RenderPanelViewModel(BaseViewModel):
         self.preview_finished.emit(rendered, total)
 
     def benchmark_selected(self, shot: RenderShot | None = None) -> bool:
-        if (
-            self.project_root is None
-            or self.read_only
-            or not self.shots
-            or self.offer is None
-        ):
+        if self.project_root is None or self.read_only or not self.shots:
             self.benchmark_error.emit(
-                "Select a shot, use the Vast backend and scan the project before benchmarking."
+                "Scan the project and select a shot before benchmarking."
             )
             return False
         shot = shot or self.selected_shot()
@@ -340,6 +483,7 @@ class RenderPanelViewModel(BaseViewModel):
             return False
         if self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
             return False
+        self._mark_cards_queued()
         if self.settings.render_backend == "local":
             self._start_audit("local")
             worker = LocalRenderWorker(
@@ -412,6 +556,7 @@ class RenderPanelViewModel(BaseViewModel):
             frames_done=rendered,
         )
         self._finish_audit(ok=all(item.ok for item in reports), message="Local render finished.")
+        self._update_local_cards(reports)
         self.render_finished.emit(reports)
 
     def cancel_render(self) -> None:
@@ -433,7 +578,59 @@ class RenderPanelViewModel(BaseViewModel):
             ok=bool(getattr(report, "ok", False)),
             message=getattr(report, "message", ""),
         )
+        self._update_burst_cards(report)
         self.render_finished.emit(report)
+
+    def _update_burst_cards(self, report) -> None:
+        run_id = getattr(report, "run_id", self._active_run_id)
+        for result in getattr(report, "nodes", ()) or ():
+            card = self._ensure_node_card(int(result.node))
+            card.status = "completed" if result.ok else "failed"
+            card.message = result.message
+            card.stage = result.stage
+            card.instance_id = int(result.instance_id or 0)
+            card.frames_done = int(result.frames_done or 0)
+            card.frames_expected = int(result.frames_expected or 0)
+            card.cost = float(result.cost or 0.0)
+            card.gpu_name = result.gpu_name or card.gpu_name
+            card.region = result.region or card.region
+            card.price_per_hour = result.price_per_hour or card.price_per_hour
+            card.hub_logs = (self.audit.node_log_path(run_id, result.node),)
+            card.summary_logs = (
+                self.audit.run_dir(run_id) / f"node-{result.node}.json",
+            )
+            card.blender_logs = tuple(Path(path) for path in result.blender_logs or ())
+            card.final = True
+            self.node_card_updated.emit(card.node)
+
+    def _update_local_cards(self, reports: list) -> None:
+        card = self._ensure_node_card(0)
+        shots = list(self.plan.shots) if self.plan is not None else []
+        hub_logs: list[Path] = []
+        summary_logs: list[Path] = []
+        blender_logs: list[Path] = []
+        for index, report in enumerate(reports or []):
+            shot = shots[index] if index < len(shots) else None
+            if shot is None:
+                continue
+            node_id = f"local-{shot.name}"
+            hub_logs.append(self.audit.node_log_path(self._active_run_id, node_id))
+            summary_logs.append(
+                self.audit.run_dir(self._active_run_id) / f"node-{node_id}.json"
+            )
+            blender_logs.append(
+                self.audit.blender_log_path(self._active_run_id, node_id)
+            )
+        card.status = "completed" if not reports or all(item.ok for item in reports) else "failed"
+        card.gpu_name = card.gpu_name or "Local workstation"
+        card.frames_done = sum(item.frames_rendered for item in reports or [])
+        card.frames_expected = sum(item.frames_expected for item in reports or [])
+        card.message = "Local render finished."
+        card.hub_logs = tuple(hub_logs)
+        card.summary_logs = tuple(summary_logs)
+        card.blender_logs = tuple(blender_logs)
+        card.final = True
+        self.node_card_updated.emit(0)
 
     def run_log_dir(self) -> Path:
         """Folder that contains the detailed node logs for the last run."""
@@ -626,6 +823,25 @@ class RenderPanelViewModel(BaseViewModel):
         node = int(getattr(event, "node", 0))
         if getattr(event, "frames_total", 0):
             self._progress_by_node[node] = int(getattr(event, "frames_done", 0))
+        card = self._ensure_node_card(node)
+        stage = str(getattr(event, "stage", "") or "")
+        card.status = _STAGE_TO_STATUS.get(stage, card.status or "rendering")
+        card.stage = stage
+        card.message = str(getattr(event, "message", "") or "")
+        card.instance_id = int(getattr(event, "instance_id", 0) or card.instance_id or 0)
+        if getattr(event, "gpu_name", ""):
+            card.gpu_name = str(event.gpu_name)
+        if getattr(event, "region", ""):
+            card.region = str(event.region)
+        if getattr(event, "price_per_hour", 0):
+            card.price_per_hour = float(event.price_per_hour)
+        if getattr(event, "offer_id", 0):
+            card.offer_id = int(event.offer_id)
+        card.frames_done = int(getattr(event, "frames_done", 0) or card.frames_done or 0)
+        card.frames_expected = int(
+            getattr(event, "frames_total", 0) or card.frames_expected or 0
+        )
+        self.node_card_updated.emit(node)
         self._write_status(
             status="rendering",
             message=getattr(event, "message", ""),
@@ -635,6 +851,12 @@ class RenderPanelViewModel(BaseViewModel):
 
     def _on_local_progress_status(self, shot_name: str, done: int, total: int, seconds: float) -> None:
         self._progress_by_shot[shot_name] = int(done)
+        card = self._ensure_node_card(0)
+        card.status = "rendering"
+        card.message = f"{shot_name}: {done}/{total} ({seconds:.1f}s)"
+        card.frames_done = sum(self._progress_by_shot.values())
+        card.frames_expected = self.plan.total_frames if self.plan else card.frames_expected
+        self.node_card_updated.emit(0)
         self._write_status(
             status="rendering",
             message=f"{shot_name}: {done}/{total} ({seconds:.1f}s)",

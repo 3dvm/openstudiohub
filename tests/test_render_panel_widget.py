@@ -62,3 +62,29 @@ def test_collapsible_section_toggles_its_content(qapp):
     assert section.is_expanded() is False
     assert section.content.isHidden() is True
     section.deleteLater()
+
+
+def test_render_node_card_shows_status_and_log_button(qapp, tmp_path):
+    from src.interfaces.qt.components.render_node_card import RenderNodeCard
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderNodeCardModel
+
+    log = tmp_path / "node-0.log"
+    log.write_text("done", encoding="utf-8")
+    card = RenderNodeCardModel(
+        node=0,
+        status="completed",
+        gpu_name="RTX 4090",
+        region="US",
+        frames_done=10,
+        frames_expected=10,
+        hub_logs=(log,),
+        final=True,
+    )
+
+    widget = RenderNodeCard()
+    widget.update_model(card)
+
+    assert "Node 1" in widget.lbl_title.text()
+    assert "Completed" in widget.lbl_status.text()
+    assert widget.logs_layout.count() == 1
+    widget.deleteLater()

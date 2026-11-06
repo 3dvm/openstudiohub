@@ -24,8 +24,13 @@ every shot with a checkbox; the right side shows the selected shot.
   default. Preview can run locally (default) or on a Vast node. The preview is
   the quickest way to catch a missing view layer or a broken compositor before
   the full render.
-- **Plan:** selected frames, GPU-hours, nodes, ETA, cost, confidence and
-  warnings. The plan is recalculated from the shared settings.
+- **Plan and node cards:** selected frames, GPU-hours, nodes, ETA, cost,
+  confidence and warnings. Before any instance is rented, the panel lists the
+  candidate offers for the required nodes in a four-column card grid
+  (**Refresh candidates** re-queries Vast.ai). Each card then follows its own
+  lifecycle: candidate, creating, booting, SSH, installing, staging, rendering,
+  syncing, completed, failed or destroyed. At the end, the card exposes buttons
+  that open its Hub log, summary and raw Blender log directly.
 - **Final render:** Vast.ai on-demand or local headless, one project at a time. GPU profiles: RTX 3070, 3080, 4070, 3090, 4090 and A6000.
 - **Final sequence player:** the panel replays the rendered PNG sequence with
   play/pause, scrubbing and frame stepping. The current frame can be moved to
@@ -109,7 +114,7 @@ changed in the panel.
   exact Blender, stages the production folder, renders contiguous frame chunks
   and syncs the frames back. Every instance is destroyed in a `finally` block.
   Each node is audited independently, so a failure on one node never hides the
-  state of another.
+  state of another. The node cards update live from the burst progress events.
 - When a run is partial, **Retry missing frames** renders only the frames that
   are absent. Approved frames are skipped.
 - Each run writes a local audit trail:

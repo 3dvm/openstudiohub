@@ -92,7 +92,7 @@ class RenderBurstWorker(ManagedWorker):
 class RenderPanelScanWorker(ManagedWorker):
     """Scan the project and return every shot plus the selected plan."""
 
-    shots_ready = Signal(list, object, object, float)  # shots, plan, offer, balance
+    shots_ready = Signal(list, object, object, float, list)  # shots, plan, offer, balance, candidates
     scan_progress = Signal(str, int, int)
     error = Signal(str)
 
@@ -154,11 +154,60 @@ class RenderPanelScanWorker(ManagedWorker):
             plan = self.service.adjust_plan_for_backend(
                 plan, self.settings.render_backend, self.settings.local_speed_factor
             )
+            candidates = []
+            if self.settings.render_backend == "vast" and plan.required_nodes > 0:
+                try:
+                    candidates = self.service.candidate_offers(
+                        self.settings.gpu_profile,
+                        count=plan.required_nodes,
+                        max_price_per_hour=self.settings.max_price_per_hour,
+                        preferred_region=self.settings.preferred_region,
+                        min_inet_down_mbps=self.settings.min_inet_down_mbps,
+                        min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                    )
+                except VastOfferError as error:
+                    offer_warning = offer_warning or str(error)
+                if candidates and len(candidates) < plan.required_nodes:
+                    from dataclasses import replace as _replace
+
+                    plan = _replace(
+                        plan,
+                        warnings=tuple(plan.warnings)
+                        + (
+                            f"Only {len(candidates)} candidate offer(s) for "
+                            f"{plan.required_nodes} node(s); Vast.ai availability may change.",
+                        ),
+                    )
             if offer_warning:
                 from dataclasses import replace as _replace
 
                 plan = _replace(plan, warnings=tuple(plan.warnings) + (offer_warning,))
-            self.shots_ready.emit(shots, plan, offer, balance)
+            self.shots_ready.emit(shots, plan, offer, balance, candidates)
+        except Exception as error:  # noqa: BLE001
+            self.error.emit(str(error))
+
+
+class RenderCandidatesWorker(ManagedWorker):
+    candidates_ready = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, service: RenderService, count: int, settings: RenderSettings) -> None:
+        super().__init__()
+        self.service = service
+        self.count = max(1, int(count or 1))
+        self.settings = settings
+
+    def run(self) -> None:
+        try:
+            offers = self.service.candidate_offers(
+                self.settings.gpu_profile,
+                count=self.count,
+                max_price_per_hour=self.settings.max_price_per_hour,
+                preferred_region=self.settings.preferred_region,
+                min_inet_down_mbps=self.settings.min_inet_down_mbps,
+                min_inet_up_mbps=self.settings.min_inet_up_mbps,
+            )
+            self.candidates_ready.emit(offers)
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))
 
@@ -501,6 +550,14 @@ class RenderBenchmarkWorker(ManagedWorker):
 
     def run(self) -> None:
         try:
+            if self.offer is None:
+                self.offer = self.service.cheapest_offer(
+                    self.settings.gpu_profile,
+                    max_price_per_hour=self.settings.max_price_per_hour,
+                    preferred_region=self.settings.preferred_region,
+                    min_inet_down_mbps=self.settings.min_inet_down_mbps,
+                    min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                )
             frames = sorted(
                 {
                     int(self.shot.frame_start),

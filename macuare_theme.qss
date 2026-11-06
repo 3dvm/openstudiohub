@@ -400,6 +400,12 @@ QFrame#CardFrame {
     border-radius: 12px;
 }
 
+QFrame#NodeCard {
+    background-color: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
 QFrame#SidebarSeparator {
     background-color: #141820;
     border: none;

@@ -139,6 +139,10 @@ class BurstProgress:
     frames_done: int = 0
     frames_total: int = 0
     instance_id: int = 0
+    gpu_name: str = ""
+    region: str = ""
+    price_per_hour: float = 0.0
+    offer_id: int = 0
 
 
 @dataclass
@@ -542,7 +546,16 @@ class RenderBurstRunner:
             frames_expected=expected,
         )
         try:
-            self._emit(progress, index, "offer", f"renting {offer.gpu_name} at ${offer.price_per_hour:.2f}/h")
+            self._emit(
+                progress,
+                index,
+                "offer",
+                f"renting {offer.gpu_name} at ${offer.price_per_hour:.2f}/h",
+                gpu_name=getattr(offer, "gpu_name", ""),
+                region=getattr(offer, "geolocation", ""),
+                price_per_hour=getattr(offer, "price_per_hour", 0.0),
+                offer_id=getattr(offer, "id", 0),
+            )
             stage = "create"
             instance = self.provider.create_instance(
                 offer.id,
@@ -1103,6 +1116,10 @@ class RenderBurstRunner:
         frames_done: int = 0,
         frames_total: int = 0,
         instance_id: int = 0,
+        gpu_name: str = "",
+        region: str = "",
+        price_per_hour: float = 0.0,
+        offer_id: int = 0,
     ) -> None:
         self._node_stage[node] = stage
         if self.audit is not None and stage != "frame":
@@ -1126,6 +1143,10 @@ class RenderBurstRunner:
                     frames_done=frames_done,
                     frames_total=frames_total,
                     instance_id=instance_id,
+                    gpu_name=gpu_name,
+                    region=region,
+                    price_per_hour=price_per_hour,
+                    offer_id=offer_id,
                 )
             )
         except Exception:  # noqa: BLE001 - progress must never abort a render

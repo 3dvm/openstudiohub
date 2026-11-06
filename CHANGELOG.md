@@ -17,6 +17,12 @@ releases may include larger UI or workflow changes.
     Blender output file;
   - partial runs expose **Retry missing frames** and skip frames that already
     exist or are approved.
+- The render panel shows a four-column grid of node cards after the plan is
+  calculated: candidate offers before renting, live per-node status during the
+  run, and buttons to open the Hub, summary and Blender logs when each node
+  finishes. **Refresh candidates** re-queries the offers.
+- Benchmarking now works without a previously scanned Vast.ai offer: it
+  resolves one on demand.
 - The render panel has an integrated PNG sequence player for finished renders,
   with per-frame **Delete** (moves the frame to `.frame_trash/`) and
   **Approve** (locks the frame against deletion and future renders).

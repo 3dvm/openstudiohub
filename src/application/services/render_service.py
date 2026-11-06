@@ -476,6 +476,32 @@ class RenderService:
     def vast_balance(self) -> float:
         return self.vast_provider().balance()
 
+    def candidate_offers(
+        self,
+        gpu_profile: str,
+        *,
+        count: int = 1,
+        max_price_per_hour: float = 0.0,
+        min_disk_gb: int = 40,
+        preferred_region: str = "prefer_us",
+        min_inet_down_mbps: float = 0.0,
+        min_inet_up_mbps: float = 0.0,
+    ) -> list[VastOffer]:
+        """Return candidate offers for the requested number of nodes.
+
+        These are offers, not reservations: Vast.ai availability can change
+        before the instances are rented.
+        """
+        return self.vast_provider().choose_offers(
+            gpu_profile,
+            count=max(1, int(count or 1)),
+            max_price_per_hour=max_price_per_hour,
+            min_disk_gb=min_disk_gb,
+            preferred_region=preferred_region,
+            min_inet_down_mbps=min_inet_down_mbps,
+            min_inet_up_mbps=min_inet_up_mbps,
+        )
+
     def cheapest_offer(
         self,
         gpu_profile: str,
@@ -486,7 +512,7 @@ class RenderService:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
     ) -> VastOffer:
-        offers = self.vast_provider().choose_offers(
+        offers = self.candidate_offers(
             gpu_profile,
             count=1,
             max_price_per_hour=max_price_per_hour,

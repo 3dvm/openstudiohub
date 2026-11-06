@@ -46,3 +46,83 @@ def test_local_recalculation_uses_one_node_and_zero_cost(qapp, tmp_path):
     assert plan.estimated_cost == 0.0
     assert plan.estimated_wall_seconds > plan.total_gpu_seconds
     assert plan.total_frames == 96
+
+
+def test_candidate_offers_build_one_card_per_node(qapp, tmp_path):
+    from types import SimpleNamespace
+
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderNodeCardModel
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.settings = RenderSettings(render_backend="vast")
+    viewmodel.candidate_offers = [
+        SimpleNamespace(
+            id=10,
+            gpu_name="RTX 4090",
+            geolocation="US",
+            price_per_hour=0.42,
+            reliability=0.99,
+            inet_down_mbps=500,
+            inet_up_mbps=100,
+        ),
+        SimpleNamespace(
+            id=11,
+            gpu_name="RTX 3090",
+            geolocation="CA",
+            price_per_hour=0.31,
+            reliability=0.97,
+            inet_down_mbps=300,
+            inet_up_mbps=80,
+        ),
+    ]
+
+    viewmodel._build_node_cards(SimpleNamespace(required_nodes=2))
+
+    assert [card.node for card in viewmodel.node_cards] == [0, 1]
+    assert viewmodel.node_cards[0].gpu_name == "RTX 4090"
+    assert viewmodel.node_cards[1].offer_id == 11
+    assert viewmodel.node_cards[0].status == "candidate"
+
+
+def test_burst_progress_updates_the_matching_node_card(qapp):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel._ensure_node_card(0)
+
+    viewmodel._on_burst_progress_status(
+        SimpleNamespace(
+            node=0,
+            stage="render",
+            message="rendering sh010",
+            frames_done=4,
+            frames_total=10,
+            instance_id=77,
+            gpu_name="RTX 4090",
+            region="US",
+            price_per_hour=0.42,
+            offer_id=10,
+        )
+    )
+
+    card = viewmodel.node_cards[0]
+    assert card.status == "rendering"
+    assert card.instance_id == 77
+    assert card.frames_done == 4
+    assert card.gpu_name == "RTX 4090"
+
+
+def test_benchmark_starts_without_a_precomputed_offer(qapp, tmp_path, monkeypatch):
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [_shot()]
+    viewmodel.settings = RenderSettings(render_backend="local")
+    started = []
+    monkeypatch.setattr(
+        viewmodel.workers,
+        "start",
+        lambda key, worker, **kwargs: started.append(key) or True,
+    )
+
+    assert viewmodel.benchmark_selected(_shot()) is True
+    assert started == ["render_benchmark"]
