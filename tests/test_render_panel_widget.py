@@ -88,3 +88,40 @@ def test_render_node_card_shows_status_and_log_button(qapp, tmp_path):
     assert "Completed" in widget.lbl_status.text()
     assert widget.logs_layout.count() == 1
     widget.deleteLater()
+
+
+def test_shot_review_card_shows_counts_and_actions(qapp):
+    from src.interfaces.qt.components.shot_review_card import ShotReviewCard
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import ShotReviewModel
+
+    model = ShotReviewModel(
+        name="sh010",
+        sequence="sq010",
+        status="with_renders",
+        status_label="With renders",
+        status_tooltip="Some frames are rendered.",
+        selected=True,
+        locked=False,
+        ready=True,
+        frames=140,
+        rendered=120,
+        approved=80,
+        missing=20,
+        frame_range="101–240 (step 1)",
+        engine="CYCLES",
+        resolution="1920×1080 (100%)",
+        samples=256,
+        measured_seconds=40.5,
+        warnings=(),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+    )
+    card = ShotReviewCard()
+    card.update_model(model)
+
+    assert "R 120/140" in card.lbl_progress.text()
+    assert "A 80/140" in card.lbl_progress.text()
+    assert card.lbl_status.toolTip() == "Some frames are rendered."
+    assert card.check.isChecked() is True
+    assert card.btn_view.isEnabled() is True
+    assert card.btn_retry.isEnabled() is True
+    card.deleteLater()

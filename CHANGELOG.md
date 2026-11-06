@@ -19,8 +19,9 @@ releases may include larger UI or workflow changes.
     exist or are approved.
 - Render controls now sit at the top of the panel, with a **Stop all processes**
   button.
-- Each shot row shows rendered-frame progress and a **View** button for its
-  image sequence.
+- The shot table is now a collapsible card list with rendered/approved counts,
+  status tooltips, per-shot render/preview/benchmark/video actions and a locked
+  state for shots already rendering.
 - The sequence player supports In/Out points for approving or deleting a frame
   range; without a range the actions apply to the current frame.
 - The render panel shows a four-column grid of node cards after the plan is

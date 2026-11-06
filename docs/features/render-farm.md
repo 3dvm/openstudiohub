@@ -13,12 +13,21 @@ progress, preview and review video.
 ## The panel
 
 The project selector at the top chooses the production. The left side lists
-every shot with a checkbox; the right side shows the selected shot.
+every shot as a collapsible card; the right side shows the selected shot.
 
-- **Shot selection:** only ready shots can be checked. Empty template scenes are
-  listed as not ready and are never rented for. Each row shows how many frames
-  are rendered (`120/140 · 86%`) and has a **View** button that opens the
-  rendered sequence player for that shot.
+- **Shot cards:** each card shows the rendered and approved frame counts
+  (`R 120/140 · A 80/140`), frame range, quality, measured time and warning
+  summary. The header status is one of:
+  `Not ready`, `Check setup`, `Rendering`, `Failed`, `Finished`
+  (all frames approved), `In review` (all rendered, not all approved),
+  `With renders` (partially rendered) or `Ready`. Hovering the status shows a
+  detailed tooltip.
+- **Per-shot actions:** **View**, **Preview**, **Benchmark**, **Render**,
+  **Retry**, **Approve**, **Delete** and a **More** menu with unapprove, video
+  creation and folder/.blend actions.
+- **Selection:** only ready shots can be checked. Shots that are part of the
+  active run are locked: their checkbox and render actions are disabled until
+  the run finishes.
 - **Run controls:** Start, Cancel, **Stop all processes**, preview/review video
   actions and log access sit at the top of the panel, above the preview.
 - **Render setup audit:** compositing on/off, view layers and whether each one

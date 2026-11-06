@@ -14,7 +14,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QPixmap
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -22,7 +21,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -33,17 +31,15 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from src.domain.render.capacity import default_seconds_per_frame
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
 from src.interfaces.qt.components.collapsible_section import CollapsibleSection
 from src.interfaces.qt.components.frame_sequence_player import FrameSequencePlayer
 from src.interfaces.qt.components.render_node_card import RenderNodeCard
+from src.interfaces.qt.components.shot_review_card import ShotReviewCard
 from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderPanelViewModel
 
 
@@ -64,9 +60,9 @@ class RenderPanelWidget(QFrame):
         self._shots: list[RenderShot] = []
         self._plan: RenderPlan | None = None
         self._selected_shot: RenderShot | None = None
-        self._populating = False
         self._current_preview = ""
         self._node_card_widgets: dict[int, RenderNodeCard] = {}
+        self._shot_cards: dict[str, ShotReviewCard] = {}
         self._shot_progress_timer = QTimer(self)
         self._shot_progress_timer.setInterval(2000)
         self._shot_progress_timer.timeout.connect(self._refresh_shot_progress)
@@ -119,6 +115,7 @@ class RenderPanelWidget(QFrame):
         splitter.setHandleWidth(10)
 
         left = QWidget()
+        left.setMinimumWidth(430)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 4, 0)
         left_layout.setSpacing(8)
@@ -133,40 +130,18 @@ class RenderPanelWidget(QFrame):
         shots_layout = QVBoxLayout(shots_panel)
         shots_layout.setContentsMargins(0, 0, 0, 0)
         shots_layout.setSpacing(8)
-        self.table = QTableWidget(0, 10)
-        self.table.setHorizontalHeaderLabels(
-            [
-                "",
-                self.tr("Shot"),
-                self.tr("Frames"),
-                self.tr("Status"),
-                self.tr("Engine"),
-                self.tr("Layers"),
-                self.tr("s/frame"),
-                self.tr("Cost"),
-                self.tr("Rendered"),
-                self.tr("Preview"),
-            ]
-        )
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.verticalHeader().setVisible(False)
-        header_view = self.table.horizontalHeader()
-        header_view.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(4, QHeaderView.Stretch)
-        header_view.setSectionResizeMode(5, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(6, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(7, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(8, QHeaderView.ResizeToContents)
-        header_view.setSectionResizeMode(9, QHeaderView.ResizeToContents)
-        self.table.setMinimumHeight(260)
-        self.table.itemSelectionChanged.connect(self._on_shot_selected)
-        self.table.itemChanged.connect(self._on_check_changed)
-        shots_layout.addWidget(self.table, 1)
+        self.shots_scroll = QScrollArea()
+        self.shots_scroll.setObjectName("InvisibleScrollArea")
+        self.shots_scroll.setWidgetResizable(True)
+        self.shots_scroll.setFrameShape(QFrame.NoFrame)
+        self.shots_container = QWidget()
+        self.shots_container.setObjectName("TransparentGridContainer")
+        self.shots_layout = QVBoxLayout(self.shots_container)
+        self.shots_layout.setContentsMargins(0, 0, 0, 0)
+        self.shots_layout.setSpacing(6)
+        self.shots_layout.addStretch()
+        self.shots_scroll.setWidget(self.shots_container)
+        shots_layout.addWidget(self.shots_scroll, 1)
         left_splitter.addWidget(shots_panel)
 
         self.log = QPlainTextEdit()
@@ -244,6 +219,7 @@ class RenderPanelWidget(QFrame):
         splitter.addWidget(right)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 1)
+        splitter.setSizes([520, 720])
         layout.addWidget(splitter, 1)
 
         if self.read_only:
@@ -527,6 +503,7 @@ class RenderPanelWidget(QFrame):
         self.vm.shots_ready.connect(self._on_shots_ready)
         self.vm.node_cards_ready.connect(self._on_node_cards_ready)
         self.vm.node_card_updated.connect(self._on_node_card_updated)
+        self.vm.shot_reviews_ready.connect(self._on_shot_reviews_ready)
         self.vm.scan_progress.connect(self._on_scan_progress)
         self.vm.scan_error.connect(self._on_error)
         self.vm.preview_ready.connect(self._on_preview_ready)
@@ -592,7 +569,7 @@ class RenderPanelWidget(QFrame):
         self._shots = []
         self._plan = None
         self._selected_shot = None
-        self.table.setRowCount(0)
+        self._clear_shot_cards()
         self.lbl_setup.setText(self.tr("Render setup: scanning..."))
         self.lbl_summary.setText("")
         self.lbl_warnings.setText("")
@@ -737,7 +714,7 @@ class RenderPanelWidget(QFrame):
             or self.vm.settings.preview_backend == "vast"
             else self.tr("Render backend: local")
         )
-        self._fill_table()
+        self._sync_shot_cards()
         self.lbl_summary.setText(self._summary_html(plan, offer))
         self.lbl_warnings.setText("\n".join(plan.warnings))
         self.btn_start.setEnabled(
@@ -747,8 +724,8 @@ class RenderPanelWidget(QFrame):
                 or offer is not None
             )
         )
-        if self._shots and self.table.currentRow() < 0:
-            self.table.selectRow(0)
+        if self._shots and self._selected_shot is None:
+            self._select_shot(self._shots[0].relative_path)
         self._append_log(
             f"Plan: {plan.total_frames} frame(s), {plan.required_nodes} node(s), "
             f"ETA {plan.estimated_wall_hours:.2f} h, ${plan.estimated_cost:.2f}."
@@ -782,105 +759,153 @@ class RenderPanelWidget(QFrame):
             return
         widget.update_model(self.vm.node_cards[index])
 
-    def _fill_table(self) -> None:
-        selected = set(self.vm.settings.selected_shots or ())
-        price = self._plan.price_per_hour if self._plan else 0.0
-        self._populating = True
-        self.table.setRowCount(len(self._shots))
-        for row, shot in enumerate(self._shots):
-            check = QTableWidgetItem("")
-            check.setFlags(
-                Qt.ItemIsUserCheckable | Qt.ItemIsEnabled
-                if shot.is_ready
-                else Qt.ItemIsEnabled
-            )
-            check.setCheckState(
-                Qt.Checked
-                if shot.relative_path in selected and shot.is_ready
-                else Qt.Unchecked
-            )
-            self.table.setItem(row, 0, check)
-            values = [
-                shot.name,
-                str(shot.frames),
-                self._shot_status(shot),
-                shot.quality.label(),
-                self._layer_label(shot),
-                (
-                    (
-                        ("~" if shot.measurement_scaled else "")
-                        + f"{shot.measured_seconds:.1f}"
-                    )
-                    if shot.measured_seconds is not None
-                    else self.tr("estimate")
-                ),
-            ]
-            for column, value in enumerate(values, start=1):
-                self.table.setItem(row, column, QTableWidgetItem(value))
-            seconds = shot.measured_seconds
-            if seconds is None:
-                seconds = default_seconds_per_frame(
-                    shot.quality, shot.geometry_node_objects
-                )
-            cost = shot.frames * seconds / 3600.0 * max(0.0, price)
-            self.table.setItem(row, 7, QTableWidgetItem(f"${cost:.2f}"))
-            done, expected = self.vm.shot_progress(shot)
-            percent = (done / expected * 100.0) if expected else 0.0
-            self.table.setItem(
-                row,
-                8,
-                QTableWidgetItem(f"{done}/{expected} ({percent:.0f}%)"),
-            )
-            play = QPushButton(self.tr("View"))
-            play.setObjectName("SecondaryButton")
-            play.setEnabled(bool(shot.is_ready))
-            play.clicked.connect(
-                lambda _checked=False, target=shot: self._show_sequence_for_shot(target)
-            )
-            self.table.setCellWidget(row, 9, play)
-        self._populating = False
+    def _sync_shot_cards(self) -> None:
+        reviews = {model.relative_path: model for model in self.vm.shot_reviews()}
+        for path in list(self._shot_cards):
+            if path not in reviews:
+                card = self._shot_cards.pop(path)
+                card.setParent(None)
+                card.deleteLater()
+        for index, model in enumerate(reviews.values()):
+            card = self._shot_cards.get(model.relative_path)
+            if card is None:
+                card = ShotReviewCard()
+                card.selection_changed.connect(self._on_shot_selection_changed)
+                card.activated.connect(self._select_shot)
+                card.action_requested.connect(self._on_shot_action)
+                self.shots_layout.insertWidget(max(0, self.shots_layout.count() - 1), card)
+                self._shot_cards[model.relative_path] = card
+            card.update_model(model)
 
-    @staticmethod
-    def _shot_status(shot: RenderShot) -> str:
-        if not shot.is_ready:
-            return "Not ready"
-        setup = shot.setup
-        if setup is not None and not setup.is_compositing_ready:
-            return "Check setup"
-        return "Ready"
+    def _on_shot_reviews_ready(self, _reviews: list) -> None:
+        self._sync_shot_cards()
 
-    @staticmethod
-    def _layer_label(shot: RenderShot) -> str:
-        setup = shot.setup
-        if setup is None:
-            return "-"
-        enabled = setup.enabled_layers
-        connected = setup.connected_layers
-        if not enabled:
-            return "no layers"
-        return f"{len(connected)}/{len(enabled)} connected"
+    def _on_shot_selection_changed(self, relative_path: str, checked: bool) -> None:
+        selected = [
+            path
+            for path, card in self._shot_cards.items()
+            if card.check.isChecked()
+        ]
+        if checked and relative_path not in selected:
+            selected.append(relative_path)
+        self.vm.set_selected_shots(selected)
+        self._sync_shot_cards()
 
-    def _on_shot_selected(self) -> None:
-        row = self.table.currentRow()
-        if row < 0 or row >= len(self._shots):
+    def _select_shot(self, relative_path: str) -> None:
+        shot = next(
+            (candidate for candidate in self._shots if candidate.relative_path == relative_path),
+            None,
+        )
+        if shot is None:
             return
-        self._selected_shot = self._shots[row]
+        self._selected_shot = shot
         self.player.pause()
         self.preview_stack.setCurrentWidget(self.preview_label)
-        self._show_setup(self._selected_shot)
-        self._show_latest_preview(self._selected_shot)
-        self._show_video(self._selected_shot)
+        self._show_setup(shot)
+        self._show_latest_preview(shot)
+        self._show_video(shot)
 
-    def _on_check_changed(self, item: QTableWidgetItem) -> None:
-        if self._populating or item.column() != 0:
+    def _on_shot_action(self, relative_path: str, action: str) -> None:
+        shot = next(
+            (candidate for candidate in self._shots if candidate.relative_path == relative_path),
+            None,
+        )
+        if shot is None:
             return
-        selected = []
-        for row in range(self.table.rowCount()):
-            check = self.table.item(row, 0)
-            if check is not None and check.checkState() == Qt.Checked:
-                shot = self._shots[row]
-                selected.append(shot.relative_path)
-        self.vm.set_selected_shots(selected)
+        if action == "view":
+            self._show_sequence_for_shot(shot)
+            return
+        if action == "preview":
+            self.preview_stack.setCurrentWidget(self.preview_label)
+            self.vm.preview_shots([shot])
+            return
+        if action == "benchmark":
+            self._benchmark_shot(shot)
+            return
+        if action in ("render", "retry"):
+            if not self._confirm_shot_render(shot, action == "retry"):
+                return
+            started = (
+                self.vm.retry_missing_shot(shot)
+                if action == "retry"
+                else self.vm.render_single_shot(shot)
+            )
+            if started:
+                self._shot_progress_timer.start()
+                self._refresh_shot_progress()
+            return
+        if action == "approve_all":
+            ok, message = self.vm.approve_all_rendered(shot)
+            self._append_log(message)
+            if not ok:
+                QMessageBox.warning(self, self.tr("Approve frames"), message)
+        elif action == "unapprove_all":
+            ok, message = self.vm.unapprove_all(shot)
+            self._append_log(message)
+            if not ok:
+                QMessageBox.warning(self, self.tr("Unapprove frames"), message)
+        elif action == "delete_unapproved":
+            if not self._confirm_delete_unapproved(shot):
+                return
+            ok, message = self.vm.delete_unapproved(shot)
+            self._append_log(message)
+            if not ok:
+                QMessageBox.warning(self, self.tr("Delete unapproved"), message)
+        elif action == "preview_video":
+            self.vm.create_preview_videos([shot])
+        elif action == "review_video":
+            self.vm.create_review_videos([shot])
+        elif action == "open_output":
+            folder = self.vm.service.shot_output_dir(
+                self.vm.project_root, shot, self.vm.settings.task_type
+            )
+            folder.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+        elif action == "open_blend":
+            if shot.blend_path.is_file():
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(shot.blend_path)))
+        self._refresh_shot_progress()
+
+    def _confirm_shot_render(self, shot: RenderShot, retry: bool) -> bool:
+        text = (
+            f"Retry only the missing frames of {shot.name}?"
+            if retry
+            else f"Render {shot.name} only?\n\nThis changes the render selection to this shot."
+        )
+        answer = QMessageBox.question(
+            self,
+            self.tr("Render shot"),
+            self.tr(text),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def _confirm_delete_unapproved(self, shot: RenderShot) -> bool:
+        answer = QMessageBox.question(
+            self,
+            self.tr("Delete unapproved frames"),
+            self.tr(
+                "Move every unapproved rendered frame of {0} to .frame_trash?"
+            ).format(shot.name),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def _benchmark_shot(self, shot: RenderShot) -> None:
+        answer = QMessageBox.question(
+            self,
+            self.tr("Benchmark shot"),
+            self.tr(
+                "Rent one Vast.ai node and render 3 representative frames of {0}?\n\n"
+                "The median time updates the measured profile. Estimated cost: ~$0.05."
+            ).format(shot.name),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self.vm.benchmark_selected(shot)
 
     def _show_setup(self, shot: RenderShot) -> None:
         setup = shot.setup
@@ -966,17 +991,18 @@ class RenderPanelWidget(QFrame):
             f"Playing final sequence for {shot.name} ({len(rendered)} frame(s))."
         )
 
+    def _clear_shot_cards(self) -> None:
+        for card in self._shot_cards.values():
+            card.setParent(None)
+            card.deleteLater()
+        self._shot_cards = {}
+        self._selected_shot = None
+        self._shots = []
+
     def _refresh_shot_progress(self) -> None:
         if not self._shots:
             return
-        for row, shot in enumerate(self._shots):
-            done, expected = self.vm.shot_progress(shot)
-            percent = (done / expected * 100.0) if expected else 0.0
-            item = self.table.item(row, 8)
-            if item is None:
-                item = QTableWidgetItem()
-                self.table.setItem(row, 8, item)
-            item.setText(f"{done}/{expected} ({percent:.0f}%)")
+        self._sync_shot_cards()
 
     def _delete_frames(self, frames: list) -> None:
         if self._selected_shot is None or not frames:

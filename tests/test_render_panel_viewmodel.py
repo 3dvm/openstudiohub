@@ -126,3 +126,62 @@ def test_benchmark_starts_without_a_precomputed_offer(qapp, tmp_path, monkeypatc
 
     assert viewmodel.benchmark_selected(_shot()) is True
     assert started == ["render_benchmark"]
+
+
+def _review_vm(tmp_path, frames_rendered=0, approved=0):
+    viewmodel = RenderPanelViewModel(RenderService())
+    shot = _shot()
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(
+        selected_shots=(shot.relative_path,), render_backend="local"
+    )
+    output = viewmodel.service.shot_output_dir(tmp_path, shot)
+    output.mkdir(parents=True)
+    for index in range(frames_rendered):
+        (output / f"frame_{101 + index:04d}.png").write_bytes(b"x")
+    if approved:
+        viewmodel.service.approve_frames(
+            tmp_path, shot, list(range(101, 101 + approved)), True
+        )
+    return viewmodel, shot
+
+
+def test_shot_status_reflects_rendered_and_approved_frames(qapp, tmp_path):
+    viewmodel, shot = _review_vm(tmp_path)
+    assert viewmodel.shot_reviews()[0].status == "ready"
+
+    viewmodel, shot = _review_vm(tmp_path / "partial", frames_rendered=2)
+    review = viewmodel.shot_reviews()[0]
+    assert review.status == "with_renders"
+    assert review.rendered == 2 and review.approved == 0
+
+    viewmodel, shot = _review_vm(tmp_path / "review", frames_rendered=96)
+    assert viewmodel.shot_reviews()[0].status == "in_review"
+
+    viewmodel, shot = _review_vm(
+        tmp_path / "finished", frames_rendered=96, approved=96
+    )
+    assert viewmodel.shot_reviews()[0].status == "finished"
+
+
+def test_locked_shot_reports_rendering_and_cannot_be_rendered_again(qapp, tmp_path):
+    viewmodel, shot = _review_vm(tmp_path)
+    viewmodel._locked_shots = {shot.relative_path}
+
+    assert viewmodel.shot_reviews()[0].status == "rendering"
+    assert viewmodel.shot_reviews()[0].locked is True
+    assert viewmodel.shot_reviews()[0].status_tooltip
+    assert viewmodel.render_single_shot(shot) is False
+
+
+def test_unapprove_and_delete_unapproved_use_the_frame_sidecar(qapp, tmp_path):
+    viewmodel, shot = _review_vm(tmp_path / "frames", frames_rendered=3, approved=1)
+
+    ok, _message = viewmodel.unapprove_all(shot)
+    assert ok is True
+    assert viewmodel.shot_reviews()[0].approved == 0
+
+    ok, _message = viewmodel.delete_unapproved(shot)
+    assert ok is True
+    assert viewmodel.shot_reviews()[0].rendered == 0

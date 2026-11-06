@@ -406,6 +406,20 @@ QFrame#NodeCard {
     border-radius: 8px;
 }
 
+QFrame#ShotReviewCard {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+
+QToolButton#ShotReviewToggle {
+    background-color: transparent;
+    color: #F8FAFC;
+    border: none;
+    font-weight: bold;
+    font-size: 13px;
+}
+
 QFrame#SidebarSeparator {
     background-color: #141820;
     border: none;

@@ -62,6 +62,65 @@ class RenderNodeCardModel:
     final: bool = False
 
 
+@dataclass
+class ShotReviewModel:
+    name: str
+    sequence: str
+    status: str
+    status_label: str
+    status_tooltip: str
+    selected: bool
+    locked: bool
+    ready: bool
+    frames: int
+    rendered: int
+    approved: int
+    missing: int
+    frame_range: str
+    engine: str
+    resolution: str
+    samples: int
+    measured_seconds: float | None
+    warnings: tuple[str, ...]
+    relative_path: str
+
+
+SHOT_STATUS_TOOLTIPS = {
+    "not_ready": (
+        "The shot has no camera, no geometry or an invalid frame range. "
+        "It cannot be rendered."
+    ),
+    "check_setup": (
+        "The shot is renderable, but the compositor or view layers are incomplete. "
+        "Review the setup before rendering."
+    ),
+    "rendering": "This shot is part of the active run and is being rendered right now.",
+    "queued": "This shot is selected for the active run and waiting for a node.",
+    "failed": "The last render attempt for this shot failed before writing frames.",
+    "finished": "Every expected frame is rendered and approved.",
+    "in_review": (
+        "Every expected frame is rendered, but some frames are still waiting "
+        "for approval."
+    ),
+    "with_renders": (
+        "Some frames are rendered. Rendered and approved counts show the progress."
+    ),
+    "ready": "The shot is ready to render and has no rendered frames yet.",
+}
+
+_SHOT_STATUS_LABELS = {
+    "not_ready": "Not ready",
+    "check_setup": "Check setup",
+    "rendering": "Rendering",
+    "queued": "Queued",
+    "failed": "Failed",
+    "finished": "Finished",
+    "in_review": "In review",
+    "with_renders": "With renders",
+    "ready": "Ready",
+}
+
+
 _STAGE_TO_STATUS = {
     "offer": "creating",
     "create": "creating",
@@ -80,6 +139,7 @@ _STAGE_TO_STATUS = {
 
 class RenderPanelViewModel(BaseViewModel):
     shots_ready = Signal(list, object, object, float, list)
+    shot_reviews_ready = Signal(list)
     node_cards_ready = Signal(list)
     node_card_updated = Signal(int)
     scan_progress = Signal(str, int, int)
@@ -146,6 +206,8 @@ class RenderPanelViewModel(BaseViewModel):
         self.candidate_offers: list = []
         self._progress_by_shot: dict[str, int] = {}
         self._progress_by_node: dict[int, int] = {}
+        self._locked_shots: set[str] = set()
+        self._failed_shots: set[str] = set()
 
     # ------------------------------------------------------------------
     # Project / settings
@@ -172,7 +234,10 @@ class RenderPanelViewModel(BaseViewModel):
         self.video_paths = {}
         self.node_cards = []
         self.candidate_offers = []
+        self._locked_shots = set()
+        self._failed_shots = set()
         self.node_cards_ready.emit([])
+        self.shot_reviews_ready.emit([])
         try:
             self.settings = self.service.load_settings(self.project_root)
         except Exception:  # noqa: BLE001
@@ -192,11 +257,14 @@ class RenderPanelViewModel(BaseViewModel):
         self._save_settings()
 
     def set_selected_shots(self, relative_paths: list[str]) -> None:
+        requested = set(relative_paths or ())
+        requested.update(self._locked_shots)
         self.settings = replace(
-            self.settings, selected_shots=tuple(relative_paths)
+            self.settings, selected_shots=tuple(sorted(requested))
         )
         self._save_settings()
         self.recalculate()
+        self._emit_shot_reviews()
 
     def _save_settings(self) -> None:
         if self.project_root is None:
@@ -268,6 +336,160 @@ class RenderPanelViewModel(BaseViewModel):
         self._build_node_cards(plan)
         self.report_status("Render plan ready.", "green")
         self.shots_ready.emit(self.shots, plan, offer, balance, self.candidate_offers)
+        self._emit_shot_reviews()
+
+    def is_shot_locked(self, shot: RenderShot) -> bool:
+        return shot.relative_path in self._locked_shots
+
+    def shot_reviews(self) -> list[ShotReviewModel]:
+        return [self._shot_review(shot) for shot in self.shots]
+
+    def _emit_shot_reviews(self) -> None:
+        self.shot_reviews_ready.emit(self.shot_reviews())
+
+    def _shot_review(self, shot: RenderShot) -> ShotReviewModel:
+        rendered, expected = self.shot_progress(shot)
+        approved = 0
+        if self.project_root is not None:
+            try:
+                approved = len(
+                    self.service.frame_state_store(
+                        self.project_root, shot, self.settings.task_type
+                    ).approved_frames()
+                )
+            except Exception:  # noqa: BLE001
+                approved = 0
+        missing = max(0, expected - rendered)
+        quality = shot.quality
+        status = self._shot_status(shot, rendered, approved, expected)
+        warnings = list(shot.warnings)
+        setup = shot.setup
+        if setup is not None:
+            warnings.extend(setup.warnings or ())
+        resolution = (
+            f"{quality.effective_width}×{quality.effective_height} "
+            f"({quality.resolution_percentage}%)"
+        )
+        return ShotReviewModel(
+            name=shot.name,
+            sequence=shot.sequence or "shots",
+            status=status,
+            status_label=_SHOT_STATUS_LABELS.get(status, status.title()),
+            status_tooltip=SHOT_STATUS_TOOLTIPS.get(status, ""),
+            selected=shot.relative_path in (self.settings.selected_shots or ()),
+            locked=self.is_shot_locked(shot),
+            ready=shot.is_ready,
+            frames=expected,
+            rendered=rendered,
+            approved=approved,
+            missing=missing,
+            frame_range=f"{shot.frame_start}–{shot.frame_end} "
+            f"(step {max(1, shot.frame_step)})",
+            engine=quality.engine,
+            resolution=resolution,
+            samples=int(quality.samples),
+            measured_seconds=shot.measured_seconds,
+            warnings=tuple(warnings),
+            relative_path=shot.relative_path,
+        )
+
+    def _shot_status(
+        self, shot: RenderShot, rendered: int, approved: int, expected: int
+    ) -> str:
+        if not shot.is_ready:
+            return "not_ready"
+        setup = shot.setup
+        if setup is not None and not setup.is_compositing_ready:
+            return "check_setup"
+        if self.is_shot_locked(shot):
+            return "rendering"
+        if shot.relative_path in self._failed_shots:
+            return "failed"
+        if expected > 0 and approved >= expected:
+            return "finished"
+        if expected > 0 and rendered >= expected:
+            return "in_review"
+        if rendered > 0:
+            return "with_renders"
+        return "ready"
+
+    def _shot_by_path(self, relative_path: str) -> RenderShot | None:
+        for shot in self.shots:
+            if shot.relative_path == relative_path:
+                return shot
+        return None
+
+    def _rendered_frames(self, shot: RenderShot) -> list[int]:
+        if self.project_root is None:
+            return []
+        folder = self.service.shot_output_dir(
+            self.project_root, shot, self.settings.task_type
+        )
+        step = max(1, int(shot.frame_step or 1))
+        return [
+            frame
+            for frame in range(shot.frame_start, shot.frame_end + 1, step)
+            if (folder / f"frame_{frame:04d}.png").is_file()
+        ]
+
+    def render_single_shot(self, shot: RenderShot) -> bool:
+        if self.is_shot_locked(shot) or self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
+            self.render_error.emit("That shot is already rendering or a render is running.")
+            return False
+        self.settings = replace(
+            self.settings, selected_shots=(shot.relative_path,)
+        )
+        self._save_settings()
+        self.recalculate()
+        self._emit_shot_reviews()
+        return self.start_render()
+
+    def retry_missing_shot(self, shot: RenderShot) -> bool:
+        if self.is_shot_locked(shot) or self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
+            self.render_error.emit("That shot is already rendering or a render is running.")
+            return False
+        self.settings = replace(
+            self.settings, selected_shots=(shot.relative_path,)
+        )
+        self._save_settings()
+        self.recalculate()
+        self._emit_shot_reviews()
+        return self.start_render(retry=True)
+
+    def approve_all_rendered(self, shot: RenderShot) -> tuple[bool, str]:
+        frames = self._rendered_frames(shot)
+        if not frames:
+            return False, "The shot has no rendered frames."
+        result = self.approve_frames(shot, frames, True)
+        self._emit_shot_reviews()
+        return result
+
+    def unapprove_all(self, shot: RenderShot) -> tuple[bool, str]:
+        if self.project_root is None:
+            return False, "The panel has no project."
+        approved = sorted(
+            self.service.frame_state_store(
+                self.project_root, shot, self.settings.task_type
+            ).approved_frames()
+        )
+        if not approved:
+            return False, "The shot has no approved frames."
+        result = self.approve_frames(shot, approved, False)
+        self._emit_shot_reviews()
+        return result
+
+    def delete_unapproved(self, shot: RenderShot) -> tuple[bool, str]:
+        if self.project_root is None:
+            return False, "The panel has no project."
+        approved = self.service.frame_state_store(
+            self.project_root, shot, self.settings.task_type
+        ).approved_frames()
+        frames = [frame for frame in self._rendered_frames(shot) if frame not in approved]
+        if not frames:
+            return False, "There are no unapproved rendered frames."
+        ok, message, _deleted = self.delete_frames(shot, frames)
+        self._emit_shot_reviews()
+        return ok, message
 
     def _build_node_cards(self, plan: RenderPlan) -> None:
         if self.settings.render_backend == "local":
@@ -484,6 +706,10 @@ class RenderPanelViewModel(BaseViewModel):
         if self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
             return False
         self._mark_cards_queued()
+        selected = self.service.selected_shots(self.shots, self.settings)
+        self._locked_shots = {shot.relative_path for shot in selected}
+        self._failed_shots.clear()
+        self._emit_shot_reviews()
         if self.settings.render_backend == "local":
             self._start_audit("local")
             worker = LocalRenderWorker(
@@ -555,8 +781,10 @@ class RenderPanelViewModel(BaseViewModel):
             message=f"Local render: {rendered} frame(s).",
             frames_done=rendered,
         )
-        self._finish_audit(ok=all(item.ok for item in reports), message="Local render finished.")
+        ok = bool(reports) and all(item.ok for item in reports)
+        self._finish_audit(ok=ok, message="Local render finished.")
         self._update_local_cards(reports)
+        self._finish_shot_run(ok, sum(item.frames_rendered for item in reports))
         self.render_finished.emit(reports)
 
     def cancel_render(self) -> None:
@@ -595,7 +823,20 @@ class RenderPanelViewModel(BaseViewModel):
             message=getattr(report, "message", ""),
         )
         self._update_burst_cards(report)
+        self._finish_shot_run(
+            bool(getattr(report, "ok", False)),
+            int(getattr(report, "frames_rendered", 0)),
+        )
         self.render_finished.emit(report)
+
+    def _finish_shot_run(self, ok: bool, rendered: int) -> None:
+        locked = set(self._locked_shots)
+        if not ok and rendered <= 0:
+            self._failed_shots.update(locked)
+        else:
+            self._failed_shots.difference_update(locked)
+        self._locked_shots.clear()
+        self._emit_shot_reviews()
 
     def _update_burst_cards(self, report) -> None:
         run_id = getattr(report, "run_id", self._active_run_id)
@@ -904,6 +1145,10 @@ class RenderPanelViewModel(BaseViewModel):
     def _on_error_status(self, message: str) -> None:
         self.set_busy(False)
         self._finish_audit(ok=False, message=message)
+        if self._locked_shots:
+            self._failed_shots.update(self._locked_shots)
+            self._locked_shots.clear()
+            self._emit_shot_reviews()
         self._write_status(status="failed", message=message)
 
     # ------------------------------------------------------------------
