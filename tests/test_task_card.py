@@ -1,10 +1,34 @@
-"""Unit tests for the task-card status badge and VCS lock badge."""
+"""Unit tests for the task-card status badge, thumbnail and VCS lock badge."""
+
+import struct
+import zlib
 
 from src.interfaces.qt.components.task_card import TaskCard, resolve_task_status
 
 
-def _card(qapp, task_data: dict | None = None) -> TaskCard:
-    # No ``entity_id`` keeps the thumbnail worker from hitting the network.
+def _png_bytes() -> bytes:
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(kind + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", crc)
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
+    pixels = zlib.compress(b"\x00\xff\x00\x00")
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", pixels)
+        + chunk(b"IEND", b"")
+    )
+
+
+_PNG_1X1 = _png_bytes()
+
+
+def _card(
+    qapp,
+    task_data: dict | None = None,
+    thumbnail_bytes: bytes | None = None,
+) -> TaskCard:
     return TaskCard(
         parent=None,
         task_data=task_data
@@ -13,10 +37,9 @@ def _card(qapp, task_data: dict | None = None) -> TaskCard:
         is_installed=True,
         can_work=True,
         blocked_reason="",
-        token="",
-        host="",
         on_launch_callback=lambda: None,
         on_install_callback=lambda: None,
+        thumbnail_bytes=thumbnail_bytes,
     )
 
 
@@ -82,3 +105,17 @@ def test_status_badge_shows_nested_status(qapp):
     assert card.status_badge.text() == "READY TO START"
     assert "#3B82F6" in card.status_badge.styleSheet()
 
+
+
+def test_task_card_does_not_spawn_a_thumbnail_worker(qapp):
+    card = _card(qapp, {"id": "t1", "entity_id": "e1"})
+
+    assert not hasattr(card, "worker")
+    assert card.thumb_stack.currentIndex() == 0
+
+
+def test_task_card_applies_prefetched_thumbnail(qapp):
+    card = _card(qapp, {"id": "t1", "entity_id": "e1"}, thumbnail_bytes=_PNG_1X1)
+
+    assert card.thumb_stack.currentIndex() == 1
+    assert card.thumb_label.pixmap().isNull() is False

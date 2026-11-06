@@ -572,5 +572,8 @@ class ProductionService:
     def download_project_thumbnail(self, project_id: str, token: str, host_url: str) -> Optional[bytes]:
         return self.kitsu.download_project_thumbnail(project_id, token, host_url)
 
+    def download_task_thumbnail(self, entity_id: str, token: str, host_url: str) -> Optional[bytes]:
+        return self.kitsu.download_entity_thumbnail(entity_id, token, host_url)
+
     def seed_test_database(self, admin_email: str, admin_pwd: str) -> Tuple[bool, str]:
         return self.kitsu.seed_test_database(admin_email=admin_email, admin_pwd=admin_pwd)

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from src.domain.identity.value_objects import Role, ViewProfile
+from src.infrastructure.app_logging import configure_logging
 from src.infrastructure.kitsu_manager import KitsuManager
 from src.infrastructure.qt_worker import active_critical_workers, wait_for_all
 from src.infrastructure.watchtower_launcher import WatchtowerLauncher
@@ -488,6 +489,10 @@ class OpenStudioHub(QMainWindow):
 
 
 if __name__ == "__main__":
+    log_path = configure_logging()
+    if log_path is not None:
+        print(f"[OPENSTUDIO HUB] Logging this run to {log_path}")
+
     app = QApplication(sys.argv)
 
     theme_path = Path("macuare_theme.qss")

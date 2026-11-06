@@ -96,3 +96,50 @@ def test_tasks_fetch_failure_emits_finished_false(qapp):
 
     assert finished == [False]
     assert vm._tasks_loading is False
+
+
+class FakeAuth:
+    host = "http://kitsu.test"
+
+    def access_token(self):
+        return "token"
+
+
+class FakeProduction:
+    def __init__(self):
+        self.calls = []
+
+    def download_task_thumbnail(self, entity_id, token, host):
+        self.calls.append(entity_id)
+        return f"img-{entity_id}".encode()
+
+
+def _thumbnail_vm(production):
+    return ArtistViewModel(
+        production_service=production,
+        auth_service=FakeAuth(),
+        credential_vault=CredentialVault(),
+        config_factory=FakeConfig(),
+        installation_service=None,
+        register_instance=lambda active: None,
+    )
+
+
+def test_task_thumbnails_are_deduplicated_and_cached(qapp, qtbot):
+    production = FakeProduction()
+    vm = _thumbnail_vm(production)
+    received = []
+    vm.task_thumbnail_ready.connect(lambda entity_id, data: received.append((entity_id, data)))
+
+    vm.load_task_thumbnails(["e1", "e1", "", "e2"])
+    qtbot.waitUntil(lambda: len(received) == 2, timeout=5000)
+    qtbot.waitUntil(lambda: not vm.workers.is_running("task_thumbnails"), timeout=5000)
+
+    assert production.calls == ["e1", "e2"]
+    assert vm.cached_thumbnail("e1") == b"img-e1"
+    assert vm.cached_thumbnail("e2") == b"img-e2"
+
+    vm.load_task_thumbnails(["e1", "e2"])
+    qtbot.wait(50)
+
+    assert production.calls == ["e1", "e2"]

@@ -205,9 +205,9 @@ class KitsuManager:
         return f"{clean_host}/productions/{project_id}{sub_path}"
 
     def download_project_thumbnail(self, project_id: str, token: str, host_url: str) -> Optional[bytes]:
-        """
-        Descarga asíncronamente la miniatura del proyecto usando la API HTTP cruda.
-        Retorna los bytes de la imagen listos para el QImage o None si falla.
+        """Download a project thumbnail from the Kitsu HTTP API.
+
+        Returns the image bytes ready for ``QImage``, or ``None`` on failure.
         """
         if not project_id or not token or not host_url:
             return None
@@ -221,7 +221,40 @@ class KitsuManager:
             if response.status_code == 200:
                 return response.content
         except Exception as e:
-            print(f"[KitsuManager] Fallo de red al descargar miniatura del proyecto '{project_id}': {e}")
+            print(f"[KitsuManager] Network error downloading project thumbnail '{project_id}': {e}")
+
+        return None
+
+    def download_entity_thumbnail(self, entity_id: str, token: str, host_url: str) -> Optional[bytes]:
+        """Download the preview thumbnail for a shot or asset entity.
+
+        Kitsu stores the preview id on the entity payload, so this performs two
+        requests: one for the entity metadata and one for the image itself.
+        Returns ``None`` when the entity has no preview or the request fails.
+        """
+        if not entity_id or not token or not host_url:
+            return None
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            }
+            entity_url = f"{host_url}/data/entities/{entity_id}"
+            entity_response = requests.get(entity_url, headers=headers, timeout=10)
+            if entity_response.status_code != 200:
+                return None
+
+            preview_id = (entity_response.json() or {}).get("preview_file_id")
+            if not preview_id:
+                return None
+
+            img_url = f"{host_url}/pictures/thumbnails/preview-files/{preview_id}.png"
+            img_response = requests.get(img_url, headers=headers, timeout=10)
+            if img_response.status_code == 200:
+                return img_response.content
+        except Exception as e:
+            print(f"[KitsuManager] Network error downloading entity thumbnail '{entity_id}': {e}")
 
         return None
 

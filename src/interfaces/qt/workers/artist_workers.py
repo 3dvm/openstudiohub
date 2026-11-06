@@ -54,6 +54,40 @@ class FetchTaskStatusesWorker(ManagedWorker):
             self.error_occurred.emit(str(error))
 
 
+class FetchTaskThumbnailsWorker(ManagedWorker):
+    """Fetch task entity thumbnails sequentially off the UI thread.
+
+    A single worker owns every request so the dashboard never spawns one
+    ``QThread`` per card, which kept dozens of Python threads alive at once.
+    """
+
+    thumbnail_ready = Signal(str, bytes)  # (entity_id, image_bytes)
+
+    def __init__(
+        self,
+        production_service: ProductionService,
+        entity_ids: list,
+        token: str,
+        host: str,
+    ) -> None:
+        super().__init__()
+        self.production_service = production_service
+        self.entity_ids = list(entity_ids)
+        self.token = token
+        self.host = host
+
+    def run(self) -> None:
+        for entity_id in self.entity_ids:
+            try:
+                data = self.production_service.download_task_thumbnail(
+                    entity_id, self.token, self.host
+                )
+            except Exception:  # noqa: BLE001 - one bad entity must not stop the batch
+                data = None
+            if data:
+                self.thumbnail_ready.emit(str(entity_id), data)
+
+
 class FetchTaskLockStatesWorker(ManagedWorker):
     """Reads the VCS lock owner for each task's linked file off the UI thread."""
 

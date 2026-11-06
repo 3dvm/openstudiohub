@@ -68,6 +68,7 @@ class FakeViewModel(QObject):
     vcs_update_review_required = Signal(str, object)
     task_locks_ready = Signal(dict)
     task_statuses_loaded = Signal(str, list)
+    task_thumbnail_ready = Signal(str, bytes)
 
     def __init__(self):
         super().__init__()
@@ -79,6 +80,12 @@ class FakeViewModel(QObject):
 
     def thumbnail_fetcher(self, _project_id, _token, _host):
         return None
+
+    def cached_thumbnail(self, _entity_id):
+        return None
+
+    def load_task_thumbnails(self, _entity_ids):
+        pass
 
     def load_tasks(self):
         self.load_calls += 1
@@ -151,6 +158,7 @@ def _card(
     return ArtistTaskCardModel(
         task_data={
             "id": f"t-{project_id}",
+            "entity_id": f"e-{project_id}",
             "entity_name": "Monkey",
             "task_type_name": "Modeling",
             "task_status": {"name": status, "color": "#444444"},
@@ -368,3 +376,32 @@ def test_comment_drawer_uses_splitter(qapp):
     view.comment_panel.close_requested.emit()
     assert view.comment_panel.isHidden() is True
 
+
+
+def test_task_thumbnail_signal_reaches_matching_card(qapp):
+    view, vm = _view()
+    view._on_tasks_loaded([_card("p1", "Neon")])
+    card = view._task_widgets[0]
+    applied = []
+    card.set_thumbnail = lambda data: applied.append(data)
+
+    vm.task_thumbnail_ready.emit("e-p1", b"image-bytes")
+
+    assert applied == [b"image-bytes"]
+
+
+def test_prefetched_thumbnail_is_passed_to_new_cards(qapp, monkeypatch):
+    from src.interfaces.qt.components.task_card import TaskCard
+
+    view, vm = _view()
+    vm.cached_thumbnail = lambda entity_id: {"e-p1": b"cached"}.get(entity_id)
+    applied = []
+    monkeypatch.setattr(
+        TaskCard,
+        "set_thumbnail",
+        lambda self, data: applied.append((self.task_data["id"], data)),
+    )
+
+    view._on_tasks_loaded([_card("p1", "Neon")])
+
+    assert applied == [("t-p1", b"cached")]

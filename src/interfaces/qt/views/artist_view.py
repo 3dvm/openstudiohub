@@ -73,6 +73,7 @@ class ViewArtist(BaseDashboardView):
 
         self._task_widgets = []
         self._task_cards_by_id = {}
+        self._task_cards_by_entity = {}
         self._vcs_dialogs = []
         self._vcs_history_dialogs = []
         self._cards = []
@@ -103,6 +104,7 @@ class ViewArtist(BaseDashboardView):
         self.vm.vcs_update_review_required.connect(self._on_update_review_required)
         self.vm.task_locks_ready.connect(self._on_task_locks_ready)
         self.vm.task_statuses_loaded.connect(self._on_task_statuses_loaded)
+        self.vm.task_thumbnail_ready.connect(self._on_task_thumbnail_ready)
         self._connect_comments()
         self.vm.load_tasks()
 
@@ -491,6 +493,7 @@ class ViewArtist(BaseDashboardView):
             ]
 
         for card in filtered_cards:
+            entity_id = str(card.task_data.get("entity_id", "") or "")
             task_card = TaskCard(
                 parent=self.grid_widget,
                 task_data=card.task_data,
@@ -498,8 +501,6 @@ class ViewArtist(BaseDashboardView):
                 is_installed=card.is_installed,
                 can_work=card.can_work,
                 blocked_reason=card.blocked_reason,
-                token=self._token,
-                host=self._host,
                 on_launch_callback=lambda c=card: self.vm.launch(c),
                 on_install_callback=lambda c=card: self.vm.install(c),
                 pending_change_count=len(card.pending_changes),
@@ -514,6 +515,7 @@ class ViewArtist(BaseDashboardView):
                     else None
                 ),
                 file_missing=card.file_missing,
+                thumbnail_bytes=self.vm.cached_thumbnail(entity_id),
             )
             task_card.set_lock_state(card.lock_owner, card.lock_is_mine)
             task_card.set_can_break_lock(self.vm.can_break_foreign_locks())
@@ -525,6 +527,8 @@ class ViewArtist(BaseDashboardView):
             )
             self._task_widgets.append(task_card)
             self._task_cards_by_id[str(card.task_data.get("id", ""))] = task_card
+            if entity_id:
+                self._task_cards_by_entity.setdefault(entity_id, []).append(task_card)
 
         self._current_cols = 0
         self._rearrange_grid()
@@ -591,6 +595,13 @@ class ViewArtist(BaseDashboardView):
             widget = self._task_cards_by_id.get(str(task_id))
             if widget is not None:
                 widget.set_lock_state(state.get("owner", ""), state.get("is_mine", False))
+
+    # ------------------------------------------------------------------
+    # Thumbnails
+    # ------------------------------------------------------------------
+    def _on_task_thumbnail_ready(self, entity_id: str, data: bytes) -> None:
+        for widget in self._task_cards_by_entity.get(str(entity_id), []):
+            widget.set_thumbnail(data)
 
     # ------------------------------------------------------------------
     # VCS publish flow
@@ -752,6 +763,7 @@ class ViewArtist(BaseDashboardView):
     def _clear_grid(self) -> None:
         self._task_widgets.clear()
         self._task_cards_by_id.clear()
+        self._task_cards_by_entity.clear()
 
         while self.grid_layout.count():
             child = self.grid_layout.takeAt(0)

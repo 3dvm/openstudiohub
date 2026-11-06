@@ -6,16 +6,14 @@
 
 """Reusable presentational task card for the artist dashboard.
 
-It renders the CTA priority matrix and loads the thumbnail asynchronously.
-All business actions are delegated through the injected callbacks.
+It renders the CTA priority matrix and displays a thumbnail that the dashboard
+pre-fetches off the UI thread. All business actions are delegated through the
+injected callbacks.
 """
 
 from pathlib import Path
 
-import requests
 from PySide6.QtCore import QSize, Qt, Signal
-
-from src.infrastructure.qt_worker import ManagedWorker
 from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
@@ -30,55 +28,6 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-class ThumbnailWorker(ManagedWorker):
-    """Background thread for downloading entity thumbnails over HTTP."""
-
-    image_downloaded = Signal(bytes)
-    error_occurred = Signal(str)
-
-    def __init__(self, entity_id: str, token: str, host_url: str) -> None:
-        super().__init__()
-        self.entity_id = entity_id
-        self.token = token
-        self.host_url = host_url
-
-    def run(self) -> None:
-        if not self.entity_id:
-            self.error_occurred.emit("No Entity ID Available")
-            return
-
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.token}",
-                "Content-Type": "application/json",
-            }
-
-            entity_url = f"{self.host_url}/data/entities/{self.entity_id}"
-            entity_resp = requests.get(entity_url, headers=headers, timeout=10)
-            if entity_resp.status_code != 200:
-                self.error_occurred.emit(f"Entity not found (HTTP {entity_resp.status_code})")
-                return
-
-            entity_data = entity_resp.json()
-            preview_id = entity_data.get("preview_file_id")
-
-            if not preview_id:
-                self.error_occurred.emit("Entity has no preview image")
-                return
-
-            img_url = f"{self.host_url}/pictures/thumbnails/preview-files/{preview_id}.png"
-            img_resp = requests.get(img_url, headers=headers, timeout=10)
-
-            if img_resp.status_code == 200:
-                self.image_downloaded.emit(img_resp.content)
-            else:
-                self.error_occurred.emit(f"Thumbnail not found (HTTP {img_resp.status_code})")
-
-        except Exception as error:  # noqa: BLE001
-            print(f"[UI THUMBNAIL ERROR] Download failed: {error}")
-            self.error_occurred.emit("Network connection error")
-
 
 def resolve_task_status(task_data: dict) -> tuple[str, str]:
     """Resolve a task's display status name and colour.
@@ -116,8 +65,6 @@ class TaskCard(QFrame):
         is_installed: bool,
         can_work: bool,
         blocked_reason: str,
-        token: str,
-        host: str,
         on_launch_callback,
         on_install_callback,
         pending_change_count: int = 0,
@@ -128,6 +75,7 @@ class TaskCard(QFrame):
         on_kitsu_callback=None,
         on_history_callback=None,
         file_missing: bool = False,
+        thumbnail_bytes: bytes | None = None,
         **kwargs,
     ) -> None:
         super().__init__(parent, **kwargs)
@@ -137,8 +85,6 @@ class TaskCard(QFrame):
         self.is_installed = is_installed
         self.can_work = can_work
         self.blocked_reason = blocked_reason
-        self.token = token
-        self.host = host
 
         self.on_launch_callback = on_launch_callback
         self.on_install_callback = on_install_callback
@@ -151,6 +97,7 @@ class TaskCard(QFrame):
         self.on_history_callback = on_history_callback
         self.file_missing = bool(file_missing)
         self.allow_break_lock = False
+        self._comment_icon_ref = None
 
         self.setObjectName("FloatingCard")
         self.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -158,7 +105,8 @@ class TaskCard(QFrame):
         self.setFixedSize(320, 280)
 
         self._build_ui()
-        self._load_thumbnail()
+        if thumbnail_bytes:
+            self.set_thumbnail(thumbnail_bytes)
 
     def _get_contrast_text_color(self, hex_color: str) -> str:
         """Compute relative sRGB luminance for badge text contrast."""
@@ -461,7 +409,9 @@ class TaskCard(QFrame):
         unread = self.unread_count > 0
         color = "#FFFFFF" if unread else "#CBD5E1"
         self.comment_badge.setText(str(self.comment_count))
-        self.comment_badge.setIcon(self._comment_icon(color))
+        icon = self._comment_icon(color)
+        self._comment_icon_ref = icon
+        self.comment_badge.setIcon(icon)
         if unread:
             background, border = "#F97316", "#FB923C"
         else:
@@ -478,29 +428,26 @@ class TaskCard(QFrame):
         )
         self.comment_badge.show()
 
-    def _load_thumbnail(self) -> None:
-        entity_id = self.task_data.get("entity_id")
-
-        if not entity_id or not self.token or not self.host:
-            self._on_thumbnail_error("No preview image mapped")
+    def set_thumbnail(self, img_bytes: bytes | None) -> None:
+        """Display a thumbnail already fetched by the dashboard."""
+        if not img_bytes:
+            self.thumb_stack.setCurrentIndex(0)
             return
 
-        self.worker = ThumbnailWorker(entity_id, self.token, self.host)
-        self.worker.image_downloaded.connect(self._on_thumbnail_ready)
-        self.worker.error_occurred.connect(self._on_thumbnail_error)
-        self.worker.finished.connect(self.worker.deleteLater)
-        self.worker.start()
-
-    def _on_thumbnail_ready(self, img_bytes: bytes) -> None:
         image = QImage.fromData(img_bytes)
-        if not image.isNull():
-            pixmap = QPixmap.fromImage(image)
-            pixmap = pixmap.scaled(self.thumb_stack.width(), self.thumb_stack.height(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation)
-            self.thumb_label.setPixmap(pixmap)
-            self.thumb_label.setText("")
-            self.thumb_stack.setCurrentIndex(1)
-        else:
-            self._on_thumbnail_error(self.tr("Corrupted image format"))
+        if image.isNull():
+            self.thumb_stack.setCurrentIndex(0)
+            return
 
-    def _on_thumbnail_error(self, message: str) -> None:
-        self.thumb_stack.setCurrentIndex(0)
+        width = max(1, self.thumb_stack.width())
+        height = max(1, self.thumb_stack.height())
+        pixmap = QPixmap.fromImage(image)
+        pixmap = pixmap.scaled(
+            width,
+            height,
+            Qt.KeepAspectRatioByExpanding,
+            Qt.SmoothTransformation,
+        )
+        self.thumb_label.setPixmap(pixmap)
+        self.thumb_label.setText("")
+        self.thumb_stack.setCurrentIndex(1)

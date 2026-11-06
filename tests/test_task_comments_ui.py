@@ -20,8 +20,6 @@ def _task_card(qapp, on_comments=None, on_kitsu=None):
         is_installed=True,
         can_work=True,
         blocked_reason="",
-        token="",
-        host="",
         on_launch_callback=lambda: None,
         on_install_callback=lambda: None,
         comment_count=3,

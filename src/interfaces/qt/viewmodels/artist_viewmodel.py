@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 
 from src.application.credential_vault import CredentialVault
 from src.application.services.auth_service import AuthService
@@ -45,6 +45,7 @@ from src.interfaces.qt.workers.artist_workers import (
     FetchArtistTasksWorker,
     FetchTaskLockStatesWorker,
     FetchTaskStatusesWorker,
+    FetchTaskThumbnailsWorker,
     InstallProjectWorker,
     LaunchTaskWorker,
     PublishVcsChangesWorker,
@@ -99,6 +100,7 @@ class ArtistViewModel(BaseViewModel):
     vcs_update_review_required = Signal(str, object)  # (project_id, VcsUpdateReport)
     task_locks_ready = Signal(dict)  # {task_id: {"owner": str, "is_mine": bool}}
     task_statuses_loaded = Signal(str, list)  # (project_id, list[dict])
+    task_thumbnail_ready = Signal(str, bytes)  # (entity_id, image_bytes)
 
     COMMENT_WIDTH_KEY = "comment_panel_width"
     DEFAULT_COMMENT_WIDTH = 360
@@ -144,6 +146,8 @@ class ArtistViewModel(BaseViewModel):
         self._cards: List[ArtistTaskCardModel] = []
         self._tasks_loading = False
         self._status_cache: dict = {}
+        self._thumbnail_cache: dict[str, bytes] = {}
+        self._pending_thumbnail_ids: set[str] = set()
         self._comments_by_task: dict[str, list] = {}
         self._awaiting_lock_release: set[str] = set()
         self.workers = WorkerManager(self)
@@ -191,8 +195,18 @@ class ArtistViewModel(BaseViewModel):
         self.tasks_loaded.emit(cards)
         self.projects_loaded.emit(self._project_summaries(cards))
         self.tasks_load_finished.emit(True)
+        # Let the view finish building its widgets before any background worker
+        # starts allocating: a worker-triggered GC while the GUI thread is
+        # inside a Qt call was crashing the process.
+        QTimer.singleShot(0, self._start_task_enrichment)
+
+    def _start_task_enrichment(self) -> None:
+        cards = list(self._cards)
         self._refresh_task_locks(cards)
         self._refresh_comment_counts(cards)
+        self.load_task_thumbnails(
+            card.task_data.get("entity_id") for card in cards
+        )
 
     @staticmethod
     def _project_summaries(cards: List[ArtistTaskCardModel]) -> list:
@@ -297,6 +311,57 @@ class ArtistViewModel(BaseViewModel):
         if self.production_service is None:
             return None
         return self.production_service.download_project_thumbnail(project_id, token, host)
+
+    def cached_thumbnail(self, entity_id: str) -> bytes | None:
+        """Return an already downloaded task thumbnail, if any."""
+        if not entity_id:
+            return None
+        return self._thumbnail_cache.get(str(entity_id))
+
+    def load_task_thumbnails(self, entity_ids) -> None:
+        """Queue missing task thumbnails for a single background worker."""
+        token = self.auth_service.access_token() if self.auth_service else ""
+        host = getattr(self.auth_service, "host", "") if self.auth_service else ""
+        if self.production_service is None or not token or not host:
+            return
+
+        missing = {
+            str(entity_id)
+            for entity_id in entity_ids or []
+            if entity_id and str(entity_id) not in self._thumbnail_cache
+        }
+        if not missing:
+            return
+
+        self._pending_thumbnail_ids |= missing
+        if not self.workers.is_running("task_thumbnails"):
+            self._start_thumbnail_worker()
+
+    def _start_thumbnail_worker(self) -> None:
+        if not self._pending_thumbnail_ids:
+            return
+        entity_ids = sorted(self._pending_thumbnail_ids)
+        self._pending_thumbnail_ids.clear()
+
+        token = self.auth_service.access_token() if self.auth_service else ""
+        host = getattr(self.auth_service, "host", "") if self.auth_service else ""
+        if not token or not host:
+            return
+
+        worker = FetchTaskThumbnailsWorker(
+            self.production_service, entity_ids, token, host
+        )
+        worker.thumbnail_ready.connect(self._on_task_thumbnail_ready)
+        worker.finished.connect(self._on_thumbnail_worker_finished)
+        self.workers.start("task_thumbnails", worker)
+
+    def _on_task_thumbnail_ready(self, entity_id: str, data: bytes) -> None:
+        self._thumbnail_cache[str(entity_id)] = data
+        self.task_thumbnail_ready.emit(str(entity_id), data)
+
+    def _on_thumbnail_worker_finished(self) -> None:
+        if self._pending_thumbnail_ids:
+            QTimer.singleShot(0, self._start_thumbnail_worker)
 
     def _on_tasks_fetch_failed(self, error: str) -> None:
         self._tasks_loading = False
