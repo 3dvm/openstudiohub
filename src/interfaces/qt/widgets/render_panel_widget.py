@@ -160,6 +160,16 @@ class RenderPanelWidget(QFrame):
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(4, 0, 0, 0)
         right_layout.setSpacing(10)
+        self.lbl_busy = QLabel(
+            self.tr(
+                "Render process in progress — controls are locked. "
+                "Use Stop all processes to cancel."
+            )
+        )
+        self.lbl_busy.setObjectName("WarningLabel")
+        self.lbl_busy.setWordWrap(True)
+        self.lbl_busy.hide()
+        right_layout.addWidget(self.lbl_busy)
         right_layout.addLayout(self._build_actions())
 
         self.progress = QProgressBar()
@@ -460,6 +470,7 @@ class RenderPanelWidget(QFrame):
         self.btn_stop_all = QPushButton(self.tr("Stop all processes"))
         self.btn_stop_all.setObjectName("DangerButton")
         self.btn_stop_all.clicked.connect(self._stop_all)
+        self.btn_stop_all.setEnabled(False)
         self.btn_retry_render = QPushButton(self.tr("Retry missing frames"))
         self.btn_retry_render.setObjectName("SecondaryButton")
         self.btn_retry_render.clicked.connect(self._retry_render)
@@ -849,8 +860,9 @@ class RenderPanelWidget(QFrame):
                 self._show_sequence_for_shot(shot)
             return
         if action == "preview":
-            self.preview_stack.setCurrentWidget(self.preview_label)
-            self.vm.preview_shots([shot])
+            if self._confirm_preview([shot]):
+                self.preview_stack.setCurrentWidget(self.preview_label)
+                self.vm.preview_shots([shot])
             return
         if action == "benchmark":
             self._benchmark_shot(shot)
@@ -986,13 +998,40 @@ class RenderPanelWidget(QFrame):
     # Preview
     # ------------------------------------------------------------------
     def _preview_selected(self) -> None:
-        if self._selected_shot is not None:
+        if self._selected_shot is None:
+            return
+        if self._confirm_preview([self._selected_shot]):
             self.preview_stack.setCurrentWidget(self.preview_label)
             self.vm.preview_shots([self._selected_shot])
 
     def _preview_all(self) -> None:
-        self.preview_stack.setCurrentWidget(self.preview_label)
-        self.vm.preview_shots(self.vm.selected_shots)
+        targets = self.vm.selected_shots
+        if self._confirm_preview(targets):
+            self.preview_stack.setCurrentWidget(self.preview_label)
+            self.vm.preview_shots(targets)
+
+    def _confirm_preview(self, shots: list) -> bool:
+        if not shots:
+            QMessageBox.warning(
+                self, self.tr("Preview"), self.tr("Select at least one shot.")
+            )
+            return False
+        backend = (
+            self.tr("Vast.ai")
+            if self.vm.settings.preview_backend == "vast"
+            else self.tr("local")
+        )
+        answer = QMessageBox.question(
+            self,
+            self.tr("Render previews"),
+            self.tr(
+                "Render {0} preview(s) on {1}?\n\n"
+                "One frame will be rendered per shot. Vast.ai may rent a node."
+            ).format(len(shots), backend),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
 
     def _play_final_sequence(self) -> None:
         if self._selected_shot is None:
@@ -1095,8 +1134,27 @@ class RenderPanelWidget(QFrame):
         self.progress.setValue(min(done, total))
         self._append_log(f"{shot_name}: preview frame {done}/{total} ({seconds:.1f}s)")
 
-    def _on_preview_finished(self, rendered: int, total: int) -> None:
+    def _on_preview_finished(
+        self, rendered: int, total: int, failed: list, report
+    ) -> None:
         self._append_log(f"Previews finished: {rendered}/{total}")
+        failed = list(failed or [])
+        summary = (
+            f"{rendered}/{total} preview(s) rendered."
+            if not failed
+            else (
+                f"{rendered}/{total} preview(s) rendered.\n\n"
+                "Failed shots: " + ", ".join(failed)
+            )
+        )
+        details = self._report_details(report) if failed else ""
+        self._show_result_dialog(
+            self.tr("Previews finished"),
+            summary,
+            details,
+            report,
+            retry_callback=self.vm.retry_failed_previews if failed else None,
+        )
 
     def _show_latest_preview(self, shot: RenderShot) -> None:
         path = self.vm.preview_paths.get(shot.name)
@@ -1229,9 +1287,19 @@ class RenderPanelWidget(QFrame):
         self._shot_progress_timer.stop()
         self._refresh_shot_progress()
         self._append_log(message)
-        if not missing and self._selected_shot is not None:
-            self._play_final_sequence()
-        QMessageBox.information(self, self.tr("Render finished"), message)
+        details = self._report_details(report)
+        self._show_result_dialog(
+            self.tr("Render finished"),
+            message,
+            details,
+            report,
+            retry_callback=self._retry_render if missing else None,
+            view_callback=(
+                self._play_final_sequence
+                if not missing and self._selected_shot is not None
+                else None
+            ),
+        )
 
     def _on_video_ready(self, shot_name: str, video_path: str) -> None:
         self._append_log(f"Review video ready for {shot_name}: {video_path}")
@@ -1297,6 +1365,10 @@ class RenderPanelWidget(QFrame):
     # Misc
     # ------------------------------------------------------------------
     def _on_busy_changed(self, busy: bool) -> None:
+        self.lbl_busy.setVisible(busy)
+        self.btn_stop_all.setEnabled(busy)
+        for card in self._shot_cards.values():
+            card.set_busy(busy)
         for widget in (
             self.combo_projects,
             self.btn_refresh,
@@ -1312,7 +1384,9 @@ class RenderPanelWidget(QFrame):
             widget.setEnabled(not busy)
         if busy:
             self.btn_start.setEnabled(False)
+            self.btn_cancel.setEnabled(True)
         elif self._plan is not None and self._plan.total_frames > 0:
+            self.btn_cancel.setEnabled(False)
             self.btn_start.setEnabled(
                 self.vm.settings.render_backend != "vast"
                 or self.vm.offer is not None
@@ -1328,6 +1402,72 @@ class RenderPanelWidget(QFrame):
         self._append_log(message)
         self.btn_cancel.setEnabled(False)
         QMessageBox.critical(self, self.tr("Render"), message)
+
+    @staticmethod
+    def _report_details(report) -> str:
+        if report is None:
+            return ""
+        nodes = getattr(report, "nodes", ()) or ()
+        lines: list[str] = []
+        for node in nodes:
+            lines.append(
+                f"Node {int(getattr(node, 'node', 0)) + 1}: "
+                f"{getattr(node, 'stage', '')} · "
+                f"{getattr(node, 'message', '')} · "
+                f"{getattr(node, 'frames_done', 0)}/"
+                f"{getattr(node, 'frames_expected', 0)} frames"
+            )
+        if not lines:
+            message = getattr(report, "message", "")
+            if message:
+                lines.append(str(message))
+        return "\n".join(lines)
+
+    def _show_result_dialog(
+        self,
+        title: str,
+        summary: str,
+        details: str,
+        report,
+        *,
+        retry_callback=None,
+        view_callback=None,
+    ) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setIcon(
+            QMessageBox.Warning
+            if retry_callback is not None
+            else QMessageBox.Information
+        )
+        box.setText(summary)
+        if details:
+            box.setDetailedText(details)
+        open_button = box.addButton(
+            self.tr("Open log file"), QMessageBox.ActionRole
+        )
+        retry_button = (
+            box.addButton(self.tr("Retry"), QMessageBox.ActionRole)
+            if retry_callback is not None
+            else None
+        )
+        view_button = (
+            box.addButton(self.tr("View result"), QMessageBox.ActionRole)
+            if view_callback is not None
+            else None
+        )
+        box.addButton(QMessageBox.Close)
+        box.exec()
+        clicked = box.clickedButton()
+        log_path = self.vm.latest_log_path(report)
+        if clicked is open_button:
+            if log_path.is_dir():
+                log_path.mkdir(parents=True, exist_ok=True)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(log_path)))
+        elif retry_button is not None and clicked is retry_button:
+            retry_callback()
+        elif view_button is not None and clicked is view_button:
+            view_callback()
 
     def _open_output(self) -> None:
         if self.vm.project_root is None:

@@ -156,7 +156,7 @@ class RenderPanelViewModel(BaseViewModel):
     preview_ready = Signal(str, str)
     preview_progress = Signal(str, int, int, float)
     preview_error = Signal(str)
-    preview_finished = Signal(int, int)
+    preview_finished = Signal(int, int, list, object)
 
     benchmark_progress = Signal(object)
     benchmark_finished = Signal(str, float)
@@ -232,6 +232,8 @@ class RenderPanelViewModel(BaseViewModel):
         self._progress_by_node: dict[int, int] = {}
         self._locked_shots: set[str] = set()
         self._failed_shots: set[str] = set()
+        self.last_preview_failed: list[str] = []
+        self.last_preview_report = None
 
     # ------------------------------------------------------------------
     # Project / settings
@@ -647,6 +649,13 @@ class RenderPanelViewModel(BaseViewModel):
             return False
         if self.workers.is_running("render_preview"):
             return False
+        if (
+            self.workers.is_running("render_burst")
+            or self.workers.is_running("render_local")
+            or self.workers.is_running("render_benchmark")
+        ):
+            self.preview_error.emit("A render process is already running.")
+            return False
         targets = list(shots or self.selected_shots)
         if not targets:
             return False
@@ -655,17 +664,48 @@ class RenderPanelViewModel(BaseViewModel):
                 "Scan with the Vast backend before using Vast previews."
             )
             return False
+        import uuid
+
+        self._active_run_id = uuid.uuid4().hex[:12]
+        backend = (
+            "vast" if self.settings.preview_backend == "vast" else "local"
+        )
+        self.audit.log(
+            "run_start",
+            run_id=self._active_run_id,
+            backend=f"preview-{backend}",
+            project=self.project_name,
+            frames=len(targets),
+            nodes=1 if backend == "vast" else 0,
+        )
         worker = RenderPreviewWorker(
-            self.service, self.project_root, targets, self.settings, offer=self.offer
+            self.service,
+            self.project_root,
+            targets,
+            self.settings,
+            offer=self.offer,
+            audit=self.audit,
+            run_id=self._active_run_id,
         )
         worker.preview_ready.connect(self._on_preview_ready)
         worker.preview_progress.connect(self.preview_progress)
         worker.burst_progress.connect(self.burst_progress)
-        worker.error.connect(self.preview_error)
         worker.finished_previews.connect(self._on_previews_finished)
         self.set_busy(True)
-        self._write_status(status="previewing", message="Rendering previews.")
-        self.report_status(f"Rendering {len(targets)} preview(s) locally...", "yellow")
+        self._write_status(
+            status="previewing",
+            backend=backend,
+            message="Rendering previews.",
+            frames_expected=len(targets),
+            frames_done=0,
+            nodes=1 if backend == "vast" else 0,
+            cost=0.0,
+            started_at=datetime.now(timezone.utc).isoformat(),
+        )
+        location = "on Vast.ai" if backend == "vast" else "locally"
+        self.report_status(
+            f"Rendering {len(targets)} preview(s) {location}...", "yellow"
+        )
         return self.workers.start("render_preview", worker)
 
     def _on_preview_ready(self, shot_name: str, image_path: str) -> None:
@@ -674,10 +714,31 @@ class RenderPanelViewModel(BaseViewModel):
         self._write_status(preview=str(path))
         self.preview_ready.emit(shot_name, str(path))
 
-    def _on_previews_finished(self, rendered: int, total: int) -> None:
+    def _on_previews_finished(
+        self, rendered: int, total: int, failed: list, report
+    ) -> None:
         self.set_busy(False)
-        self._write_status(status="ready", message=f"Previews finished ({rendered}/{total}).")
-        self.preview_finished.emit(rendered, total)
+        self._finish_audit(
+            ok=not failed,
+            message=f"Previews finished ({rendered}/{total}).",
+        )
+        self.last_preview_failed = list(failed or [])
+        self.last_preview_report = report
+        self._write_status(
+            status="ready" if not failed else "failed",
+            message=f"Previews finished ({rendered}/{total}).",
+            frames_done=rendered,
+            frames_expected=total,
+            cost=getattr(report, "cost", 0.0) if report is not None else 0.0,
+        )
+        self.preview_finished.emit(rendered, total, list(failed or []), report)
+
+    def retry_failed_previews(self) -> bool:
+        failed = set(self.last_preview_failed)
+        targets = [shot for shot in self.shots if shot.name in failed]
+        if not targets:
+            return False
+        return self.preview_shots(targets)
 
     def benchmark_selected(self, shot: RenderShot | None = None) -> bool:
         if self.project_root is None or self.read_only or not self.shots:
@@ -689,7 +750,13 @@ class RenderPanelViewModel(BaseViewModel):
         if shot is None:
             self.benchmark_error.emit("Select a shot to benchmark.")
             return False
-        if self.workers.is_running("render_benchmark"):
+        if (
+            self.workers.is_running("render_benchmark")
+            or self.workers.is_running("render_preview")
+            or self.workers.is_running("render_burst")
+            or self.workers.is_running("render_local")
+        ):
+            self.benchmark_error.emit("Another render process is already running.")
             return False
         worker = RenderBenchmarkWorker(
             self.service, self.project_root, shot, self.settings, self.offer
@@ -733,7 +800,13 @@ class RenderPanelViewModel(BaseViewModel):
                 "No Vast.ai offer within the price cap; raise the max price or use local."
             )
             return False
-        if self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
+        if (
+            self.workers.is_running("render_burst")
+            or self.workers.is_running("render_local")
+            or self.workers.is_running("render_preview")
+            or self.workers.is_running("render_benchmark")
+        ):
+            self.render_error.emit("Another render process is already running.")
             return False
         self._mark_cards_queued()
         selected = self.service.selected_shots(self.shots, self.settings)
@@ -1004,6 +1077,26 @@ class RenderPanelViewModel(BaseViewModel):
     def run_log_dir(self) -> Path:
         """Folder that contains the detailed node logs for the last run."""
         return self.audit.root
+
+    def latest_log_path(self, report=None) -> Path:
+        """Best log file to open for a completed run."""
+        run_id = getattr(report, "run_id", "") or self._active_run_id
+        for node in getattr(report, "nodes", ()) or ():
+            for path in getattr(node, "remote_logs", ()) or ():
+                candidate = Path(path)
+                if candidate.is_file():
+                    return candidate
+            for path in getattr(node, "blender_logs", ()) or ():
+                candidate = Path(path)
+                if candidate.is_file():
+                    return candidate
+            candidate = self.audit.node_log_path(run_id, node.node)
+            if candidate.is_file():
+                return candidate
+        candidate = self.audit.node_log_path(run_id, 0)
+        if candidate.is_file():
+            return candidate
+        return self.audit.run_dir(run_id)
 
     def _start_audit(self, backend: str) -> None:
         import uuid

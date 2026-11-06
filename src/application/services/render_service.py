@@ -571,6 +571,7 @@ class RenderService:
         settings: RenderSettings,
         *,
         progress=None,
+        log_path=None,
     ) -> tuple[LocalRenderReport, Path]:
         root = Path(project_root)
         frame = self._preview_frame(shot, settings)
@@ -591,6 +592,7 @@ class RenderService:
             output_dir,
             use_compositing=bool(shot.setup and shot.setup.is_compositing_ready),
             progress=progress,
+            log_path=log_path,
         )
         return report, output_dir / f"frame_{frame:04d}.png"
 
@@ -602,6 +604,8 @@ class RenderService:
         *,
         offer=None,
         progress=None,
+        audit=None,
+        run_id: str = "",
     ) -> tuple[list[tuple[RenderShot, Path]], object]:
         """Render one preview frame per shot on a short-lived Vast node."""
         root = Path(project_root)
@@ -643,6 +647,8 @@ class RenderService:
             preferred_region=settings.preferred_region,
             min_inet_down_mbps=settings.min_inet_down_mbps,
             min_inet_up_mbps=settings.min_inet_up_mbps,
+            audit=audit,
+            run_id=run_id,
         )
         report = runner.run(plan.shots, plan, progress=progress)
         results: list[tuple[RenderShot, Path]] = []

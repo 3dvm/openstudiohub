@@ -222,7 +222,7 @@ class RenderPreviewWorker(ManagedWorker):
     preview_progress = Signal(str, int, int, float)
     burst_progress = Signal(object)
     error = Signal(str)
-    finished_previews = Signal(int, int)
+    finished_previews = Signal(int, int, list, object)
 
     def __init__(
         self,
@@ -231,6 +231,8 @@ class RenderPreviewWorker(ManagedWorker):
         shots: list[RenderShot],
         settings: RenderSettings,
         offer=None,
+        audit=None,
+        run_id: str = "",
     ) -> None:
         super().__init__()
         self.service = service
@@ -238,10 +240,14 @@ class RenderPreviewWorker(ManagedWorker):
         self.shots = list(shots)
         self.settings = settings
         self.offer = offer
+        self.audit = audit
+        self.run_id = str(run_id or "")
         self._cancelled = False
 
     def run(self) -> None:
         rendered = 0
+        failed: list[str] = []
+        report = None
         if self.settings.preview_backend == "vast":
             try:
                 results, report = self.service.preview_vast(
@@ -250,21 +256,39 @@ class RenderPreviewWorker(ManagedWorker):
                     self.settings,
                     offer=self.offer,
                     progress=self.burst_progress.emit,
+                    audit=self.audit,
+                    run_id=self.run_id,
                 )
+                successful = set()
                 for shot, image in results:
                     rendered += 1
+                    successful.add(shot.name)
                     self.preview_ready.emit(shot.name, str(image))
-                if not getattr(report, "ok", False):
+                failed = [shot.name for shot in self.shots if shot.name not in successful]
+                if failed:
                     self.error.emit(
-                        getattr(report, "message", "Vast preview failed.")
+                        getattr(report, "message", "Some Vast previews failed.")
                     )
             except Exception as error:  # noqa: BLE001
+                failed = [shot.name for shot in self.shots]
                 self.error.emit(str(error))
-            self.finished_previews.emit(rendered, len(self.shots))
+            self.finished_previews.emit(rendered, len(self.shots), failed, report)
             return
         for shot in self.shots:
             if self._cancelled:
                 break
+            node_id = f"preview-local-{shot.name}"
+            log_path = None
+            if self.audit is not None:
+                log_path = self.audit.blender_log_path(self.run_id, node_id)
+                self.audit.node_event(
+                    "node_started",
+                    run_id=self.run_id,
+                    node=node_id,
+                    stage="preview",
+                    message=f"local preview of {shot.name}",
+                    blender_log=str(log_path),
+                )
             try:
                 report, image = self.service.preview_local(
                     self.project_root,
@@ -273,13 +297,38 @@ class RenderPreviewWorker(ManagedWorker):
                     progress=lambda done, total, seconds, name=shot.name: self.preview_progress.emit(
                         name, done, total, seconds
                     ),
+                    log_path=log_path,
                 )
+                if self.audit is not None:
+                    self.audit.node_event(
+                        "node_finished",
+                        run_id=self.run_id,
+                        node=node_id,
+                        stage="preview",
+                        ok=report.ok,
+                        message=report.message,
+                        blender_log=str(log_path or ""),
+                    )
+                    self.audit.node_summary(
+                        self.run_id,
+                        node_id,
+                        {
+                            "node": node_id,
+                            "ok": report.ok,
+                            "message": report.message,
+                            "blender_logs": [str(log_path)] if log_path else [],
+                        },
+                    )
                 if report.ok and image.is_file():
                     rendered += 1
                     self.preview_ready.emit(shot.name, str(image))
+                else:
+                    failed.append(shot.name)
+                    self.error.emit(f"{shot.name}: {report.message}")
             except Exception as error:  # noqa: BLE001
+                failed.append(shot.name)
                 self.error.emit(f"{shot.name}: {error}")
-        self.finished_previews.emit(rendered, len(self.shots))
+        self.finished_previews.emit(rendered, len(self.shots), failed, report)
 
     def cancel(self) -> None:
         self._cancelled = True

@@ -162,6 +162,8 @@ class NodeResult:
     price_per_hour: float = 0.0
     duration_ms: int = 0
     blender_logs: tuple[str, ...] = ()
+    remote_logs: tuple[str, ...] = ()
+    diagnostics_log: str = ""
 
 
 @dataclass
@@ -232,6 +234,7 @@ class RenderBurstRunner:
         self.skip_existing = bool(skip_existing)
         self._instances: dict[int, VastInstance] = {}
         self._node_stage: dict[int, str] = {}
+        self._node_diagnostics: dict[int, str] = {}
         self._lock = threading.Lock()
         self._cancel = threading.Event()
         self._run_id = str(run_id or uuid.uuid4().hex[:8])
@@ -532,6 +535,8 @@ class RenderBurstRunner:
         rendered = 0
         missing: list[int] = []
         blender_logs: list[str] = []
+        remote_logs: list[str] = []
+        result: NodeResult | None = None
         stage = "offer"
         label = f"osh-render-{self.project_root.name}-{self._run_id}-{index}"
         self._audit_node(
@@ -590,7 +595,7 @@ class RenderBurstRunner:
                     if self._cancel.is_set():
                         raise BurstError("Render cancelled.")
                     stage = "render"
-                    rendered += self._render_task(
+                    frames_rendered, remote_log = self._render_task(
                         instance,
                         task,
                         index,
@@ -600,6 +605,9 @@ class RenderBurstRunner:
                         temp,
                         blender_logs,
                     )
+                    rendered += frames_rendered
+                    if remote_log:
+                        remote_logs.append(remote_log)
                     stage = "sync"
                     self._sync_task_output(instance, task, index, progress)
                     if self.bake_particles:
@@ -628,6 +636,7 @@ class RenderBurstRunner:
                 price_per_hour=getattr(offer, "price_per_hour", 0.0),
                 duration_ms=int((time.monotonic() - started) * 1000),
                 blender_logs=tuple(blender_logs),
+                remote_logs=tuple(remote_logs),
             )
             self._audit_node(
                 "node_finished",
@@ -641,7 +650,6 @@ class RenderBurstRunner:
                 cost=result.cost,
                 blender_logs=list(blender_logs),
             )
-            self._write_node_summary(index, result)
             return result
         except Exception as error:  # noqa: BLE001
             result = NodeResult(
@@ -664,6 +672,7 @@ class RenderBurstRunner:
                 price_per_hour=getattr(offer, "price_per_hour", 0.0),
                 duration_ms=int((time.monotonic() - started) * 1000),
                 blender_logs=tuple(blender_logs),
+                remote_logs=tuple(remote_logs),
             )
             self._audit_node(
                 "node_failed",
@@ -676,10 +685,13 @@ class RenderBurstRunner:
                 cost=result.cost,
                 blender_logs=list(blender_logs),
             )
-            self._write_node_summary(index, result)
             return result
         finally:
             if instance is not None:
+                self._capture_remote_artifacts(instance, index, remote_logs)
+                if result is not None:
+                    result.diagnostics_log = self._node_diagnostics.get(index, "")
+                    self._write_node_summary(index, result)
                 reason = "cancelled" if self._cancel.is_set() else "cleanup"
                 try:
                     self.provider.destroy_instance(instance.id)
@@ -728,10 +740,57 @@ class RenderBurstRunner:
                     "region": result.region,
                     "price_per_hour": result.price_per_hour,
                     "blender_logs": list(result.blender_logs),
+                    "remote_logs": list(result.remote_logs),
+                    "diagnostics_log": self._node_diagnostics.get(index, ""),
                 },
             )
         except Exception:  # noqa: BLE001
             pass
+
+    def _capture_remote_artifacts(
+        self, instance: VastInstance, index: int, remote_logs: list[str]
+    ) -> None:
+        """Copy remote Blender logs and diagnostics before destroying the node."""
+        if self.audit is None:
+            return
+        run_dir = self.audit.run_dir(self._run_id)
+        for remote in remote_logs:
+            name = Path(remote).name
+            result = self._ssh(
+                instance, f"cat '{remote}'", check=False, timeout=60
+            )
+            if result.stdout:
+                destination = run_dir / f"node-{index}-remote-{name}"
+                try:
+                    destination.write_text(result.stdout, encoding="utf-8")
+                    self._audit_node(
+                        "remote_log_saved",
+                        index,
+                        message=str(destination),
+                    )
+                except OSError:
+                    pass
+        diagnostics_command = (
+            "nvidia-smi 2>&1 | head -80; echo '--- free ---'; free -m; "
+            "echo '--- disk ---'; df -h /root; "
+            "echo '--- dmesg ---'; dmesg 2>&1 | tail -100"
+        )
+        result = self._ssh(
+            instance, diagnostics_command, check=False, timeout=60
+        )
+        output = ((result.stdout or "") + "\n" + (result.stderr or "")).strip()
+        if output:
+            destination = run_dir / f"node-{index}-diagnostics.log"
+            try:
+                destination.write_text(output + "\n", encoding="utf-8")
+                self._node_diagnostics[index] = str(destination)
+                self._audit_node(
+                    "diagnostics_saved",
+                    index,
+                    message=str(destination),
+                )
+            except OSError:
+                pass
 
     def _wait_for_ssh(
         self, instance: VastInstance, index: int, progress: ProgressCallback | None
@@ -807,7 +866,7 @@ class RenderBurstRunner:
         expected: int,
         temp: Path,
         blender_logs: list[str] | None = None,
-    ) -> int:
+    ) -> tuple[int, str]:
         shot = task.shot
         quality = shot.quality
         output_dir = f"{self.work_root}/out/{task.output_subdir}"
@@ -835,9 +894,15 @@ class RenderBurstRunner:
         blender = "/root/blender/blender"
         if quality.is_eevee:
             blender = f"xvfb-run -a {blender}"
+        safe_shot = "".join(
+            ch if ch.isalnum() or ch in "-_" else "_" for ch in shot.name
+        )
+        remote_log = f"/root/openstudio-render-{index}-{safe_shot}.log"
         command = (
-            f"cd '{self.work_root}' && {blender} -b --factory-startup "
-            f"'{remote_blend}' --python /root/render_frames.py -- '{remote_config}'"
+            f"bash -lc \"cd '{self.work_root}' && set -o pipefail; "
+            f"{blender} -b --factory-startup '{remote_blend}' "
+            f"--python /root/render_frames.py -- '{remote_config}' "
+            f"2>&1 | tee '{remote_log}'\""
         )
         self._emit(
             progress,
@@ -937,7 +1002,7 @@ class RenderBurstRunner:
             frames=done - rendered_before,
             blender_log=str(blender_log or ""),
         )
-        return done - rendered_before
+        return done - rendered_before, remote_log
 
     def _sync_task_output(
         self,

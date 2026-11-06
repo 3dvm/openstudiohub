@@ -33,7 +33,9 @@ every shot as a collapsible card; the right side shows the selected shot.
   active run are locked: their checkbox and render actions are disabled until
   the run finishes.
 - **Run controls:** Start, Cancel, **Stop all processes**, preview/review video
-  actions and log access sit at the top of the panel, above the preview.
+  actions and log access sit at the top of the panel, above the preview. Every
+  render-starting action asks for confirmation. While a process is active a
+  banner is shown and the sensitive controls and shot actions are locked.
 - **Render setup audit:** compositing on/off, view layers and whether each one
   is connected to the compositor output, output format/color, camera, fps and
   the output path.
@@ -57,7 +59,9 @@ every shot as a collapsible card; the right side shows the selected shot.
 - **Final sequence player:** the panel replays the rendered PNG sequence with
   play/pause, scrubbing and frame stepping. The current frame can be moved to
   `.frame_trash/` (render error) or approved; approved frames are protected from
-  deletion and from future renders.
+  deletion and from future renders. Preview and final render completions always
+  open a result dialog: success shows a summary, failure offers the error
+  details, the log file and a retry action.
 - **Preview video:** a fast, half-resolution MP4 for quick review. It is
   created separately from the per-shot review videos.
 - **Review video:** ffmpeg creates the Kitsu review MP4 and the
@@ -139,6 +143,9 @@ changed in the panel.
   state of another. The node cards update live from the burst progress events.
 - When a run is partial, **Retry missing frames** renders only the frames that
   are absent. Approved frames are skipped.
+- Before destroying a node, the Hub copies the remote Blender log and captures
+  `nvidia-smi`, memory, disk and `dmesg` diagnostics. This happens on success,
+  failure and cancellation, so the cause of a lost node is preserved.
 - Each run writes a local audit trail:
   `~/.openstudio/state/render_runs.jsonl` plus per-node logs under
   `~/.openstudio/state/render_runs/<run_id>/`:

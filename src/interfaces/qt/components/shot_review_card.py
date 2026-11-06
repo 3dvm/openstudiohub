@@ -47,6 +47,8 @@ class ShotReviewCard(QFrame):
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
         self._shot_name = ""
         self._shot_path = ""
+        self._model = None
+        self._busy = False
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 8, 10, 8)
@@ -156,6 +158,7 @@ class ShotReviewCard(QFrame):
         )
 
     def update_model(self, model) -> None:
+        self._model = model
         self._shot_name = model.name
         self._shot_path = model.relative_path
         self.check.blockSignals(True)
@@ -198,6 +201,7 @@ class ShotReviewCard(QFrame):
         self.btn_approve.setEnabled(model.rendered > model.approved)
         self.btn_delete.setEnabled(model.rendered > model.approved)
         self.btn_more.setEnabled(model.ready)
+        self._apply_busy_state()
         for action in self.menu.actions():
             text = action.text()
             if text == "Unapprove all":
@@ -206,6 +210,29 @@ class ShotReviewCard(QFrame):
                 action.setEnabled(model.rendered >= model.frames > 0)
             elif text == "Open .blend":
                 action.setEnabled(bool(model.ready))
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = bool(busy)
+        if not self._busy and self._model is not None:
+            self.update_model(self._model)
+        else:
+            self._apply_busy_state()
+
+    def _apply_busy_state(self) -> None:
+        if not self._busy:
+            return
+        for button in (
+            self.btn_preview,
+            self.btn_benchmark,
+            self.btn_render,
+            self.btn_retry,
+            self.btn_approve,
+            self.btn_delete,
+            self.btn_more,
+        ):
+            button.setEnabled(False)
+        for action in self.menu.actions():
+            action.setEnabled(False)
 
     def _on_selection_changed(self, checked: bool) -> None:
         self.selection_changed.emit(self._shot_path, bool(checked))

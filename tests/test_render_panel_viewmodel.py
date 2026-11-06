@@ -213,3 +213,20 @@ def test_recalculate_plans_only_pending_frames(qapp, tmp_path):
     viewmodel.recalculate()
 
     assert captured["shots"][0].frames == 76
+
+
+def test_preview_message_uses_the_selected_backend(qapp, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [_shot()]
+    viewmodel.settings = RenderSettings(preview_backend="vast")
+    viewmodel.offer = SimpleNamespace(price_per_hour=0.4)
+    messages = []
+    viewmodel.status_message.connect(lambda message, _color: messages.append(message))
+    monkeypatch.setattr(viewmodel.workers, "start", lambda *args, **kwargs: True)
+
+    assert viewmodel.preview_shots([viewmodel.shots[0]]) is True
+
+    assert any("on Vast.ai" in message for message in messages)

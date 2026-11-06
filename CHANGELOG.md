@@ -24,6 +24,13 @@ releases may include larger UI or workflow changes.
   state for shots already rendering. The sequence button toggles play/stop and
   the active shot gets an orange outline.
 - Render plans now exclude approved frames and only schedule pending frames.
+- Render nodes copy their remote Blender logs and diagnostics before being
+  destroyed, even on success or cancellation.
+- Preview and final renders always show a result dialog with a summary, log
+  access and retry actions. Preview reporting now uses the correct Vast.ai or
+  local message.
+- Render-starting actions ask for confirmation and the panel locks sensitive
+  controls while a process is active.
 - **Open .blend** on a shot launches the isolated Blender through the task
   sandbox and follows the SVN lock/unlock protocol.
 - The sequence player supports In/Out points for approving or deleting a frame

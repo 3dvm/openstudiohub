@@ -152,3 +152,35 @@ def test_runner_has_no_canary_and_audits_nodes_individually(tmp_path):
     summary = audit.run_dir("rnode") / "node-2.json"
     assert summary.is_file()
     assert '"gpu_name": "RTX 4090"' in summary.read_text(encoding="utf-8")
+
+
+def test_remote_logs_and_diagnostics_are_saved_before_destroy(tmp_path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+
+    from src.infrastructure.render.run_audit import RenderRunAuditLogger
+
+    audit = RenderRunAuditLogger(tmp_path / "audit" / "render_runs.jsonl")
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+        audit=audit,
+        run_id="rremote",
+    )
+
+    def fake_ssh(*_args, **_kwargs):
+        return subprocess.CompletedProcess([], 0, "blender output\n", "")
+
+    monkeypatch.setattr(runner, "_ssh", fake_ssh)
+
+    runner._capture_remote_artifacts(
+        SimpleNamespace(), 1, ["/root/openstudio-render-1-sh010.log"]
+    )
+
+    run_dir = audit.run_dir("rremote")
+    assert (run_dir / "node-1-remote-openstudio-render-1-sh010.log").is_file()
+    assert (run_dir / "node-1-diagnostics.log").is_file()
