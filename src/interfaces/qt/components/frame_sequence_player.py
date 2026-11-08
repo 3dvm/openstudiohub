@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import os
+import traceback
 from collections import OrderedDict
 from pathlib import Path
 
@@ -576,6 +578,22 @@ class FrameSequencePlayer(QWidget):
         self.lbl_badge.show()
         self.lbl_badge.raise_()
 
+    def is_fullscreen(self) -> bool:
+        return self._fullscreen_dialog is not None
+
+    def _trace_fullscreen(self, action: str) -> None:
+        if not os.environ.get("OPENSTUDIO_PREVIEW_DEBUG"):
+            return
+        parent = self.parentWidget()
+        stack = self._restore_stack
+        print(
+            f"[Fullscreen] {action}; parent={parent!r}; "
+            f"restore_stack={stack!r}; restore_index="
+            f"{stack.indexOf(self) if stack is not None else -1}; "
+            f"dialog={self._fullscreen_dialog!r}"
+        )
+        print("".join(traceback.format_stack(limit=12)))
+
     def toggle_fullscreen(self) -> None:
         if self._fullscreen_dialog is None:
             self._enter_fullscreen()
@@ -583,6 +601,7 @@ class FrameSequencePlayer(QWidget):
             self.exit_fullscreen()
 
     def _enter_fullscreen(self) -> None:
+        self._trace_fullscreen("enter requested")
         parent = self.parentWidget()
         self._restore_stack = parent if isinstance(parent, QStackedWidget) else None
         if self._restore_stack is not None:
@@ -623,12 +642,23 @@ class FrameSequencePlayer(QWidget):
         self.setParent(None)
         dialog.close()
         dialog.deleteLater()
-        if self._restore_stack is not None:
-            self._restore_stack.addWidget(self)
-            self._restore_stack.setCurrentWidget(self)
+        stack = self._restore_stack
+        if stack is not None:
+            try:
+                if stack.indexOf(self) < 0:
+                    stack.addWidget(self)
+                if stack.indexOf(self) >= 0:
+                    stack.setCurrentWidget(self)
+                else:
+                    self._trace_fullscreen(
+                        "exit restore skipped: player is not in the stack"
+                    )
+            except RuntimeError:
+                self._trace_fullscreen("exit restore skipped: stack is gone")
             self._restore_stack = None
         self.btn_fullscreen.setIcon(self._icon("maximize.svg"))
         self.btn_fullscreen.setToolTip(self.tr("Fullscreen"))
+        self._trace_fullscreen("exit completed")
 
     # ------------------------------------------------------------------
     # Helpers

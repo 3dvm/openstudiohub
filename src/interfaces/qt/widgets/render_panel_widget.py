@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import traceback
 from dataclasses import replace
 from pathlib import Path
 
@@ -909,7 +910,7 @@ class RenderPanelWidget(QFrame):
         self._selected_shot = shot
         self._set_active_card(shot.relative_path)
         self.player.pause()
-        self.preview_stack.setCurrentWidget(self.poster)
+        self._set_preview_page(self.poster)
         self._show_setup(shot)
         self._show_latest_preview(shot)
         self._show_video(shot)
@@ -933,7 +934,7 @@ class RenderPanelWidget(QFrame):
             return
         if action == "preview":
             if self._confirm_preview([shot]):
-                self.preview_stack.setCurrentWidget(self.poster)
+                self._set_preview_page(self.poster)
                 self.vm.preview_shots([shot])
             return
         if action == "benchmark":
@@ -1073,13 +1074,13 @@ class RenderPanelWidget(QFrame):
         if self._selected_shot is None:
             return
         if self._confirm_preview([self._selected_shot]):
-            self.preview_stack.setCurrentWidget(self.poster)
+            self._set_preview_page(self.poster)
             self.vm.preview_shots([self._selected_shot])
 
     def _preview_all(self) -> None:
         targets = self.vm.selected_shots
         if self._confirm_preview(targets):
-            self.preview_stack.setCurrentWidget(self.poster)
+            self._set_preview_page(self.poster)
             self.vm.preview_shots(targets)
 
     def _confirm_preview(self, shots: list) -> bool:
@@ -1123,7 +1124,8 @@ class RenderPanelWidget(QFrame):
         self._selected_shot = shot
         self._set_active_card(shot.relative_path)
         fps = shot.setup.fps if shot.setup else 24.0
-        self.preview_stack.setCurrentWidget(self.player)
+        if not self.player.is_fullscreen():
+            self._set_preview_page(self.player)
         self.player.set_sequence(
             entries,
             fps=fps,
@@ -1253,6 +1255,25 @@ class RenderPanelWidget(QFrame):
             report,
             retry_callback=self.vm.retry_failed_previews if failed else None,
         )
+
+    def _set_preview_page(self, page) -> None:
+        if self.preview_stack.indexOf(page) < 0:
+            self._trace_preview_stack(
+                "setCurrentWidget skipped: page is not contained in the stack"
+            )
+            return
+        self.preview_stack.setCurrentWidget(page)
+
+    def _trace_preview_stack(self, action: str) -> None:
+        player = getattr(self, "player", None)
+        parent = player.parentWidget() if player is not None else None
+        fullscreen = bool(getattr(player, "_fullscreen_dialog", None)) if player else False
+        print(
+            f"[PreviewStack] {action}; player_parent={parent!r}; "
+            f"fullscreen={fullscreen}; stack_count={self.preview_stack.count()}; "
+            f"player_index={self.preview_stack.indexOf(player) if player else -1}"
+        )
+        print("".join(traceback.format_stack()))
 
     def _show_latest_preview(self, shot: RenderShot) -> None:
         path = self.vm.latest_preview_path(shot)
