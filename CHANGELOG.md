@@ -30,6 +30,10 @@ releases may include larger UI or workflow changes.
 - Render scripts force the Blender image media type before setting the format
   and use `--python-exit-code 1`, so FFMPEG-configured scenes no longer fail
   silently or report successful empty renders.
+- Node cards show live progress, current shot, seconds per frame and an ETA
+  based on the actual Blender frame times.
+- Failed boot nodes now report all assigned frames as missing so
+  **Retry missing frames** can recover them.
 - Render nodes copy their remote Blender logs and diagnostics before being
   destroyed, even on success or cancellation.
 - Preview images are persisted per shot and recovered from the timestamped

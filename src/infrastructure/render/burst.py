@@ -149,6 +149,7 @@ class BurstProgress:
     region: str = ""
     price_per_hour: float = 0.0
     offer_id: int = 0
+    shot: str = ""
 
 
 @dataclass
@@ -659,6 +660,13 @@ class RenderBurstRunner:
             )
             return result
         except Exception as error:  # noqa: BLE001
+            if not missing:
+                missing = [
+                    frame
+                    for task in tasks
+                    for frame in task.frames
+                    if not self._local_frame_path(task, frame).is_file()
+                ]
             result = NodeResult(
                 node=index,
                 instance_id=instance.id if instance is not None else 0,
@@ -927,6 +935,7 @@ class RenderBurstRunner:
             frames_done=rendered_before,
             frames_total=expected,
             instance_id=instance.id,
+            shot=shot.name,
         )
         blender_log = None
         blender_handle = None
@@ -975,6 +984,7 @@ class RenderBurstRunner:
                         frames_done=done,
                         frames_total=expected,
                         instance_id=instance.id,
+                        shot=shot.name,
                     )
                 elif "OSBAKE::" in line:
                     self._emit(
@@ -983,6 +993,7 @@ class RenderBurstRunner:
                         "bake",
                         line.strip().split("OSBAKE::", 1)[1],
                         instance_id=instance.id,
+                        shot=shot.name,
                     )
                 elif "OSDEVICES::" in line:
                     self._emit(
@@ -991,6 +1002,7 @@ class RenderBurstRunner:
                         "device",
                         line.strip().split("OSDEVICES::", 1)[1],
                         instance_id=instance.id,
+                        shot=shot.name,
                     )
             process.wait(timeout=30)
         finally:
@@ -1026,7 +1038,14 @@ class RenderBurstRunner:
         index: int,
         progress: ProgressCallback | None,
     ) -> None:
-        self._emit(progress, index, "sync", f"syncing {task.output_subdir}", instance_id=instance.id)
+        self._emit(
+            progress,
+            index,
+            "sync",
+            f"syncing {task.output_subdir}",
+            instance_id=instance.id,
+            shot=task.shot.name,
+        )
         local = self.output_root / task.output_subdir
         local.mkdir(parents=True, exist_ok=True)
         remote = f"{self.work_root}/out/{task.output_subdir}/"
@@ -1205,6 +1224,7 @@ class RenderBurstRunner:
         region: str = "",
         price_per_hour: float = 0.0,
         offer_id: int = 0,
+        shot: str = "",
     ) -> None:
         self._node_stage[node] = stage
         if self.audit is not None and stage != "frame":
@@ -1232,6 +1252,7 @@ class RenderBurstRunner:
                     region=region,
                     price_per_hour=price_per_hour,
                     offer_id=offer_id,
+                    shot=shot,
                 )
             )
         except Exception:  # noqa: BLE001 - progress must never abort a render

@@ -12,7 +12,14 @@ from pathlib import Path
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+)
 
 _STATUS_COLORS = {
     "candidate": "#94A3B8",
@@ -65,6 +72,15 @@ class RenderNodeCard(QFrame):
         self.lbl_message.setStyleSheet("color: #94A3B8; font-size: 11px;")
         layout.addWidget(self.lbl_message)
 
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setTextVisible(False)
+        self.progress.setMaximumHeight(8)
+        layout.addWidget(self.progress)
+        self.lbl_eta = QLabel("")
+        self.lbl_eta.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        layout.addWidget(self.lbl_eta)
+
         self.logs_layout = QHBoxLayout()
         self.logs_layout.setSpacing(4)
         layout.addLayout(self.logs_layout)
@@ -86,18 +102,37 @@ class RenderNodeCard(QFrame):
             details.append(str(card.region))
         if getattr(card, "price_per_hour", 0):
             details.append(f"${float(card.price_per_hour):.2f}/h")
+        if getattr(card, "current_shot", ""):
+            details.append(f"shot {card.current_shot}")
         self.lbl_details.setText(" · ".join(part for part in details if part) or "—")
         meta = []
         if getattr(card, "instance_id", 0):
             meta.append(f"instance {card.instance_id}")
-        meta.append(
-            f"{int(getattr(card, 'frames_done', 0) or 0)}/"
-            f"{int(getattr(card, 'frames_expected', 0) or 0)} frames"
-        )
+        done = int(getattr(card, "frames_done", 0) or 0)
+        expected = int(getattr(card, "frames_expected", 0) or 0)
+        percent = float(getattr(card, "progress_percent", 0.0) or 0.0)
+        meta.append(f"{done}/{expected} frames · {percent:.0f}%")
+        if getattr(card, "seconds_per_frame", 0):
+            meta.append(f"{float(card.seconds_per_frame):.1f}s/frame")
         if getattr(card, "cost", 0):
             meta.append(f"${float(card.cost):.3f}")
         self.lbl_meta.setText(" · ".join(meta))
         self.lbl_message.setText(str(getattr(card, "message", "") or ""))
+        self.progress.setValue(max(0, min(100, int(percent))))
+        eta = float(getattr(card, "eta_seconds", 0.0) or 0.0)
+        if getattr(card, "final", False):
+            self.lbl_eta.setText("")
+        elif eta > 0:
+            minutes, seconds = divmod(int(eta), 60)
+            self.lbl_eta.setText(
+                f"~{minutes}m {seconds:02d}s remaining"
+                if minutes
+                else f"~{seconds}s remaining"
+            )
+        elif status in ("rendering", "queued"):
+            self.lbl_eta.setText(self.tr("Estimating remaining time..."))
+        else:
+            self.lbl_eta.setText("")
         if getattr(card, "final", False):
             self._sync_logs(card)
         elif self._log_signature:

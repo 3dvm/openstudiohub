@@ -55,8 +55,10 @@ every shot as a collapsible card; the right side shows the selected shot.
   candidate offers for the required nodes in a four-column card grid
   (**Refresh candidates** re-queries Vast.ai). Each card then follows its own
   lifecycle: candidate, creating, booting, SSH, installing, staging, rendering,
-  syncing, completed, failed or destroyed. At the end, the card exposes buttons
-  that open its Hub log, summary and raw Blender log directly.
+  syncing, completed, failed or destroyed. Each active card shows its current
+  shot, a progress bar, rendered/expected frames, measured seconds per frame and
+  an ETA calculated from the real frame times. At the end, the card exposes
+  buttons that open its Hub log, summary and raw Blender log directly.
 - **Frame ranges:** the sequence player has **In point** / **Out point** and
   **Clear range** controls. **Approve selection** and **Delete selection** act
   on the selected frame range, or on the current frame when no range is set.

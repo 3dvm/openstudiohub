@@ -184,3 +184,35 @@ def test_remote_logs_and_diagnostics_are_saved_before_destroy(tmp_path, monkeypa
     run_dir = audit.run_dir("rremote")
     assert (run_dir / "node-1-remote-openstudio-render-1-sh010.log").is_file()
     assert (run_dir / "node-1-diagnostics.log").is_file()
+
+
+def test_failed_boot_reports_every_assigned_frame_as_missing(tmp_path):
+    from types import SimpleNamespace
+
+    from src.infrastructure.render.burst import BurstTask
+
+    class FailingProvider:
+        def create_instance(self, *_args, **_kwargs):
+            raise RuntimeError("instance disappeared")
+
+    shot = _shot("sh010", frames=4, start=101)
+    runner = RenderBurstRunner(
+        FailingProvider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+    )
+    task = BurstTask(shot=shot, frames=(101, 102), output_subdir="shots/sq010/sh010.render")
+    offer = SimpleNamespace(
+        id=1,
+        gpu_name="RTX 3090",
+        geolocation="US",
+        price_per_hour=0.4,
+    )
+
+    result = runner._run_node(0, [task], offer, None)
+
+    assert result.ok is False
+    assert result.missing == (101, 102)

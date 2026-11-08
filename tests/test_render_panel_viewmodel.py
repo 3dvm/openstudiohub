@@ -269,3 +269,47 @@ def test_latest_preview_path_finds_run_level_vast_previews(qapp, tmp_path):
     image.write_bytes(b"x")
 
     assert viewmodel.latest_preview_path(shot) == image
+
+
+def test_node_progress_tracks_real_frame_time_and_eta(qapp):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel._ensure_node_card(0)
+    viewmodel._on_burst_progress_status(
+        SimpleNamespace(
+            node=0,
+            stage="render",
+            message="rendering sh010",
+            shot="sh010",
+            frames_done=0,
+            frames_total=10,
+            instance_id=1,
+            gpu_name="RTX 4080",
+            region="US",
+            price_per_hour=0.4,
+            offer_id=1,
+        )
+    )
+    for done in (1, 2):
+        viewmodel._on_burst_progress_status(
+            SimpleNamespace(
+                node=0,
+                stage="frame",
+                message='{"frame": 101, "seconds": 60}',
+                shot="sh010",
+                frames_done=done,
+                frames_total=10,
+                instance_id=1,
+                gpu_name="",
+                region="",
+                price_per_hour=0,
+                offer_id=0,
+            )
+        )
+
+    card = viewmodel.node_cards[0]
+    assert card.current_shot == "sh010"
+    assert card.seconds_per_frame == 60
+    assert card.eta_seconds == 8 * 60
+    assert card.progress_percent == 20

@@ -14,6 +14,7 @@ widgets and forwards user actions.
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,10 @@ class RenderNodeCardModel:
     frames_expected: int = 0
     cost: float = 0.0
     stage: str = ""
+    current_shot: str = ""
+    progress_percent: float = 0.0
+    seconds_per_frame: float = 0.0
+    eta_seconds: float = 0.0
     hub_logs: tuple[Path, ...] = field(default_factory=tuple)
     summary_logs: tuple[Path, ...] = field(default_factory=tuple)
     blender_logs: tuple[Path, ...] = field(default_factory=tuple)
@@ -232,6 +237,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.candidate_offers: list = []
         self._progress_by_shot: dict[str, int] = {}
         self._progress_by_node: dict[int, int] = {}
+        self._node_frame_seconds: dict[int, deque[float]] = {}
         self._locked_shots: set[str] = set()
         self._failed_shots: set[str] = set()
         self.last_preview_failed: list[str] = []
@@ -255,6 +261,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.status_store = RenderStatusStore.for_project(self.project_root)
         self._progress_by_shot = {}
         self._progress_by_node = {}
+        self._node_frame_seconds = {}
         self.shots = []
         self.plan = None
         self.offer = None
@@ -265,6 +272,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.candidate_offers = []
         self._locked_shots = set()
         self._failed_shots = set()
+        self._node_frame_seconds = {}
         self.node_cards_ready.emit([])
         self.shot_reviews_ready.emit([])
         try:
@@ -602,6 +610,7 @@ class RenderPanelViewModel(BaseViewModel):
         return self.node_cards[index]
 
     def _mark_cards_queued(self) -> None:
+        self._node_frame_seconds = {}
         for card in self.node_cards:
             card.status = "queued"
             card.final = False
@@ -610,6 +619,10 @@ class RenderPanelViewModel(BaseViewModel):
             card.frames_done = 0
             card.frames_expected = 0
             card.cost = 0.0
+            card.current_shot = ""
+            card.progress_percent = 0.0
+            card.seconds_per_frame = 0.0
+            card.eta_seconds = 0.0
             card.hub_logs = ()
             card.summary_logs = ()
             card.blender_logs = ()
@@ -1119,6 +1132,12 @@ class RenderPanelViewModel(BaseViewModel):
             card.frames_done = int(result.frames_done or 0)
             card.frames_expected = int(result.frames_expected or 0)
             card.cost = float(result.cost or 0.0)
+            card.progress_percent = (
+                card.frames_done * 100.0 / card.frames_expected
+                if card.frames_expected
+                else 0.0
+            )
+            card.eta_seconds = 0.0
             card.gpu_name = result.gpu_name or card.gpu_name
             card.region = result.region or card.region
             card.price_per_hour = result.price_per_hour or card.price_per_hour
@@ -1152,6 +1171,12 @@ class RenderPanelViewModel(BaseViewModel):
         card.gpu_name = card.gpu_name or "Local workstation"
         card.frames_done = sum(item.frames_rendered for item in reports or [])
         card.frames_expected = sum(item.frames_expected for item in reports or [])
+        card.progress_percent = (
+            card.frames_done * 100.0 / card.frames_expected
+            if card.frames_expected
+            else 0.0
+        )
+        card.eta_seconds = 0.0
         card.message = "Local render finished."
         card.hub_logs = tuple(hub_logs)
         card.summary_logs = tuple(summary_logs)
@@ -1405,10 +1430,32 @@ class RenderPanelViewModel(BaseViewModel):
             card.price_per_hour = float(event.price_per_hour)
         if getattr(event, "offer_id", 0):
             card.offer_id = int(event.offer_id)
+        if getattr(event, "shot", ""):
+            card.current_shot = str(event.shot)
         card.frames_done = int(getattr(event, "frames_done", 0) or card.frames_done or 0)
         card.frames_expected = int(
             getattr(event, "frames_total", 0) or card.frames_expected or 0
         )
+        if card.frames_expected > 0:
+            card.progress_percent = min(
+                100.0, card.frames_done * 100.0 / card.frames_expected
+            )
+        if stage == "frame":
+            seconds = 0.0
+            try:
+                payload = json.loads(str(getattr(event, "message", "") or "{}"))
+                seconds = float(payload.get("seconds") or 0.0)
+            except (TypeError, ValueError):
+                seconds = 0.0
+            if seconds > 0:
+                samples = self._node_frame_seconds.setdefault(node, deque(maxlen=8))
+                samples.append(seconds)
+                card.seconds_per_frame = sum(samples) / len(samples)
+        remaining = max(0, card.frames_expected - card.frames_done)
+        if card.seconds_per_frame > 0 and stage in ("frame", "render"):
+            card.eta_seconds = card.seconds_per_frame * remaining
+        elif stage in ("sync", "validate", "destroy") or card.status in ("completed", "failed", "destroyed"):
+            card.eta_seconds = 0.0
         self.node_card_updated.emit(node)
         self._write_status(
             status="rendering",
@@ -1421,9 +1468,21 @@ class RenderPanelViewModel(BaseViewModel):
         self._progress_by_shot[shot_name] = int(done)
         card = self._ensure_node_card(0)
         card.status = "rendering"
+        card.current_shot = shot_name
         card.message = f"{shot_name}: {done}/{total} ({seconds:.1f}s)"
         card.frames_done = sum(self._progress_by_shot.values())
         card.frames_expected = self.plan.total_frames if self.plan else card.frames_expected
+        if card.frames_expected:
+            card.progress_percent = min(
+                100.0, card.frames_done * 100.0 / card.frames_expected
+            )
+        if seconds > 0:
+            samples = self._node_frame_seconds.setdefault(0, deque(maxlen=8))
+            samples.append(float(seconds))
+            card.seconds_per_frame = sum(samples) / len(samples)
+            card.eta_seconds = card.seconds_per_frame * max(
+                0, card.frames_expected - card.frames_done
+            )
         self.node_card_updated.emit(0)
         self._write_status(
             status="rendering",

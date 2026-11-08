@@ -209,6 +209,8 @@ class ShotReviewCard(QFrame):
                 action.setEnabled(model.approved > 0)
             elif text in ("Create preview video", "Create review video"):
                 action.setEnabled(model.rendered >= model.frames > 0)
+            elif text == "Open output folder":
+                action.setEnabled(True)
             elif text == "Open .blend":
                 action.setEnabled(bool(model.ready))
 
