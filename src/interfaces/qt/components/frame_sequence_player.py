@@ -14,6 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFrame,
@@ -199,6 +200,9 @@ class FrameSequencePlayer(QWidget):
         self._set_controls_enabled(False)
         self._fullscreen_shortcut = QShortcut(QKeySequence(Qt.Key_F11), self)
         self._fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._on_app_quit)
 
     # ------------------------------------------------------------------
     # Sequence
@@ -585,7 +589,8 @@ class FrameSequencePlayer(QWidget):
             self._restore_stack.removeWidget(self)
         else:
             self.setParent(None)
-        dialog = QDialog(None)
+        host = self.window()
+        dialog = QDialog(host if host is not self else None)
         dialog.setObjectName("PlayerFullscreen")
         dialog.setWindowTitle(self.tr("Sequence player"))
         dialog.setWindowFlag(Qt.FramelessWindowHint, True)
@@ -597,6 +602,17 @@ class FrameSequencePlayer(QWidget):
         self.btn_fullscreen.setIcon(self._icon("minimize.svg"))
         self.btn_fullscreen.setToolTip(self.tr("Exit fullscreen"))
         dialog.showFullScreen()
+
+    def _on_app_quit(self) -> None:
+        dialog = self._fullscreen_dialog
+        if dialog is None:
+            return
+        self._fullscreen_dialog = None
+        self._restore_stack = None
+        try:
+            dialog.close()
+        except RuntimeError:
+            pass
 
     def exit_fullscreen(self) -> None:
         dialog = self._fullscreen_dialog

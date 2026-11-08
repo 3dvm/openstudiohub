@@ -30,6 +30,8 @@ releases may include larger UI or workflow changes.
 - Render scripts force the Blender image media type before setting the format
   and use `--python-exit-code 1`, so FFMPEG-configured scenes no longer fail
   silently or report successful empty renders.
+- The fullscreen player window is parented to the Hub and is closed during
+  application shutdown, preventing a hung exit while the player is fullscreen.
 - The sequence preview now uses a poster with a large play overlay when a
   rendered sequence exists, and an empty state when there is no preview or
   sequence.
