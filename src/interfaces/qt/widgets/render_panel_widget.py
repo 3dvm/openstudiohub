@@ -39,6 +39,7 @@ from src.domain.render.image_formats import IMAGE_FORMATS, image_format
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
 from src.interfaces.qt.components.collapsible_section import CollapsibleSection
 from src.interfaces.qt.components.frame_sequence_player import FrameSequencePlayer
+from src.interfaces.qt.components.preview_poster import PreviewPoster
 from src.interfaces.qt.components.render_node_card import RenderNodeCard
 from src.interfaces.qt.components.shot_review_card import ShotReviewCard
 from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderPanelViewModel
@@ -180,13 +181,11 @@ class RenderPanelWidget(QFrame):
 
         preview_frame = CollapsibleSection(self.tr("Preview (composite)"))
         self.preview_section = preview_frame
-        self.preview_label = QLabel(self.tr("Select a shot to see its preview."))
-        self.preview_label.setObjectName("MutedLabel")
-        self.preview_label.setAlignment(Qt.AlignCenter)
-        self.preview_label.setMinimumHeight(220)
-        self.preview_label.setWordWrap(True)
+        self.poster = PreviewPoster()
+        self.preview_label = self.poster.image_label
+        self.poster.play_requested.connect(self._play_final_sequence)
         self.preview_stack = QStackedWidget()
-        self.preview_stack.addWidget(self.preview_label)
+        self.preview_stack.addWidget(self.poster)
         self.player = FrameSequencePlayer()
         self.preview_stack.addWidget(self.player)
         preview_frame.add_widget(self.preview_stack)
@@ -910,7 +909,7 @@ class RenderPanelWidget(QFrame):
         self._selected_shot = shot
         self._set_active_card(shot.relative_path)
         self.player.pause()
-        self.preview_stack.setCurrentWidget(self.preview_label)
+        self.preview_stack.setCurrentWidget(self.poster)
         self._show_setup(shot)
         self._show_latest_preview(shot)
         self._show_video(shot)
@@ -934,7 +933,7 @@ class RenderPanelWidget(QFrame):
             return
         if action == "preview":
             if self._confirm_preview([shot]):
-                self.preview_stack.setCurrentWidget(self.preview_label)
+                self.preview_stack.setCurrentWidget(self.poster)
                 self.vm.preview_shots([shot])
             return
         if action == "benchmark":
@@ -1074,13 +1073,13 @@ class RenderPanelWidget(QFrame):
         if self._selected_shot is None:
             return
         if self._confirm_preview([self._selected_shot]):
-            self.preview_stack.setCurrentWidget(self.preview_label)
+            self.preview_stack.setCurrentWidget(self.poster)
             self.vm.preview_shots([self._selected_shot])
 
     def _preview_all(self) -> None:
         targets = self.vm.selected_shots
         if self._confirm_preview(targets):
-            self.preview_stack.setCurrentWidget(self.preview_label)
+            self.preview_stack.setCurrentWidget(self.poster)
             self.vm.preview_shots(targets)
 
     def _confirm_preview(self, shots: list) -> bool:
@@ -1268,15 +1267,24 @@ class RenderPanelWidget(QFrame):
             self._clear_preview(self.tr("Preview could not be loaded."))
             return
         self._current_preview = str(path)
-        self.preview_label.setPixmap(
-            pixmap.scaled(520, 320, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        )
-        self.preview_label.setToolTip(str(path))
+        self._refresh_poster(path)
 
     def _clear_preview(self, message: str = "") -> None:
         self._current_preview = ""
-        self.preview_label.setPixmap(QPixmap())
-        self.preview_label.setText(message or self.tr("Select a shot to see its preview."))
+        self._refresh_poster(None, message)
+
+    def _refresh_poster(self, preview_path: Path | None, message: str = "") -> None:
+        if self._selected_shot is None:
+            self.poster.set_state(message=message or self.tr("Select a shot to see its preview."))
+            return
+        entries = self.vm.sequence_entries(self._selected_shot)
+        rendered = [path for _frame, path in entries if path is not None]
+        self.poster.set_state(
+            preview_path=preview_path,
+            fallback_frame=rendered[0] if rendered else None,
+            has_sequence=bool(rendered),
+            message=message,
+        )
 
     # ------------------------------------------------------------------
     # Render / video

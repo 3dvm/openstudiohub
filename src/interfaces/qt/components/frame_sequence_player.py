@@ -12,9 +12,10 @@ from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QIcon, QPixmap
+from PySide6.QtGui import QIcon, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QPushButton,
     QSlider,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -56,6 +58,8 @@ class FrameSequencePlayer(QWidget):
         self._in_point: int | None = None
         self._out_point: int | None = None
         self._updating = False
+        self._fullscreen_dialog: QDialog | None = None
+        self._restore_stack: QStackedWidget | None = None
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._advance)
@@ -74,6 +78,14 @@ class FrameSequencePlayer(QWidget):
         self.image_label.setMinimumHeight(220)
         self.image_label.setWordWrap(True)
         viewer_layout.addWidget(self.image_label, 1)
+        self.lbl_badge = QLabel(self.image_label)
+        self.lbl_badge.setVisible(False)
+        self.lbl_badge.setStyleSheet(
+            "background-color: rgba(15, 23, 42, 190); border-radius: 10px; "
+            "padding: 4px 8px; font-size: 11px; font-weight: bold;"
+        )
+        self.lbl_badge.move(10, 10)
+        self.lbl_badge.raise_()
 
         self.timeline = FrameTimeline()
         self.timeline.seek_requested.connect(self._show_index)
@@ -91,6 +103,8 @@ class FrameSequencePlayer(QWidget):
         self.btn_loop.setCheckable(True)
         self.btn_loop.setChecked(True)
         self.btn_loop.toggled.connect(self._on_loop_toggled)
+        self.btn_fullscreen = self._icon_button("maximize.svg", "Fullscreen")
+        self.btn_fullscreen.clicked.connect(self.toggle_fullscreen)
         self.btn_in = self._icon_button("arrow-left-to-line.svg", "Set in point")
         self.btn_in.clicked.connect(self._set_in_point)
         self.btn_out = self._icon_button("arrow-right-to-line.svg", "Set out point")
@@ -98,10 +112,18 @@ class FrameSequencePlayer(QWidget):
         self.btn_clear_range = QPushButton(self.tr("Clear"))
         self.btn_clear_range.setObjectName("SecondaryButton")
         self.btn_clear_range.clicked.connect(self._clear_range)
-        self.btn_approve_selection = QPushButton(self.tr("Approve"))
+        self.btn_approve_selection = self._icon_button(
+            "thumb-up.svg", "Approve selected frames"
+        )
         self.btn_approve_selection.setObjectName("SuccessButton")
         self.btn_approve_selection.clicked.connect(self._on_approve_selection)
-        self.btn_delete = QPushButton(self.tr("Delete"))
+        self.btn_unapprove_selection = self._icon_button(
+            "thumb-down.svg", "Unapprove selected frames"
+        )
+        self.btn_unapprove_selection.clicked.connect(self._on_unapprove_selection)
+        self.btn_delete = self._icon_button(
+            "trash-2.svg", "Delete selected frames"
+        )
         self.btn_delete.setObjectName("DangerButton")
         self.btn_delete.clicked.connect(self._on_delete)
         for widget in (
@@ -109,10 +131,12 @@ class FrameSequencePlayer(QWidget):
             self.btn_play,
             self.btn_step_forward,
             self.btn_loop,
+            self.btn_fullscreen,
             self.btn_in,
             self.btn_out,
             self.btn_clear_range,
             self.btn_approve_selection,
+            self.btn_unapprove_selection,
             self.btn_delete,
         ):
             controls.addWidget(widget)
@@ -173,6 +197,8 @@ class FrameSequencePlayer(QWidget):
         main.addWidget(self.comments_panel, 2)
 
         self._set_controls_enabled(False)
+        self._fullscreen_shortcut = QShortcut(QKeySequence(Qt.Key_F11), self)
+        self._fullscreen_shortcut.activated.connect(self.toggle_fullscreen)
 
     # ------------------------------------------------------------------
     # Sequence
@@ -339,6 +365,7 @@ class FrameSequencePlayer(QWidget):
         )
         self._update_timeline()
         self._refresh_approval()
+        self._refresh_badge()
         self._refresh_scope()
         self._refresh_comments()
         self.position_changed.emit(frame)
@@ -424,7 +451,12 @@ class FrameSequencePlayer(QWidget):
 
     def _refresh_approval(self) -> None:
         selected = self.selected_frames()
-        self.btn_approve_selection.setEnabled(bool(selected))
+        self.btn_approve_selection.setEnabled(
+            bool(selected) and any(frame not in self._approved for frame in selected)
+        )
+        self.btn_unapprove_selection.setEnabled(
+            bool(selected) and any(frame in self._approved for frame in selected)
+        )
         self.btn_delete.setEnabled(
             bool(selected) and any(frame not in self._approved for frame in selected)
         )
@@ -433,6 +465,11 @@ class FrameSequencePlayer(QWidget):
         frames = self.selected_frames()
         if frames:
             self.approve_frames_requested.emit(frames, True)
+
+    def _on_unapprove_selection(self) -> None:
+        frames = self.selected_frames()
+        if frames:
+            self.approve_frames_requested.emit(frames, False)
 
     def _on_delete(self) -> None:
         frames = self.selected_frames()
@@ -511,6 +548,73 @@ class FrameSequencePlayer(QWidget):
             self.comment_deleted.emit(comment_id)
 
     # ------------------------------------------------------------------
+    # Frame status / fullscreen
+    # ------------------------------------------------------------------
+    def _refresh_badge(self) -> None:
+        frame = self.current_frame()
+        if frame is None:
+            self.lbl_badge.hide()
+            return
+        current_path = self.current_path()
+        if current_path is None or not Path(current_path).is_file():
+            text, color = self.tr("Missing"), "#EF4444"
+        elif frame in self._approved:
+            text, color = self.tr("Approved"), "#10B981"
+        else:
+            text, color = self.tr("Rendered"), "#38BDF8"
+        self.lbl_badge.setText(f"● {text}")
+        self.lbl_badge.setStyleSheet(
+            "background-color: rgba(15, 23, 42, 190); border-radius: 10px; "
+            f"padding: 4px 8px; font-size: 11px; font-weight: bold; color: {color};"
+        )
+        self.lbl_badge.adjustSize()
+        self.lbl_badge.move(10, 10)
+        self.lbl_badge.show()
+        self.lbl_badge.raise_()
+
+    def toggle_fullscreen(self) -> None:
+        if self._fullscreen_dialog is None:
+            self._enter_fullscreen()
+        else:
+            self.exit_fullscreen()
+
+    def _enter_fullscreen(self) -> None:
+        parent = self.parentWidget()
+        self._restore_stack = parent if isinstance(parent, QStackedWidget) else None
+        if self._restore_stack is not None:
+            self._restore_stack.removeWidget(self)
+        else:
+            self.setParent(None)
+        dialog = QDialog(None)
+        dialog.setObjectName("PlayerFullscreen")
+        dialog.setWindowTitle(self.tr("Sequence player"))
+        dialog.setWindowFlag(Qt.FramelessWindowHint, True)
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self)
+        dialog.finished.connect(lambda _result: self.exit_fullscreen())
+        self._fullscreen_dialog = dialog
+        self.btn_fullscreen.setIcon(self._icon("minimize.svg"))
+        self.btn_fullscreen.setToolTip(self.tr("Exit fullscreen"))
+        dialog.showFullScreen()
+
+    def exit_fullscreen(self) -> None:
+        dialog = self._fullscreen_dialog
+        if dialog is None:
+            return
+        self._fullscreen_dialog = None
+        dialog.layout().removeWidget(self)
+        self.setParent(None)
+        dialog.close()
+        dialog.deleteLater()
+        if self._restore_stack is not None:
+            self._restore_stack.addWidget(self)
+            self._restore_stack.setCurrentWidget(self)
+            self._restore_stack = None
+        self.btn_fullscreen.setIcon(self._icon("maximize.svg"))
+        self.btn_fullscreen.setToolTip(self.tr("Fullscreen"))
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
     @staticmethod
@@ -532,10 +636,12 @@ class FrameSequencePlayer(QWidget):
             self.btn_play,
             self.btn_step_forward,
             self.btn_loop,
+            self.btn_fullscreen,
             self.btn_in,
             self.btn_out,
             self.btn_clear_range,
             self.btn_approve_selection,
+            self.btn_unapprove_selection,
             self.btn_delete,
             self.slider,
         ):

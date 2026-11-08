@@ -26,8 +26,10 @@ def test_player_tracks_the_current_frame_and_approval(qapp, tmp_path):
     assert player.current_frame() == 101
     player._show_index(1)
     assert player.current_frame() == 102
+    player.btn_unapprove_selection.click()
+    player._show_index(0)
     player.btn_approve_selection.click()
-    assert approvals == [([102], True)]
+    assert approvals == [([102], False), ([101], True)]
     player.deleteLater()
 
 
@@ -103,4 +105,30 @@ def test_missing_frame_uses_missing_icon_and_disables_actions(qapp, tmp_path):
     assert player.current_path() is None
     assert player.btn_approve_selection.isEnabled() is False
     assert player.btn_delete.isEnabled() is False
+    player.deleteLater()
+
+
+def test_fullscreen_roundtrip_keeps_the_sequence(qapp, tmp_path):
+    frame = _frame(tmp_path / "frame_0101.png", "red")
+    player = FrameSequencePlayer()
+    player.set_sequence([(101, frame)], fps=24, autoplay=False)
+
+    player.toggle_fullscreen()
+    assert player._fullscreen_dialog is not None
+    player.exit_fullscreen()
+
+    assert player._fullscreen_dialog is None
+    assert player.current_frame() == 101
+    player.deleteLater()
+
+
+def test_status_badge_reflects_the_current_frame(qapp, tmp_path):
+    frame = _frame(tmp_path / "frame_0101.png", "red")
+    missing = tmp_path / "frame_0102.png"
+    player = FrameSequencePlayer()
+    player.set_sequence([(101, frame), (102, missing)], fps=24, approved={101}, autoplay=False)
+
+    assert "Approved" in player.lbl_badge.text()
+    player._show_index(1)
+    assert "Missing" in player.lbl_badge.text()
     player.deleteLater()

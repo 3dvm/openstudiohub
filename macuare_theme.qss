@@ -400,6 +400,25 @@ QFrame#CardFrame {
     border-radius: 12px;
 }
 
+QDialog#PlayerFullscreen {
+    background-color: #0F172A;
+}
+
+QPushButton#PosterPlayButton {
+    background-color: #F97316;
+    border: 2px solid #FB923C;
+    border-radius: 36px;
+}
+
+QPushButton#PosterPlayButton:hover {
+    background-color: #EA580C;
+}
+
+QWidget#PreviewPoster {
+    background-color: #0F172A;
+    border-radius: 8px;
+}
+
 QWidget#FrameTimeline {
     background-color: #0F172A;
     border: 1px solid #334155;

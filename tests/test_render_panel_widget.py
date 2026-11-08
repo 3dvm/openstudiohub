@@ -182,3 +182,18 @@ def test_open_output_folder_is_re_enabled_after_busy(qapp):
     card.set_busy(False)
     assert action.isEnabled()
     card.deleteLater()
+
+
+def test_preview_poster_offers_play_only_with_a_sequence(qapp, tmp_path):
+    from src.interfaces.qt.components.preview_poster import PreviewPoster
+
+    poster = PreviewPoster()
+    image = tmp_path / "preview.png"
+    image.write_bytes(b"x")
+    poster.set_state(preview_path=image, has_sequence=False)
+    assert poster.btn_play.isHidden() is True
+
+    poster.set_state(fallback_frame=image, has_sequence=True)
+    assert poster.btn_play.isHidden() is False
+    assert poster.btn_play.isEnabled() is True
+    poster.deleteLater()

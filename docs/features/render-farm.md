@@ -70,17 +70,24 @@ every shot as a collapsible card; the right side shows the selected shot.
 - **Format proxies:** non-PNG final frames also write a PNG proxy in
   `.proxies/`. The in-app sequence player, frame review and preview/review
   videos use those proxies, while delivery frames keep the selected format.
+- **Preview poster:** the preview panel shows a poster with the latest still or
+  the first rendered frame and a large play overlay when a rendered sequence
+  exists. Without a sequence the play action is disabled; with no preview or
+  frames it shows an empty state with the available render actions.
 - **Final sequence player:** the panel replays the rendered sequence with a
   timeline that marks approved frames (green), rendered frames awaiting review
   (blue), missing frames (red) and the In/Out selection (orange). Controls below
-  the timeline provide play/pause, previous/next frame, loop on/off, In/Out,
-  clear range, approve and delete. Missing frames show the Lucide `image-off`
-  icon. The current frame can be moved to `.frame_trash/` (render error) or
-  approved; approved frames are protected from deletion and future renders.
-- **Shot and frame comments:** the player has a local comments panel. Shot
+  the timeline provide play/pause, previous/next frame, loop on/off, icon-based
+  In/Out, clear range, approve, unapprove and delete. Missing frames show the
+  Lucide `image-off` icon and the current frame has an overlay badge with its
+  state. The player can enter fullscreen with F11 or the maximize button and
+  keeps its state when restored. Approved frames are protected from deletion and
+  future renders.
+- **Shot and frame comments:** the player keeps its local comments panel. Shot
   comments apply to the whole shot; frame comments are attached to the current
   frame and appear as markers on the timeline. They are stored in
-  `.render_comments.json` next to the rendered frames.
+  `.render_comments.json` next to the rendered frames. Kitsu upload of frame
+  comments with a `[frame NNNN]` reference is planned for a later iteration.
 - **Preview video:** a fast, half-resolution MP4 for quick review. It is
   created separately from the per-shot review videos.
 - **Review video:** ffmpeg creates the Kitsu review MP4 and the
