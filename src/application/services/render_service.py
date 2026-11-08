@@ -47,6 +47,7 @@ from src.infrastructure.render.profiles import (
     RenderProfileStore,
 )
 from src.infrastructure.render.settings import SETTINGS_FILENAME, RenderSettingsStore
+from src.infrastructure.render.comments import RenderCommentStore
 from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.local import LocalRenderReport, LocalRenderRunner
 from src.infrastructure.render.vast import (
@@ -694,6 +695,59 @@ class RenderService:
     ) -> RenderFrameStateStore:
         return RenderFrameStateStore(
             self.shot_output_dir(project_root, shot, task_type)
+        )
+
+    def comment_store(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        task_type: str = "render",
+    ) -> RenderCommentStore:
+        return RenderCommentStore(
+            self.shot_output_dir(project_root, shot, task_type)
+        )
+
+    def render_comments(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        task_type: str = "render",
+    ) -> dict:
+        return self.comment_store(project_root, shot, task_type).read()
+
+    def add_render_comment(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        text: str,
+        *,
+        frame: int | None = None,
+        author: str = "",
+        task_type: str = "render",
+    ) -> dict:
+        return self.comment_store(project_root, shot, task_type).add(
+            text, frame=frame, author=author
+        )
+
+    def delete_render_comment(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        comment_id: str,
+        task_type: str = "render",
+    ) -> dict:
+        return self.comment_store(project_root, shot, task_type).delete(comment_id)
+
+    def resolve_render_comment(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        comment_id: str,
+        resolved: bool,
+        task_type: str = "render",
+    ) -> dict:
+        return self.comment_store(project_root, shot, task_type).set_resolved(
+            comment_id, resolved
         )
 
     def frame_extension(self, shot: RenderShot) -> str:
