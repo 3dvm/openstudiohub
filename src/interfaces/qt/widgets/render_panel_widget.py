@@ -527,6 +527,9 @@ class RenderPanelWidget(QFrame):
         self.player.delete_frames_requested.connect(self._delete_frames)
         self.player.approve_frames_requested.connect(self._approve_frames)
         self.player.playback_changed.connect(self._on_playback_changed)
+        self.player.comment_posted.connect(self._on_comment_posted)
+        self.player.comment_resolved.connect(self._on_comment_resolved)
+        self.player.comment_deleted.connect(self._on_comment_deleted)
         self.combo_target.currentIndexChanged.connect(self._on_target_changed)
         self.combo_backend.currentIndexChanged.connect(self._sync_backend_sections)
         self.combo_preview_backend.currentIndexChanged.connect(self._sync_backend_sections)
@@ -1111,12 +1114,11 @@ class RenderPanelWidget(QFrame):
 
     def _show_sequence_for_shot(self, shot: RenderShot) -> None:
         entries = self.vm.sequence_entries(shot)
-        rendered = [entry for entry in entries if entry[1] is not None]
-        if not rendered:
+        if not entries:
             QMessageBox.information(
                 self,
                 self.tr("Render"),
-                self.tr("No rendered frames were found for this shot."),
+                self.tr("No frame range was found for this shot."),
             )
             return
         self._selected_shot = shot
@@ -1124,13 +1126,16 @@ class RenderPanelWidget(QFrame):
         fps = shot.setup.fps if shot.setup else 24.0
         self.preview_stack.setCurrentWidget(self.player)
         self.player.set_sequence(
-            rendered,
+            entries,
             fps=fps,
             approved=self.vm.approved_frames(shot),
+            comments=self.vm.render_comments(shot),
             autoplay=True,
         )
+        rendered = sum(1 for _frame, path in entries if path is not None)
         self._append_log(
-            f"Playing final sequence for {shot.name} ({len(rendered)} frame(s))."
+            f"Playing final sequence for {shot.name} "
+            f"({rendered}/{len(entries)} frame(s))."
         )
 
     def _clear_shot_cards(self) -> None:
@@ -1145,6 +1150,30 @@ class RenderPanelWidget(QFrame):
         if not self._shots:
             return
         self._sync_shot_cards()
+
+    def _on_comment_posted(self, scope: str, frame: int, text: str) -> None:
+        if self._selected_shot is None:
+            return
+        comments = self.vm.add_render_comment(
+            self._selected_shot,
+            text,
+            frame=frame if scope == "frame" else None,
+        )
+        self.player.set_comments(comments)
+
+    def _on_comment_resolved(self, comment_id: str, resolved: bool) -> None:
+        if self._selected_shot is None:
+            return
+        comments = self.vm.resolve_render_comment(
+            self._selected_shot, comment_id, resolved
+        )
+        self.player.set_comments(comments)
+
+    def _on_comment_deleted(self, comment_id: str) -> None:
+        if self._selected_shot is None:
+            return
+        comments = self.vm.delete_render_comment(self._selected_shot, comment_id)
+        self.player.set_comments(comments)
 
     def _delete_frames(self, frames: list) -> None:
         if self._selected_shot is None or not frames:

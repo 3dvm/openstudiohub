@@ -142,3 +142,43 @@ def test_final_image_format_controls_update_render_settings(qapp):
     assert settings.final_quality.color_depth == "32"
     assert settings.preview_quality.file_format == "PNG"
     widget.deleteLater()
+
+
+def test_open_output_folder_is_re_enabled_after_busy(qapp):
+    from src.interfaces.qt.components.shot_review_card import ShotReviewCard
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import ShotReviewModel
+
+    model = ShotReviewModel(
+        name="sh010",
+        sequence="sq010",
+        status="rendering",
+        status_label="Rendering",
+        status_tooltip="",
+        selected=True,
+        locked=True,
+        ready=True,
+        frames=10,
+        rendered=4,
+        approved=0,
+        missing=6,
+        frame_range="101–110 (step 1)",
+        engine="CYCLES",
+        resolution="1920×1080 (100%)",
+        samples=128,
+        image_format="PNG",
+        measured_seconds=None,
+        warnings=(),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+    )
+    card = ShotReviewCard()
+    card.update_model(model)
+    action = next(
+        item for item in card.menu.actions() if item.text() == "Open output folder"
+    )
+    assert action.isEnabled()
+
+    card.set_busy(True)
+    assert not action.isEnabled()
+    card.set_busy(False)
+    assert action.isEnabled()
+    card.deleteLater()

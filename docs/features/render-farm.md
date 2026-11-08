@@ -70,12 +70,17 @@ every shot as a collapsible card; the right side shows the selected shot.
 - **Format proxies:** non-PNG final frames also write a PNG proxy in
   `.proxies/`. The in-app sequence player, frame review and preview/review
   videos use those proxies, while delivery frames keep the selected format.
-- **Final sequence player:** the panel replays the rendered PNG sequence with
-  play/pause, scrubbing and frame stepping. The current frame can be moved to
-  `.frame_trash/` (render error) or approved; approved frames are protected from
-  deletion and from future renders. Preview and final render completions always
-  open a result dialog: success shows a summary, failure offers the error
-  details, the log file and a retry action.
+- **Final sequence player:** the panel replays the rendered sequence with a
+  timeline that marks approved frames (green), rendered frames awaiting review
+  (blue), missing frames (red) and the In/Out selection (orange). Controls below
+  the timeline provide play/pause, previous/next frame, loop on/off, In/Out,
+  clear range, approve and delete. Missing frames show the Lucide `image-off`
+  icon. The current frame can be moved to `.frame_trash/` (render error) or
+  approved; approved frames are protected from deletion and future renders.
+- **Shot and frame comments:** the player has a local comments panel. Shot
+  comments apply to the whole shot; frame comments are attached to the current
+  frame and appear as markers on the timeline. They are stored in
+  `.render_comments.json` next to the rendered frames.
 - **Preview video:** a fast, half-resolution MP4 for quick review. It is
   created separately from the per-shot review videos.
 - **Review video:** ffmpeg creates the Kitsu review MP4 and the

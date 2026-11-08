@@ -30,6 +30,9 @@ releases may include larger UI or workflow changes.
 - Render scripts force the Blender image media type before setting the format
   and use `--python-exit-code 1`, so FFMPEG-configured scenes no longer fail
   silently or report successful empty renders.
+- The sequence player now has a status timeline (approved, rendered, missing,
+  selection), missing-frame icon, per-frame stepping, loop toggle, icon-based
+  In/Out controls and a local shot/frame comment panel.
 - Node cards show live progress, current shot, seconds per frame and an ETA
   based on the actual Blender frame times.
 - Failed boot nodes now report all assigned frames as missing so

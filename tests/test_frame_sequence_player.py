@@ -24,12 +24,10 @@ def test_player_tracks_the_current_frame_and_approval(qapp, tmp_path):
     player.set_sequence([(101, first), (102, second)], fps=24, approved={102}, autoplay=False)
 
     assert player.current_frame() == 101
-    assert player.chk_approve.isChecked() is False
     player._show_index(1)
     assert player.current_frame() == 102
-    assert player.chk_approve.isChecked() is True
-    player.chk_approve.setChecked(False)
-    assert approvals == [([102], False)]
+    player.btn_approve_selection.click()
+    assert approvals == [([102], True)]
     player.deleteLater()
 
 
@@ -74,4 +72,35 @@ def test_range_selection_emits_all_frames(qapp, tmp_path):
     player.btn_delete.click()
 
     assert requested == [[101, 102, 103]]
+    player.deleteLater()
+
+
+def test_step_and_loop_controls(qapp, tmp_path):
+    frames = [(101 + index, _frame(tmp_path / f"frame_{101 + index:04d}.png", "red")) for index in range(3)]
+    player = FrameSequencePlayer()
+    player.set_sequence(frames, fps=24, autoplay=False)
+
+    player.btn_step_forward.click()
+    assert player.current_frame() == 102
+    player.btn_step_back.click()
+    assert player.current_frame() == 101
+    player.btn_loop.setChecked(False)
+    player._show_index(2)
+    player._advance()
+    assert player.current_frame() == 103
+    assert player.is_playing() is False
+    player.deleteLater()
+
+
+def test_missing_frame_uses_missing_icon_and_disables_actions(qapp, tmp_path):
+    existing = _frame(tmp_path / "frame_0101.png", "red")
+    player = FrameSequencePlayer()
+    player.set_sequence([(101, existing), (102, None)], fps=24, autoplay=False)
+
+    player._show_index(1)
+
+    assert player.current_frame() == 102
+    assert player.current_path() is None
+    assert player.btn_approve_selection.isEnabled() is False
+    assert player.btn_delete.isEnabled() is False
     player.deleteLater()

@@ -400,6 +400,12 @@ QFrame#CardFrame {
     border-radius: 12px;
 }
 
+QWidget#FrameTimeline {
+    background-color: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 6px;
+}
+
 QFrame#NodeCard {
     background-color: #0F172A;
     border: 1px solid #334155;

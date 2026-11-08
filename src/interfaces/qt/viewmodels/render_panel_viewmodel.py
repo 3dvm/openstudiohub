@@ -1312,6 +1312,56 @@ class RenderPanelViewModel(BaseViewModel):
             self.project_root, shot, self.settings.task_type
         ).approved_frames()
 
+    def render_comments(self, shot: RenderShot) -> dict:
+        if self.project_root is None:
+            return {"shot": [], "frames": {}}
+        return self.service.render_comments(
+            self.project_root, shot, self.settings.task_type
+        )
+
+    def _comment_author(self) -> str:
+        user = getattr(self.auth_service, "current_user", None)
+        return str(
+            getattr(user, "full_name", "")
+            or getattr(user, "email", "")
+            or getattr(user, "first_name", "")
+            or ""
+        )
+
+    def add_render_comment(
+        self, shot: RenderShot, text: str, frame: int | None = None
+    ) -> dict:
+        if self.project_root is None:
+            return {"shot": [], "frames": {}}
+        return self.service.add_render_comment(
+            self.project_root,
+            shot,
+            text,
+            frame=frame,
+            author=self._comment_author(),
+            task_type=self.settings.task_type,
+        )
+
+    def delete_render_comment(self, shot: RenderShot, comment_id: str) -> dict:
+        if self.project_root is None:
+            return {"shot": [], "frames": {}}
+        return self.service.delete_render_comment(
+            self.project_root, shot, comment_id, task_type=self.settings.task_type
+        )
+
+    def resolve_render_comment(
+        self, shot: RenderShot, comment_id: str, resolved: bool
+    ) -> dict:
+        if self.project_root is None:
+            return {"shot": [], "frames": {}}
+        return self.service.resolve_render_comment(
+            self.project_root,
+            shot,
+            comment_id,
+            resolved,
+            task_type=self.settings.task_type,
+        )
+
     def delete_frame(self, shot: RenderShot, frame: int) -> tuple[bool, str]:
         ok, message, _deleted = self.delete_frames(shot, [frame])
         return ok, message
