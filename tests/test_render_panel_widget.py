@@ -558,3 +558,16 @@ def test_node_card_shows_relaunch_only_for_assigned_failures(qapp):
     card.update_model(no_assignment)
     assert card.btn_relaunch.isHidden() is True
     card.deleteLater()
+
+
+def test_min_ram_spin_round_trips(qapp):
+    from src.domain.render.models import RenderSettings
+
+    widget = _widget()
+    widget.vm.settings = RenderSettings(min_cpu_ram_gb=64.0)
+    widget._apply_settings_to_ui()
+
+    assert widget.spin_min_ram.value() == 64.0
+    widget.spin_min_ram.setValue(32.0)
+    assert widget._settings_from_ui().min_cpu_ram_gb == 32.0
+    widget.deleteLater()

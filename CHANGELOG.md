@@ -25,6 +25,10 @@ releases may include larger UI or workflow changes.
   `simulation_nodes_cache_bake` before rendering. It applies to final renders,
   previews and benchmarks, and defaults to on when a selected shot has no local
   bake newer than its `.blend`.
+- Vast.ai offers can require a **minimum system RAM**. The default is
+  automatic: **60 GB** when geometry-node bakes run on the node, which prevents
+  the 16/31 GB hosts from being killed with exit 137 during heavy `sh040`-style
+  renders. The value is configurable in the Vast.ai plan.
 - Failed node cards have a **Relaunch node** button. It searches a fresh Vast.ai
   offer, keeps the planned GPU profile, offer limits and frame assignment, and
   re-renders only the frames that node had not finished.

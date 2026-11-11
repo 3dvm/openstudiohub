@@ -31,7 +31,10 @@ every shot as a collapsible card; the right side shows the selected shot.
   the local cache state: off when every selected GN cache exists and is newer
   than its `.blend`, on when a cache is missing or stale. The plan warns when
   particle caches are missing; particle caches are uploaded and are not
-  generated remotely.
+  generated remotely. When the node bake is enabled, the offer search requires
+  at least **60 GB of host RAM** by default (configurable as **Min RAM** in the
+  Vast.ai plan); this keeps 16/31 GB hosts from being OOM-killed during heavy
+  baked scenes.
 - **Shot cards:** each card shows the rendered and approved frame counts
   (`R 120/140 · A 80/140`), frame range, quality, measured time and warning
   summary. The header status is one of:

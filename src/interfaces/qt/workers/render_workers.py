@@ -24,6 +24,7 @@ from src.application.services.launch_service import LaunchService
 from src.application.services.render_service import RenderService
 from src.application.services.task_file_resolver import TaskFileResolver
 from src.domain.render.frames import representative_frames as _representative_frames  # noqa: F401
+from src.domain.render.bakes import min_cpu_ram_gb_effective
 from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.qt_worker import ManagedWorker
@@ -52,6 +53,7 @@ class RenderBurstWorker(ManagedWorker):
         run_id: str = "",
         skip_existing: bool = False,
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
         node_indices: list[int] | None = None,
     ) -> None:
         super().__init__()
@@ -66,6 +68,7 @@ class RenderBurstWorker(ManagedWorker):
         self.run_id = str(run_id or "")
         self.skip_existing = bool(skip_existing)
         self.bake_geometry_nodes = bool(bake_geometry_nodes)
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
         self.node_indices = list(node_indices) if node_indices is not None else None
         self.runner = None
 
@@ -82,6 +85,7 @@ class RenderBurstWorker(ManagedWorker):
                 run_id=self.run_id,
                 skip_existing=self.skip_existing,
                 bake_geometry_nodes=self.bake_geometry_nodes,
+                min_cpu_ram_gb=self.min_cpu_ram_gb,
             )
             report = self.runner.run(
                 self.plan.shots,
@@ -193,6 +197,7 @@ class RenderPanelScanWorker(ManagedWorker):
             pending = self.service.pending_shots(
                 self.project_root, selected, task_type=self.settings.task_type
             )
+            min_ram = min_cpu_ram_gb_effective(self.settings, pending)
             offer = None
             balance = 0.0
             price = 0.0
@@ -209,6 +214,7 @@ class RenderPanelScanWorker(ManagedWorker):
                         preferred_region=self.settings.preferred_region,
                         min_inet_down_mbps=self.settings.min_inet_down_mbps,
                         min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                        min_cpu_ram_gb=min_ram,
                     )
                     if self.settings.render_backend == "vast":
                         price = offer.price_per_hour
@@ -241,6 +247,7 @@ class RenderPanelScanWorker(ManagedWorker):
                         preferred_region=self.settings.preferred_region,
                         min_inet_down_mbps=self.settings.min_inet_down_mbps,
                         min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                        min_cpu_ram_gb=min_ram,
                     )
                 except VastOfferError as error:
                     offer_warning = offer_warning or str(error)
@@ -268,11 +275,19 @@ class RenderCandidatesWorker(ManagedWorker):
     candidates_ready = Signal(list)
     error = Signal(str)
 
-    def __init__(self, service: RenderService, count: int, settings: RenderSettings) -> None:
+    def __init__(
+        self,
+        service: RenderService,
+        count: int,
+        settings: RenderSettings,
+        *,
+        min_cpu_ram_gb: float = 0.0,
+    ) -> None:
         super().__init__()
         self.service = service
         self.count = max(1, int(count or 1))
         self.settings = settings
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
 
     def run(self) -> None:
         try:
@@ -283,6 +298,7 @@ class RenderCandidatesWorker(ManagedWorker):
                 preferred_region=self.settings.preferred_region,
                 min_inet_down_mbps=self.settings.min_inet_down_mbps,
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                min_cpu_ram_gb=self.min_cpu_ram_gb,
             )
             self.candidates_ready.emit(offers)
         except Exception as error:  # noqa: BLE001
@@ -296,12 +312,18 @@ class RenderOfferWorker(ManagedWorker):
     error = Signal(str)
 
     def __init__(
-        self, service: RenderService, count: int, settings: RenderSettings
+        self,
+        service: RenderService,
+        count: int,
+        settings: RenderSettings,
+        *,
+        min_cpu_ram_gb: float = 0.0,
     ) -> None:
         super().__init__()
         self.service = service
         self.count = max(1, int(count or 1))
         self.settings = settings
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
 
     def run(self) -> None:
         try:
@@ -312,6 +334,7 @@ class RenderOfferWorker(ManagedWorker):
                 preferred_region=self.settings.preferred_region,
                 min_inet_down_mbps=self.settings.min_inet_down_mbps,
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                min_cpu_ram_gb=self.min_cpu_ram_gb,
             )
             try:
                 balance = self.service.vast_balance()
@@ -339,6 +362,7 @@ class RenderPreviewWorker(ManagedWorker):
         audit=None,
         run_id: str = "",
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
     ) -> None:
         super().__init__()
         self.service = service
@@ -349,6 +373,7 @@ class RenderPreviewWorker(ManagedWorker):
         self.audit = audit
         self.run_id = str(run_id or "")
         self.bake_geometry_nodes = bool(bake_geometry_nodes)
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
         self._cancelled = False
 
     def run(self) -> None:
@@ -366,6 +391,7 @@ class RenderPreviewWorker(ManagedWorker):
                     audit=self.audit,
                     run_id=self.run_id,
                     bake_geometry_nodes=self.bake_geometry_nodes,
+                    min_cpu_ram_gb=self.min_cpu_ram_gb,
                 )
                 successful = set()
                 for shot, image in results:
@@ -855,6 +881,7 @@ class RenderBenchmarkWorker(ManagedWorker):
         audit=None,
         run_id: str = "",
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
     ) -> None:
         super().__init__()
         self.service = service
@@ -865,6 +892,7 @@ class RenderBenchmarkWorker(ManagedWorker):
         self.audit = audit
         self.run_id = str(run_id or "")
         self.bake_geometry_nodes = bool(bake_geometry_nodes)
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
         self.runner = None
 
     def run(self) -> None:
@@ -876,6 +904,7 @@ class RenderBenchmarkWorker(ManagedWorker):
                     preferred_region=self.settings.preferred_region,
                     min_inet_down_mbps=self.settings.min_inet_down_mbps,
                     min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                    min_cpu_ram_gb=self.min_cpu_ram_gb,
                 )
             estimate = self.service.benchmark_estimate(
                 self.project_root,
@@ -910,6 +939,7 @@ class RenderBenchmarkWorker(ManagedWorker):
                 audit=self.audit,
                 run_id=self.run_id,
                 bake_geometry_nodes=self.bake_geometry_nodes,
+                min_cpu_ram_gb=self.min_cpu_ram_gb,
             )
             self.runner = runner
             timings: list[float] = []
@@ -963,6 +993,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
         audit=None,
         run_id: str = "",
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
     ) -> None:
         super().__init__()
         self.service = service
@@ -973,6 +1004,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
         self.audit = audit
         self.run_id = str(run_id or "")
         self.bake_geometry_nodes = bool(bake_geometry_nodes)
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
         self.runner = None
 
     def run(self) -> None:
@@ -984,6 +1016,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
                     preferred_region=self.settings.preferred_region,
                     min_inet_down_mbps=self.settings.min_inet_down_mbps,
                     min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                    min_cpu_ram_gb=self.min_cpu_ram_gb,
                 )
             estimate = self.service.benchmark_batch_estimate(
                 self.project_root,
@@ -1024,6 +1057,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
                 audit=self.audit,
                 run_id=self.run_id,
                 bake_geometry_nodes=self.bake_geometry_nodes,
+                min_cpu_ram_gb=self.min_cpu_ram_gb,
             )
             self.runner = runner
             timings: dict[str, list[float]] = {}

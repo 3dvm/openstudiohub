@@ -1037,3 +1037,27 @@ def test_relaunch_node_starts_one_node_with_the_original_index(
     worker = started[0][1]
     assert worker.kwargs["node_indices"] == [5]
     assert worker.kwargs["skip_existing"] is True
+
+
+def test_min_ram_auto_for_node_bakes(qapp):
+    from dataclasses import replace
+
+    from src.domain.render.bakes import DEFAULT_GN_BAKE_MIN_CPU_RAM_GB
+    from src.domain.render.models import GeometryBakeInfo
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.settings = RenderSettings()
+    stale = replace(
+        _shot(),
+        geometry_bakes=(
+            GeometryBakeInfo(local_cache=True, cache_stale=True),
+        ),
+    )
+
+    assert (
+        viewmodel.min_cpu_ram_gb_effective([stale])
+        == DEFAULT_GN_BAKE_MIN_CPU_RAM_GB
+    )
+
+    viewmodel.settings = RenderSettings(min_cpu_ram_gb=32.0)
+    assert viewmodel.min_cpu_ram_gb_effective([stale]) == 32.0

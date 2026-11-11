@@ -342,6 +342,7 @@ class RenderBurstRunner:
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
         audit: RenderRunAuditLogger | None = None,
         skip_existing: bool = False,
         run_id: str = "",
@@ -363,6 +364,7 @@ class RenderBurstRunner:
         self.min_inet_up_mbps = float(min_inet_up_mbps or 0.0)
         self.bake_particles = bool(bake_particles)
         self.bake_geometry_nodes = bool(bake_geometry_nodes)
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
         self.audit = audit
         self.skip_existing = bool(skip_existing)
         self._output_roots = {
@@ -440,6 +442,7 @@ class RenderBurstRunner:
             preferred_region=self.preferred_region,
             min_inet_down_mbps=self.min_inet_down_mbps,
             min_inet_up_mbps=self.min_inet_up_mbps,
+            min_cpu_ram_gb=self.min_cpu_ram_gb,
         )
         if not offers:
             raise BurstError("No Vast.ai offer is available for this GPU profile.")

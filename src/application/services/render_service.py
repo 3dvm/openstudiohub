@@ -709,6 +709,7 @@ class RenderService:
         preferred_region: str = "prefer_us",
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
+        min_cpu_ram_gb: float = 0.0,
     ) -> list[VastOffer]:
         """Return candidate offers for the requested number of nodes.
 
@@ -723,6 +724,7 @@ class RenderService:
             preferred_region=preferred_region,
             min_inet_down_mbps=min_inet_down_mbps,
             min_inet_up_mbps=min_inet_up_mbps,
+            min_cpu_ram_gb=min_cpu_ram_gb,
         )
 
     def cheapest_offer(
@@ -734,6 +736,7 @@ class RenderService:
         preferred_region: str = "prefer_us",
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
+        min_cpu_ram_gb: float = 0.0,
     ) -> VastOffer:
         offers = self.candidate_offers(
             gpu_profile,
@@ -743,6 +746,7 @@ class RenderService:
             preferred_region=preferred_region,
             min_inet_down_mbps=min_inet_down_mbps,
             min_inet_up_mbps=min_inet_up_mbps,
+            min_cpu_ram_gb=min_cpu_ram_gb,
         )
         if not offers:
             raise RenderServiceError("No Vast.ai offer is available.")
@@ -834,6 +838,7 @@ class RenderService:
         audit=None,
         run_id: str = "",
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
     ) -> tuple[list[tuple[RenderShot, Path]], object]:
         """Render one preview frame per shot on a short-lived Vast node."""
         root = Path(project_root)
@@ -884,6 +889,7 @@ class RenderService:
             audit=audit,
             run_id=run_id,
             bake_geometry_nodes=bake_geometry_nodes,
+            min_cpu_ram_gb=min_cpu_ram_gb,
         )
         report = runner.run(plan.shots, plan, progress=progress)
         results: list[tuple[RenderShot, Path]] = []
@@ -1380,6 +1386,7 @@ class RenderService:
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
         audit: RenderRunAuditLogger | None = None,
         run_id: str = "",
         skip_existing: bool = False,
@@ -1402,6 +1409,7 @@ class RenderService:
             min_inet_up_mbps=min_inet_up_mbps,
             bake_particles=bake_particles,
             bake_geometry_nodes=bake_geometry_nodes,
+            min_cpu_ram_gb=min_cpu_ram_gb,
             audit=audit,
             run_id=run_id,
             skip_existing=skip_existing,
@@ -1421,6 +1429,7 @@ class RenderService:
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
         bake_geometry_nodes: bool = False,
+        min_cpu_ram_gb: float = 0.0,
     ) -> BurstReport:
         runner = self.build_burst_runner(
             project_root,
@@ -1432,6 +1441,7 @@ class RenderService:
             min_inet_up_mbps=min_inet_up_mbps,
             bake_particles=bake_particles,
             bake_geometry_nodes=bake_geometry_nodes,
+            min_cpu_ram_gb=min_cpu_ram_gb,
         )
         return runner.run(plan.shots, plan, progress=progress)
 

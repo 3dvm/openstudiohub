@@ -206,6 +206,7 @@ class RenderSettings:
     preview_frames: tuple[tuple[str, int], ...] = ()
     local_speed_factor: float = 8.0
     bake_geometry_nodes: bool | None = None
+    min_cpu_ram_gb: float = 0.0
     preferred_region: str = "prefer_americas"
     min_inet_down_mbps: float = 100.0
     min_inet_up_mbps: float = 50.0
@@ -240,6 +241,7 @@ class RenderSettings:
             },
             "local_speed_factor": self.local_speed_factor,
             "bake_geometry_nodes": self.bake_geometry_nodes,
+            "min_cpu_ram_gb": self.min_cpu_ram_gb,
             "preferred_region": self.preferred_region,
             "min_inet_down_mbps": self.min_inet_down_mbps,
             "min_inet_up_mbps": self.min_inet_up_mbps,
@@ -279,6 +281,7 @@ class RenderSettings:
                 if data.get("bake_geometry_nodes") is not None
                 else None
             ),
+            min_cpu_ram_gb=float(data.get("min_cpu_ram_gb") or 0.0),
             preferred_region=str(data.get("preferred_region") or "prefer_americas"),
             min_inet_down_mbps=float(data.get("min_inet_down_mbps") or 100.0),
             min_inet_up_mbps=float(data.get("min_inet_up_mbps") or 50.0),

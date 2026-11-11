@@ -26,6 +26,10 @@ from PySide6.QtCore import Signal
 from src.application.services.launch_service import LaunchService
 from src.application.services.render_service import RenderService
 from src.application.services.task_file_sync_service import TaskFileSyncService
+from src.domain.render.bakes import (
+    bake_geometry_nodes_effective as _bake_effective,
+    min_cpu_ram_gb_effective as _min_ram_effective,
+)
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.staging import bake_cache_names
@@ -66,6 +70,7 @@ class NodeLaunchConfig:
     min_inet_up_mbps: float = 0.0
     task_type: str = "render"
     bake_geometry_nodes: bool = False
+    min_cpu_ram_gb: float = 0.0
 
 
 @dataclass
@@ -412,14 +417,14 @@ class RenderPanelViewModel(BaseViewModel):
     def bake_geometry_nodes_effective(
         self, shots: list[RenderShot] | None = None
     ) -> bool:
-        if self.settings.bake_geometry_nodes is not None:
-            return bool(self.settings.bake_geometry_nodes)
         targets = list(shots if shots is not None else self.selected_shots)
-        for shot in targets:
-            for bake in shot.geometry_bakes:
-                if not bake.local_cache or bake.cache_stale:
-                    return True
-        return False
+        return _bake_effective(self.settings, targets)
+
+    def min_cpu_ram_gb_effective(
+        self, shots: list[RenderShot] | None = None
+    ) -> float:
+        targets = list(shots if shots is not None else self.selected_shots)
+        return _min_ram_effective(self.settings, targets)
 
     def update_settings(self, settings: RenderSettings) -> None:
         self.settings = settings
@@ -470,7 +475,14 @@ class RenderPanelViewModel(BaseViewModel):
         if self.workers.is_running("render_offer"):
             return False
         count = max(1, int(self.plan.required_nodes or 1)) if self.plan else 1
-        worker = RenderOfferWorker(self.service, count, self.settings)
+        worker = RenderOfferWorker(
+            self.service,
+            count,
+            self.settings,
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective(
+                list(self.plan.shots) if self.plan is not None else None
+            ),
+        )
         worker.offers_ready.connect(self._on_offers_ready)
         worker.error.connect(self._on_offer_error)
         self.report_status("Searching for a Vast.ai offer...", "yellow")
@@ -849,6 +861,7 @@ class RenderPanelViewModel(BaseViewModel):
             self.service,
             self.plan.required_nodes,
             self.settings,
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective(list(self.plan.shots)),
         )
         worker.candidates_ready.connect(self._on_candidates_ready)
         worker.error.connect(self.scan_error)
@@ -922,6 +935,7 @@ class RenderPanelViewModel(BaseViewModel):
             min_inet_up_mbps=settings.min_inet_up_mbps,
             task_type=settings.task_type,
             bake_geometry_nodes=bool(settings.bake_geometry_nodes),
+            min_cpu_ram_gb=float(settings.min_cpu_ram_gb or 0.0),
         )
 
     def _create_run_cards(self, run: RenderRunState) -> None:
@@ -1000,6 +1014,17 @@ class RenderPanelViewModel(BaseViewModel):
                     "Geometry-node caches will be baked on each node before "
                     "rendering; the first frame waits for the bake."
                 )
+                min_ram = self.min_cpu_ram_gb_effective(pending)
+                if min_ram > 0:
+                    source = (
+                        "configured"
+                        if self.settings.min_cpu_ram_gb > 0
+                        else "automatic"
+                    )
+                    warnings.append(
+                        f"Vast.ai hosts need at least {min_ram:.0f} GB of "
+                        f"system RAM for node-side bakes ({source})."
+                    )
             else:
                 warnings.append(
                     "Geometry-node caches will be uploaded to every node. "
@@ -1076,6 +1101,7 @@ class RenderPanelViewModel(BaseViewModel):
             audit=self.audit,
             run_id=self._active_run_id,
             bake_geometry_nodes=self.bake_geometry_nodes_effective(targets),
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective(targets),
         )
         worker.preview_ready.connect(self._on_preview_ready)
         worker.preview_progress.connect(self.preview_progress)
@@ -1244,6 +1270,7 @@ class RenderPanelViewModel(BaseViewModel):
             audit=self.audit,
             run_id=run_id,
             bake_geometry_nodes=self.bake_geometry_nodes_effective([shot]),
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective([shot]),
         )
         worker.benchmark_progress.connect(self.benchmark_progress)
         worker.benchmark_progress.connect(self._on_burst_progress_status)
@@ -1354,6 +1381,9 @@ class RenderPanelViewModel(BaseViewModel):
             audit=self.audit,
             run_id=run_id,
             bake_geometry_nodes=self.bake_geometry_nodes_effective(
+                [item for item, _selection in estimate.shots]
+            ),
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective(
                 [item for item, _selection in estimate.shots]
             ),
         )
@@ -1481,6 +1511,10 @@ class RenderPanelViewModel(BaseViewModel):
             return None
         launch = card.launch or self._launch_config(self.settings)
         bake_geometry_nodes = self.bake_geometry_nodes_effective(shots)
+        launch = replace(
+            launch,
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective(shots),
+        )
         price = float(card.price_per_hour or 0.0)
         plan = self.service.plan(
             self.project_root,
@@ -1580,6 +1614,7 @@ class RenderPanelViewModel(BaseViewModel):
             run_id=run_id,
             skip_existing=True,
             bake_geometry_nodes=relaunch.bake_geometry_nodes,
+            min_cpu_ram_gb=relaunch.launch.min_cpu_ram_gb,
             node_indices=[int(card.node)],
         )
         worker.burst_progress.connect(self.burst_progress)
@@ -1661,6 +1696,7 @@ class RenderPanelViewModel(BaseViewModel):
                 bake_geometry_nodes=self.bake_geometry_nodes_effective(
                     list(plan.shots)
                 ),
+                min_cpu_ram_gb=self.min_cpu_ram_gb_effective(list(plan.shots)),
             ),
         )
         self._start_audit(run_id, backend, plan)
@@ -1705,6 +1741,7 @@ class RenderPanelViewModel(BaseViewModel):
             run_id=run_id,
             skip_existing=retry,
             bake_geometry_nodes=self.bake_geometry_nodes_effective(list(plan.shots)),
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective(list(plan.shots)),
         )
         worker.burst_progress.connect(self.burst_progress)
         worker.report_ready.connect(self._handle_burst_finished)

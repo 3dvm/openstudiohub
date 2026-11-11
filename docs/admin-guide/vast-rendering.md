@@ -69,8 +69,10 @@ For each node:
    With **Bake geometry nodes on the node** enabled, the geometry-node bake
    caches of the planned shots are excluded and the node bakes them before the
    first frame. The upload drops from the cache size to the production assets.
-   The transfer uses `--partial`, retries once and scales its timeout with the
-   upload size.
+   The offer search then requires at least 60 GB of host RAM by default (the
+   **Min RAM** field can override it), because 16/31 GB hosts are killed while
+   rendering heavy baked scenes. The transfer uses `--partial`, retries once
+   and scales its timeout with the upload size.
 6. Render a contiguous frame chunk with Cycles on GPU (CUDA; OptiX is also
    available). EEVEE is wrapped in `xvfb-run`.
 7. Sync the frames to

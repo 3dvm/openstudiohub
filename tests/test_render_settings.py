@@ -149,3 +149,13 @@ def test_bake_geometry_nodes_defaults_to_auto_and_round_trips(tmp_path):
     disabled = RenderSettings(bake_geometry_nodes=False)
     store.save(disabled)
     assert RenderSettingsStore(store.path).load().bake_geometry_nodes is False
+
+
+def test_min_cpu_ram_round_trips(tmp_path):
+    store = RenderSettingsStore(tmp_path / "render_settings.json")
+    settings = RenderSettings(min_cpu_ram_gb=64.0)
+    store.save(settings)
+
+    loaded = RenderSettingsStore(store.path).load()
+
+    assert loaded.min_cpu_ram_gb == 64.0

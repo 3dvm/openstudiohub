@@ -209,6 +209,7 @@ class VastProvider:
         preferred_region: str = "prefer_americas",
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
+        min_cpu_ram_gb: float = 0.0,
     ) -> list[VastOffer]:
         profile = GPU_PROFILES.get(gpu_profile)
         if profile is None:
@@ -238,6 +239,7 @@ class VastProvider:
             and (max_price_per_hour <= 0 or offer.price_per_hour <= max_price_per_hour)
             and (min_inet_down_mbps <= 0 or offer.inet_down_mbps >= min_inet_down_mbps)
             and (min_inet_up_mbps <= 0 or offer.inet_up_mbps >= min_inet_up_mbps)
+            and (min_cpu_ram_gb <= 0 or offer.cpu_ram_gb >= min_cpu_ram_gb)
             and (not us_only or _is_us(offer.geolocation))
         ]
         filtered.sort(
@@ -257,8 +259,8 @@ class VastProvider:
                     f"({cheapest.inet_down_mbps:.0f}/{cheapest.inet_up_mbps:.0f} Mbps)."
                 )
             raise VastOfferError(
-                f"No {profile.label} offer satisfies the price/reliability/bandwidth "
-                f"limits.{detail}"
+                f"No {profile.label} offer satisfies the price/reliability/RAM/"
+                f"bandwidth limits.{detail}"
             )
         return filtered[: max(1, int(count))]
 

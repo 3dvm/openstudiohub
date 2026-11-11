@@ -79,9 +79,11 @@ waiting for Blender. Use **Re-scan** when files or task assignments changed.
 Geometry-node bakes can be generated on the render nodes instead of uploading
 them. The **Bake geometry nodes on the node** checkbox defaults to on when a
 selected cache is missing or older than its `.blend`. The plan warns about
-missing particle caches; particle systems are not baked remotely. A failed
-node card offers **Relaunch node**, which finds a new offer with the same
-planned configuration and retries its frames.
+missing particle caches; particle systems are not baked remotely. Vast.ai
+offers must have at least **60 GB of system RAM** by default when node-side
+bakes are enabled; **Min RAM** in the Vast.ai plan overrides it (0 = automatic).
+A failed node card offers **Relaunch node**, which finds a new offer with the
+same planned configuration and retries its frames.
 
 ## Worked example: p0005
 

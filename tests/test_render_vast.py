@@ -149,3 +149,41 @@ def test_choose_offers_prefers_us_and_filters_bandwidth(tmp_path):
         "rtx_3090", count=2, preferred_region="us", min_inet_down_mbps=100
     )
     assert [offer.id for offer in us_only] == [1]
+
+
+def test_choose_offers_filters_system_ram(tmp_path):
+    offers = [
+        {
+            "id": 1,
+            "gpu_name": "RTX 3090",
+            "gpu_total_ram": 24576,
+            "cpu_ram": 16000,
+            "disk_space": 100,
+            "cuda_max_good": "13.0",
+            "reliability2": 0.99,
+            "dph_total": 0.10,
+            "inet_down": 200,
+            "inet_up": 200,
+        },
+        {
+            "id": 2,
+            "gpu_name": "RTX 3090",
+            "gpu_total_ram": 24576,
+            "cpu_ram": 65536,
+            "disk_space": 100,
+            "cuda_max_good": "13.0",
+            "reliability2": 0.99,
+            "dph_total": 0.15,
+            "inet_down": 200,
+            "inet_up": 200,
+        },
+    ]
+    runner = FakeRunner([(lambda cmd: "search" in cmd and "offers" in cmd, offers, 0)])
+    provider = VastProvider(_cli(tmp_path), runner=runner)
+
+    selected = provider.choose_offers(
+        "rtx_3090", count=2, max_price_per_hour=0.2, min_cpu_ram_gb=60
+    )
+
+    assert [offer.id for offer in selected] == [2]
+    assert selected[0].cpu_ram_gb == 64.0

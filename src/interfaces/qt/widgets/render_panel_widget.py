@@ -407,11 +407,24 @@ class RenderPanelWidget(QFrame):
         self.spin_min_up.setRange(0.0, 10000.0)
         self.spin_min_up.setSuffix(self.tr(" Mbps up"))
         self.spin_min_up.setMinimumWidth(120)
+        self.spin_min_ram = QDoubleSpinBox()
+        self.spin_min_ram.setRange(0.0, 1024.0)
+        self.spin_min_ram.setDecimals(0)
+        self.spin_min_ram.setSuffix(self.tr(" GB"))
+        self.spin_min_ram.setSpecialValueText(self.tr("Auto"))
+        self.spin_min_ram.setToolTip(
+            self.tr(
+                "Minimum system RAM per Vast.ai host. 0 = automatic: 60 GB "
+                "when geometry nodes are baked on the node."
+            )
+        )
+        self.spin_min_ram.setMinimumWidth(100)
         network_row.addWidget(self.combo_region)
         network_row.addWidget(self.spin_min_down)
         network_row.addWidget(self.spin_min_up)
+        network_row.addWidget(self.spin_min_ram)
         network_row.addStretch()
-        vast_form.addRow(self.tr("Network"), network_row)
+        vast_form.addRow(self.tr("Network / RAM"), network_row)
         self.chk_bake_geometry_nodes = QCheckBox(
             self.tr("Bake geometry nodes on the node (skip cache upload)")
         )
@@ -755,6 +768,7 @@ class RenderPanelWidget(QFrame):
             preferred_region=self.combo_region.currentData() or "prefer_americas",
             min_inet_down_mbps=float(self.spin_min_down.value()),
             min_inet_up_mbps=float(self.spin_min_up.value()),
+            min_cpu_ram_gb=float(self.spin_min_ram.value()),
         )
 
     def _apply_settings_to_ui(self) -> None:
@@ -807,6 +821,7 @@ class RenderPanelWidget(QFrame):
             self.combo_region.setCurrentIndex(max(0, region_index))
             self.spin_min_down.setValue(float(settings.min_inet_down_mbps))
             self.spin_min_up.setValue(float(settings.min_inet_up_mbps))
+            self.spin_min_ram.setValue(float(settings.min_cpu_ram_gb or 0.0))
             self.chk_video.setChecked(bool(settings.video_enabled))
             self.chk_bake_geometry_nodes.blockSignals(True)
             if settings.bake_geometry_nodes is None:
