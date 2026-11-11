@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.interfaces.qt.ui_format import format_rate
+
 _STATUS_COLORS = {
     "not_ready": "#EF4444",
     "check_setup": "#F59E0B",
@@ -181,7 +183,7 @@ class ShotReviewCard(QFrame):
             f"{model.missing} missing"
         )
         measured = (
-            f"{model.measured_seconds:.1f} s/frame"
+            f"{format_rate(model.measured_seconds)}/frame"
             if model.measured_seconds is not None
             else "unmeasured"
         )

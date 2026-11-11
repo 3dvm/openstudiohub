@@ -47,7 +47,8 @@ every shot as a collapsible card; the right side shows the selected shot.
   PNG by
   default. Preview can run locally (default) or on a Vast node. The preview is
   the quickest way to catch a missing view layer or a broken compositor before
-  the full render.
+  the full render. Each shot has its own **Preview frame** field; without an
+  override the panel uses the configured mode (middle by default).
 - **Plan and node cards:** approved frames are excluded from the plan; frames
   that are not approved yet count as pending work. The panel shows pending
   frames, GPU-hours, nodes, ETA, cost, confidence and warnings. Before any
@@ -58,15 +59,23 @@ every shot as a collapsible card; the right side shows the selected shot.
   syncing, completed, failed or destroyed. Each active card shows its current
   shot, a progress bar, rendered/expected frames, measured seconds per frame and
   an ETA calculated from the real frame times. At the end, the card exposes
-  buttons that open its Hub log, summary and raw Blender log directly.
+  buttons that open its Hub log, summary and raw Blender log directly. ETAs,
+  wall-time estimates, setup time and per-frame rates use adaptive units
+  (seconds, minutes, hours, days, weeks, months and years).
+- **Scheduling:** the plan uses one instance when the measured work fits the
+  target, and packs whole shots per node. A shot is only split across nodes when
+  it cannot fit one instance. Each run locks only the shots it renders; other
+  shots can start on new instances while a render is active.
 - **Frame ranges:** the sequence player has **In point** / **Out point** and
   **Clear range** controls. **Approve selection** and **Delete selection** act
   on the selected frame range, or on the current frame when no range is set.
 - **Final render:** Vast.ai on-demand or local headless, one project at a time.
-  The final image format follows Blender's still-image formats (PNG by default,
-  plus JPEG, TIFF, OpenEXR and the other Blender image formats) with configurable
-  color mode and color depth. Previews are always PNG. GPU profiles: RTX 3070,
-  3080, 4070, 3090, 4090 and A6000.
+  Changing the **Final backend** recalculates the plan immediately; switching
+  to Vast refreshes the cheapest offer and the account balance in the
+  background. The final image format follows Blender's still-image formats (PNG
+  by default, plus JPEG, TIFF, OpenEXR and the other Blender image formats) with
+  configurable color mode and color depth. Previews are always PNG. GPU
+  profiles: RTX 3070, 3080, 4070, 3090, 4090 and A6000.
 - **Format proxies:** non-PNG final frames also write a PNG proxy in
   `.proxies/`. The in-app sequence player, frame review and preview/review
   videos use those proxies, while delivery frames keep the selected format.
@@ -76,14 +85,20 @@ every shot as a collapsible card; the right side shows the selected shot.
   frames it shows an empty state with the available render actions.
 - **Final sequence player:** the panel replays the rendered sequence with a
   timeline that marks approved frames (green), rendered frames awaiting review
-  (blue), missing frames (red) and the In/Out selection (orange). Controls below
-  the timeline provide play/pause, previous/next frame, loop on/off, icon-based
+  (blue), missing frames (red) and the In/Out selection (orange band with
+  boundary markers and a color legend). Click or drag the timeline to seek; the
+  separate slider was removed because it duplicated the timeline. Controls below
+  provide play/pause, previous/next frame, loop on/off, icon-based
   In/Out, clear range, approve, unapprove and delete. Missing frames show the
   Lucide `image-off` icon and the current frame has an overlay badge with its
-  state. The player can enter fullscreen with F11 or the maximize button and
-  keeps its state when restored. Approved frames are protected from deletion and
-  future renders.
-- **Shot and frame comments:** the player keeps its local comments panel. Shot
+  state. The player can enter fullscreen with F11 or the maximize button,
+  rescales the current frame to the available view, and keeps its state when
+  restored. Approved frames are protected from deletion and
+  future renders. Approving or unapproving a selection refreshes the timeline,
+  the current-frame badge, the approval buttons and the shot card counts
+  immediately.
+- **Shot and frame comments:** the player keeps its local comments panel, which
+  can be shown or hidden with the comments toggle in the player controls. Shot
   comments apply to the whole shot; frame comments are attached to the current
   frame and appear as markers on the timeline. They are stored in
   `.render_comments.json` next to the rendered frames. Kitsu upload of frame
@@ -165,6 +180,11 @@ changed in the panel.
 - **Vast.ai:** the Hub rents the on-demand instances, installs the project's
   exact Blender, stages the production folder, renders contiguous frame chunks
   and syncs the frames back. Every instance is destroyed in a `finally` block.
+  Only the production folder (`topography.vfs_svn`) is uploaded; briefs and the
+  shared folder are not required to render. Before the upload starts the Hub
+  reports how many files and how many bytes will be transferred, and the node
+  card shows the live upload percentage; every `rsync` excludes `.svn`,
+  `.blend1/2`, crash logs and `__pycache__`.
   Each node is audited independently, so a failure on one node never hides the
   state of another. The node cards update live from the burst progress events.
 - When a run is partial, **Retry missing frames** renders only the frames that
@@ -182,6 +202,17 @@ changed in the panel.
   and writes the same path. This is useful for simple shots or when there is
   enough time. The plan shows an estimated local slowdown factor
   (`local_speed_factor`, default 8× the RTX 3090 reference).
+- **Benchmarks and references:** **Benchmark** measures up to three
+  representative frames of the shot's *scene* range (read from the `.blend` by
+  the probe). The confirmation dialog names the exact `.blend` file, the frames
+  that will be measured, the scene range, the node and its price, and the
+  production folders with their size before anything is rented; a benchmark run
+  also shows its own node card. Final-quality frames are saved in the shot's
+  render folder; approved frames are never touched, and a fully approved shot is
+  measured in `.benchmarks/` only. Each final render also stores its per-shot
+  median as a reference. Remote and local references are kept separately
+  (`rtx_*` and `local` keys). When a benchmark already exists, the panel asks
+  before replacing it.
 
 The default price cap is **$0.13/h**, with a preference for Americas offers
 (US/Canada/Mexico/Brazil) and a minimum bandwidth (100 Mbps down / 50 Mbps up by

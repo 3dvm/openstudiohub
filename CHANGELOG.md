@@ -9,6 +9,20 @@ releases may include larger UI or workflow changes.
 
 ### Added
 
+- Each shot can define its own **Preview frame**; without an override the
+  configured mode (middle by default) is used.
+- **Benchmark** renders representative pending frames at final quality and
+  saves them in the shot's render folder. Approved frames are never touched,
+  and a fully approved shot is measured in `.benchmarks/` only.
+- Vast runs now announce how many files and bytes the node will receive, and
+  the node card shows live upload progress. Only the production folder
+  (`vfs_svn`) is staged; briefs and the shared folder are no longer uploaded.
+- Benchmarking shows its own node card and a confirmation dialog that names the
+  exact `.blend`, the frames measured from the shot's scene range, the node and
+  its price, and the production folder size before anything is rented.
+- Final renders store their per-shot median as a render reference. Remote and
+  local references are kept separately, and an existing benchmark asks for
+  confirmation before being replaced.
 - Render runs now keep a local audit trail:
   - `~/.openstudio/state/render_runs.jsonl` records stages, failures and
     instance destruction reasons;
@@ -153,6 +167,10 @@ releases may include larger UI or workflow changes.
 
 ### Changed
 
+- `Benchmark selected` and every shot card's benchmark button share one
+  confirmation flow, so both inspect the same shot, `.blend` file and frames.
+- Benchmark frame selection is shared by the dialog and the worker, and always
+  derives from the scene range read from the `.blend` (never from Kitsu).
 - OpenStudio Toolkit actions are now separate operations: `Audit Scene`,
   `Fix Out-of-Bounds Textures`, `Purge Orphans`, `Lock File` and `Save &
   Commit`. `Lock File` lets an artist acquire the VCS write lock for a
@@ -192,10 +210,51 @@ releases may include larger UI or workflow changes.
   and project preferences) are collapsible.
 - The render scan no longer fails with `name 'bake_particles' is not defined`;
   `RenderService.cheapest_offer()` had a stray `bake_particles` argument.
+- Vast.ai bursts only render unapproved frames. A normal start previously
+  re-rendered the full frame range of every planned shot and overwrote approved
+  output, while the plan counted only the pending frames.
+- Vast node cards report live frame progress and reach a final `Completed` or
+  `Failed` state per node. The render script now flushes the `OSFRAME`,
+  `OSDEVICES` and `OSBAKE` markers, and destroying an instance no longer
+  replaces the node result with `Destroyed`.
+- Node 0 audit files are named `node-0.*` instead of `node-unknown.*`.
+- The shared render status reports the total assigned frame count, so the
+  progress bar no longer exceeds 100%.
+- Local renders flush their `OSFRAME`/`OSDEVICES` markers, so local preview and
+  render progress updates live.
+- The burst packs whole shots per node and keeps one instance when the measured
+  work fits the target; a shot is only split when it cannot fit one instance.
+- Render runs can run concurrently: each run locks only its own shots, other
+  shots can start on new instances, and benchmarks are allowed on unlocked
+  shots. Node cards are grouped per run and the shared status aggregates every
+  active run.
+- The preview confirmation uses the selected **Preview backend** without
+  requiring a scan, and the local message no longer mentions Vast.ai. The final
+  and preview backend labels are now explicit.
+- Changing the **Final backend** now updates and recalculates the plan
+  immediately. Switching to Vast refreshes the offer and balance in the
+  background, and Start waits for that offer before renting a node.
+- Approving or unapproving frames now refreshes the frame badge, timeline
+  colors, approval buttons and shot card counts immediately, from both the
+  sequence player and the shot card actions.
+- The sequence timeline now draws the selection as an orange band with In/Out
+  markers and a color legend; the redundant slider was removed and seeking is
+  done directly on the timeline. A lone In/Out point is shown as a marker.
+- The fullscreen sequence player now remains visible after being reparented
+  into its fullscreen window, is raised and activated, and rescales the current
+  frame when the view size changes.
+- The sequence player comments panel and the task comment drawers can now be
+  shown or hidden with a header toggle; the task drawer reopens the last task.
+- Checked checkboxes now draw a white Lucide check over the orange indicator,
+  and radio buttons use a round indicator with a white center dot.
+- ETAs, wall-time estimates, setup time, target wall time, per-frame progress
+  and benchmark/per-shot rates now use one adaptive duration format (seconds,
+  minutes, hours, days, weeks, months and years, up to three units). GPU-hours
+  remain unchanged.
 
 ### Tests
 
-- Full suite: 751 passing tests.
+- Full suite: 871 passing tests.
 
 ## [0.7.5] - 2026-10-25
 

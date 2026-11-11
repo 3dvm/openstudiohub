@@ -161,3 +161,15 @@ def test_pm_lead_profile_is_labelled_editor(qapp):
 
     assert bar.btn_profile.text() == "Editor"
     bar.deleteLater()
+
+
+def test_checked_indicators_use_lucide_icons_and_assets_exist():
+    checkbox_rule = QSS.split("QCheckBox::indicator:checked", 1)[1].split("}", 1)[0]
+    radio_rule = QSS.split("QRadioButton::indicator:checked", 1)[1].split("}", 1)[0]
+    assert "image: url(assets/icons/check-white.svg)" in checkbox_rule
+    assert "image: url(assets/icons/radio-dot-white.svg)" in radio_rule
+    assert re.search(r"QRadioButton::indicator \{\s*border-radius: 7px;", QSS)
+
+    for asset in re.findall(r"url\(([^)]+)\)", QSS):
+        path = Path(asset.strip().strip("'\""))
+        assert path.is_file(), f"Missing QSS asset: {path}"

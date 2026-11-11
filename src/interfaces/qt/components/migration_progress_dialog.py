@@ -22,6 +22,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from src.interfaces.qt.ui_format import format_duration
+
 
 class MigrationProgressDialog(QDialog):
     cancel_requested = Signal()
@@ -103,7 +105,7 @@ class MigrationProgressDialog(QDialog):
         eta = detail.get("eta")
         elapsed = detail.get("elapsed") or 0.0
 
-        eta_text = self._format_seconds(eta) if eta is not None else "--:--"
+        eta_text = self._format_seconds(eta)
         self.lbl_stats.setText(
             f"rev {revision}/{total or '?'}   {self._human_bytes(speed)}/s   "
             f"ETA {eta_text}   elapsed {self._format_seconds(elapsed)}"
@@ -146,11 +148,7 @@ class MigrationProgressDialog(QDialog):
 
     @staticmethod
     def _format_seconds(seconds) -> str:
-        try:
-            total = int(seconds)
-        except (TypeError, ValueError):
-            return "--:--"
-        return f"{total // 60:02d}:{total % 60:02d}"
+        return format_duration(seconds, placeholder="--:--")
 
     @staticmethod
     def _human_bytes(value: float) -> str:

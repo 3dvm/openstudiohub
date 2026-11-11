@@ -40,3 +40,11 @@ def test_blender_output_has_its_own_file(tmp_path):
 
     assert path.name == "node-1-blender-sh010.log"
     assert "OSFRAME" in path.read_text(encoding="utf-8")
+
+
+def test_node_zero_uses_its_real_label(tmp_path):
+    logger = RenderRunAuditLogger(tmp_path / "render_runs.jsonl")
+
+    assert logger.node_log_path("r4", 0).name == "node-0.log"
+    summary = logger.node_summary("r4", 0, {"node": 0, "ok": True})
+    assert summary is not None and summary.name == "node-0.json"

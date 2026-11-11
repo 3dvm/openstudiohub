@@ -74,6 +74,10 @@ class WorkerManager(QObject):
     def get(self, key: str) -> Optional[QThread]:
         return self._workers.get(key)
 
+    def keys(self, prefix: str = "") -> List[str]:
+        """Return the registered worker keys, optionally filtered by prefix."""
+        return [key for key in list(self._workers) if key.startswith(prefix)]
+
     def is_running(self, key: str) -> bool:
         worker = self._workers.get(key)
         return worker is not None and self._is_running(worker)

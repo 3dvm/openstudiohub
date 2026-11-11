@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import traceback
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -43,6 +44,7 @@ from src.interfaces.qt.components.frame_sequence_player import FrameSequencePlay
 from src.interfaces.qt.components.preview_poster import PreviewPoster
 from src.interfaces.qt.components.render_node_card import RenderNodeCard
 from src.interfaces.qt.components.shot_review_card import ShotReviewCard
+from src.interfaces.qt.ui_format import format_bytes, format_duration, format_rate
 from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderPanelViewModel
 
 
@@ -64,7 +66,11 @@ class RenderPanelWidget(QFrame):
         self._plan: RenderPlan | None = None
         self._selected_shot: RenderShot | None = None
         self._current_preview = ""
-        self._node_card_widgets: dict[int, RenderNodeCard] = {}
+        self._player_shot_path = ""
+        self._syncing_preview_frame = False
+        self._preview_active = False
+        self._benchmark_active = False
+        self._node_card_widgets: dict[str, RenderNodeCard] = {}
         self._shot_cards: dict[str, ShotReviewCard] = {}
         self._shot_progress_timer = QTimer(self)
         self._shot_progress_timer.setInterval(2000)
@@ -190,6 +196,18 @@ class RenderPanelWidget(QFrame):
         self.player = FrameSequencePlayer()
         self.preview_stack.addWidget(self.player)
         preview_frame.add_widget(self.preview_stack)
+        preview_frame_row = QHBoxLayout()
+        preview_frame_row.addWidget(QLabel(self.tr("Preview frame")))
+        self.spin_preview_frame = QSpinBox()
+        self.spin_preview_frame.setRange(1, 1)
+        self.spin_preview_frame.setEnabled(False)
+        self.spin_preview_frame.valueChanged.connect(self._on_preview_frame_changed)
+        preview_frame_row.addWidget(self.spin_preview_frame)
+        self.lbl_preview_frame_range = QLabel("")
+        self.lbl_preview_frame_range.setObjectName("MutedLabel")
+        preview_frame_row.addWidget(self.lbl_preview_frame_range)
+        preview_frame_row.addStretch()
+        preview_frame.add_layout(preview_frame_row)
         preview_buttons = QHBoxLayout()
         self.btn_preview_selected = QPushButton(self.tr("Preview selected"))
         self.btn_preview_selected.setObjectName("SecondaryButton")
@@ -273,7 +291,7 @@ class RenderPanelWidget(QFrame):
         self.combo_backend = QComboBox()
         self.combo_backend.addItem(self.tr("Vast.ai (on-demand)"), "vast")
         self.combo_backend.addItem(self.tr("Local headless"), "local")
-        final_form.addRow(self.tr("Backend"), self.combo_backend)
+        final_form.addRow(self.tr("Final backend"), self.combo_backend)
 
         self.combo_samples = QComboBox()
         self.combo_samples.addItems(["128", "256"])
@@ -310,7 +328,7 @@ class RenderPanelWidget(QFrame):
         self.combo_preview_backend = QComboBox()
         self.combo_preview_backend.addItem(self.tr("Local"), "local")
         self.combo_preview_backend.addItem(self.tr("Vast.ai"), "vast")
-        preview_form.addRow(self.tr("Backend"), self.combo_preview_backend)
+        preview_form.addRow(self.tr("Preview backend"), self.combo_preview_backend)
 
         self.combo_preview_res = QComboBox()
         self.combo_preview_res.addItem("25%", 25)
@@ -330,18 +348,22 @@ class RenderPanelWidget(QFrame):
         vast_form.setVerticalSpacing(6)
 
         self.combo_target = QComboBox()
-        self.combo_target.addItem(self.tr("1 hour"), 1.0)
-        self.combo_target.addItem(self.tr("2 hours"), 2.0)
+        self.combo_target.addItem(format_duration(3600), 1.0)
+        self.combo_target.addItem(format_duration(7200), 2.0)
         self.combo_target.addItem(self.tr("Custom"), 0.0)
         self.spin_hours = QDoubleSpinBox()
         self.spin_hours.setRange(0.25, 48.0)
         self.spin_hours.setSingleStep(0.25)
         self.spin_hours.setSuffix(self.tr(" h"))
         self.spin_hours.setMinimumWidth(90)
+        self.spin_hours.valueChanged.connect(self._update_target_duration)
+        self.lbl_target_duration = QLabel("")
+        self.lbl_target_duration.setObjectName("MutedLabel")
         self.combo_target.setMinimumWidth(120)
         target_row = QHBoxLayout()
         target_row.addWidget(self.combo_target, 2)
         target_row.addWidget(self.spin_hours, 1)
+        target_row.addWidget(self.lbl_target_duration)
         vast_form.addRow(self.tr("Target wall time"), target_row)
 
         self.combo_gpu = QComboBox()
@@ -531,7 +553,7 @@ class RenderPanelWidget(QFrame):
         self.player.comment_resolved.connect(self._on_comment_resolved)
         self.player.comment_deleted.connect(self._on_comment_deleted)
         self.combo_target.currentIndexChanged.connect(self._on_target_changed)
-        self.combo_backend.currentIndexChanged.connect(self._sync_backend_sections)
+        self.combo_backend.currentIndexChanged.connect(self._on_final_backend_changed)
         self.combo_preview_backend.currentIndexChanged.connect(self._sync_backend_sections)
         projects_loaded = getattr(self.project_list_vm, "projects_loaded", None)
         if projects_loaded is not None:
@@ -563,6 +585,10 @@ class RenderPanelWidget(QFrame):
         self.vm.kitsu_status_error.connect(self._on_error)
         self.vm.kitsu_upload_finished.connect(self._on_kitsu_upload_finished)
         self.vm.busy_changed.connect(self._on_busy_changed)
+        self.vm.render_runs_changed.connect(self._on_render_runs_changed)
+        self.vm.measurement_conflicts.connect(self._on_measurement_conflicts)
+        self.vm.preview_running.connect(self._on_preview_running)
+        self.vm.benchmark_running.connect(self._on_benchmark_running)
 
     def _load_projects(self) -> None:
         projects = getattr(self.project_list_vm, "_projects", None) or []
@@ -635,6 +661,13 @@ class RenderPanelWidget(QFrame):
         self.spin_hours.setEnabled(custom)
         if not custom:
             self.spin_hours.setValue(float(self.combo_target.currentData()))
+        self._update_target_duration()
+
+    def _update_target_duration(self, _value: float = 0.0) -> None:
+        if hasattr(self, "lbl_target_duration"):
+            self.lbl_target_duration.setText(
+                format_duration(self.spin_hours.value() * 3600)
+            )
 
     def _on_image_format_changed(self, _index: int = 0) -> None:
         fmt = image_format(self.combo_image_format.currentData() or "PNG")
@@ -663,6 +696,12 @@ class RenderPanelWidget(QFrame):
         final_vast = self.combo_backend.currentData() == "vast"
         preview_vast = self.combo_preview_backend.currentData() == "vast"
         self.vast_section.setVisible(final_vast or preview_vast)
+
+    def _on_final_backend_changed(self, index: int = 0) -> None:
+        self._sync_backend_sections(index)
+        backend = self.combo_backend.currentData()
+        if backend:
+            self.vm.set_render_backend(str(backend), self._settings_from_ui())
 
     def _settings_from_ui(self) -> RenderSettings:
         base = replace(self.vm.settings)
@@ -779,6 +818,7 @@ class RenderPanelWidget(QFrame):
                 widget.blockSignals(False)
         self._on_target_changed()
         self._sync_backend_sections()
+        self._sync_preview_frame_control()
 
     def _scan(self) -> None:
         settings = self._settings_from_ui()
@@ -814,7 +854,7 @@ class RenderPanelWidget(QFrame):
             self._select_shot(self._shots[0].relative_path)
         self._append_log(
             f"Plan: {plan.total_frames} frame(s), {plan.required_nodes} node(s), "
-            f"ETA {plan.estimated_wall_hours:.2f} h, ${plan.estimated_cost:.2f}."
+            f"ETA {format_duration(plan.estimated_wall_seconds)}, ${plan.estimated_cost:.2f}."
         )
 
     def _refresh_candidates(self) -> None:
@@ -833,17 +873,22 @@ class RenderPanelWidget(QFrame):
             widget.update_model(card)
             row, column = divmod(index, 4)
             self.node_grid.addWidget(widget, row, column)
-            self._node_card_widgets[int(card.node)] = widget
+            self._node_card_widgets[card.key] = widget
         self.node_grid_scroll.setVisible(bool(cards))
         self.btn_refresh_candidates.setVisible(
             self.vm.settings.render_backend == "vast"
         )
 
-    def _on_node_card_updated(self, index: int) -> None:
-        widget = self._node_card_widgets.get(int(index))
-        if widget is None or index >= len(self.vm.node_cards):
+    def _on_node_card_updated(self, key: str) -> None:
+        widget = self._node_card_widgets.get(str(key))
+        if widget is None:
             return
-        widget.update_model(self.vm.node_cards[index])
+        card = next(
+            (item for item in self.vm.node_cards if item.key == str(key)),
+            None,
+        )
+        if card is not None:
+            widget.update_model(card)
 
     def _sync_shot_cards(self) -> None:
         reviews = {model.relative_path: model for model in self.vm.shot_reviews()}
@@ -881,6 +926,7 @@ class RenderPanelWidget(QFrame):
 
     def _on_shot_reviews_ready(self, _reviews: list) -> None:
         self._sync_shot_cards()
+        self._refresh_action_buttons()
 
     def _on_shot_launch_finished(
         self, relative_path: str, ok: bool, message: str
@@ -908,9 +954,12 @@ class RenderPanelWidget(QFrame):
         if shot is None:
             return
         self._selected_shot = shot
+        self._player_shot_path = ""
         self._set_active_card(shot.relative_path)
         self.player.pause()
         self._set_preview_page(self.poster)
+        self._sync_preview_frame_control()
+        self._refresh_action_buttons()
         self._show_setup(shot)
         self._show_latest_preview(shot)
         self._show_video(shot)
@@ -933,6 +982,7 @@ class RenderPanelWidget(QFrame):
                 self._show_sequence_for_shot(shot)
             return
         if action == "preview":
+            self._apply_preview_settings()
             if self._confirm_preview([shot]):
                 self._set_preview_page(self.poster)
                 self.vm.preview_shots([shot])
@@ -957,11 +1007,15 @@ class RenderPanelWidget(QFrame):
             self._append_log(message)
             if not ok:
                 QMessageBox.warning(self, self.tr("Approve frames"), message)
+            else:
+                self._sync_player_approvals(shot)
         elif action == "unapprove_all":
             ok, message = self.vm.unapprove_all(shot)
             self._append_log(message)
             if not ok:
                 QMessageBox.warning(self, self.tr("Unapprove frames"), message)
+            else:
+                self._sync_player_approvals(shot)
         elif action == "delete_unapproved":
             if not self._confirm_delete_unapproved(shot):
                 return
@@ -987,7 +1041,7 @@ class RenderPanelWidget(QFrame):
         text = (
             f"Retry only the missing frames of {shot.name}?"
             if retry
-            else f"Render {shot.name} only?\n\nThis changes the render selection to this shot."
+            else f"Render {shot.name} on its own node(s)?"
         )
         answer = QMessageBox.question(
             self,
@@ -1011,18 +1065,89 @@ class RenderPanelWidget(QFrame):
         return answer == QMessageBox.Yes
 
     def _benchmark_shot(self, shot: RenderShot) -> None:
+        self._run_benchmark(shot)
+
+    def _run_benchmark(self, shot: RenderShot) -> None:
+        proceed, overwrite = self._confirm_benchmark(shot)
+        if proceed:
+            self.vm.benchmark_selected(shot, overwrite=overwrite)
+
+    def _confirm_benchmark(self, shot: RenderShot) -> tuple[bool, bool]:
+        estimate = self.vm.benchmark_estimate(shot)
+        existing = self.vm.measurement_for(shot)
+        overwrite = existing is not None
+        if estimate is None:
+            text = self.tr(
+                "Rent one Vast.ai node and measure representative frames of {0}?\n\n"
+                "The median time updates the measured profile."
+            ).format(shot.name)
+        else:
+            selection = estimate.selection
+            frames = ", ".join(str(frame) for frame in selection.frames)
+            folders = "\n".join(
+                f"  - {entry.label}: {format_bytes(entry.bytes)} "
+                f"({entry.files:,} file(s))"
+                for entry in estimate.staging.entries
+            ) or "  - (no production folder found)"
+            offer = getattr(self.vm, "offer", None)
+            gpu = str(getattr(offer, "gpu_name", "") or "").strip()
+            price = float(getattr(offer, "price_per_hour", 0.0) or 0.0)
+            if price > 0:
+                node = self.tr("1 node ({0}, {1}) at ${2:.2f}/h").format(
+                    gpu or self.vm.settings.gpu_profile,
+                    self.vm.settings.gpu_profile,
+                    price,
+                )
+            else:
+                node = self.tr("1 node ({0}), cheapest available").format(
+                    gpu or self.vm.settings.gpu_profile
+                )
+            text = self.tr(
+                "Benchmark {0}\n\n"
+                "File: {1}\n"
+                "Frames to measure: {2}\n"
+                "Scene range: {3}-{4} (step {5})\n"
+                "Node: {6}\n"
+                "Upload: {7} · {8:,} file(s)\n"
+                "{9}\n\n"
+                "Estimated cost: ~${10:.2f}\n"
+                "The median time updates the measured profile."
+            ).format(
+                shot.name,
+                shot.relative_path,
+                frames,
+                selection.range_start,
+                selection.range_end,
+                selection.step,
+                node,
+                format_bytes(estimate.staging.bytes),
+                estimate.staging.files,
+                folders,
+                float(getattr(estimate.plan, "estimated_cost", 0.0) or 0.0),
+            )
+        if overwrite:
+            existing_text = self.tr(
+                "{0} already has a remote benchmark of {1}/frame ({2}).\n\n"
+                "Overwrite it with this new benchmark?"
+            ).format(
+                shot.name,
+                format_rate(existing.get("seconds")),
+                str(existing.get("measured_at") or "") or self.tr("date unknown"),
+            )
+            text = f"{existing_text}\n\n{text}"
+        title = (
+            self.tr("Overwrite benchmark")
+            if overwrite
+            else self.tr("Benchmark shot")
+        )
         answer = QMessageBox.question(
             self,
-            self.tr("Benchmark shot"),
-            self.tr(
-                "Rent one Vast.ai node and render 3 representative frames of {0}?\n\n"
-                "The median time updates the measured profile. Estimated cost: ~$0.05."
-            ).format(shot.name),
+            title,
+            text,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
-        if answer == QMessageBox.Yes:
-            self.vm.benchmark_selected(shot)
+        return answer == QMessageBox.Yes, overwrite
 
     def _show_setup(self, shot: RenderShot) -> None:
         setup = shot.setup
@@ -1070,18 +1195,45 @@ class RenderPanelWidget(QFrame):
     # ------------------------------------------------------------------
     # Preview
     # ------------------------------------------------------------------
+    def _sync_preview_frame_control(self) -> None:
+        shot = self._selected_shot
+        self._syncing_preview_frame = True
+        try:
+            if shot is None:
+                self.spin_preview_frame.setEnabled(False)
+                self.lbl_preview_frame_range.setText("")
+                return
+            self.spin_preview_frame.setRange(shot.frame_start, shot.frame_end)
+            self.spin_preview_frame.setValue(self.vm.preview_frame_for(shot))
+            self.spin_preview_frame.setEnabled(True)
+            self.lbl_preview_frame_range.setText(
+                self.tr("of {0}–{1}").format(shot.frame_start, shot.frame_end)
+            )
+        finally:
+            self._syncing_preview_frame = False
+
+    def _on_preview_frame_changed(self, frame: int) -> None:
+        if self._syncing_preview_frame or self._selected_shot is None:
+            return
+        self.vm.set_preview_frame(self._selected_shot, int(frame))
+
     def _preview_selected(self) -> None:
         if self._selected_shot is None:
             return
+        self._apply_preview_settings()
         if self._confirm_preview([self._selected_shot]):
             self._set_preview_page(self.poster)
             self.vm.preview_shots([self._selected_shot])
 
     def _preview_all(self) -> None:
         targets = self.vm.selected_shots
+        self._apply_preview_settings()
         if self._confirm_preview(targets):
             self._set_preview_page(self.poster)
             self.vm.preview_shots(targets)
+
+    def _apply_preview_settings(self) -> None:
+        self.vm.update_preview_settings(self._settings_from_ui())
 
     def _confirm_preview(self, shots: list) -> bool:
         if not shots:
@@ -1089,18 +1241,22 @@ class RenderPanelWidget(QFrame):
                 self, self.tr("Preview"), self.tr("Select at least one shot.")
             )
             return False
-        backend = (
-            self.tr("Vast.ai")
-            if self.vm.settings.preview_backend == "vast"
-            else self.tr("local")
-        )
+        if self.vm.settings.preview_backend == "vast":
+            target = self.tr("on Vast.ai")
+            detail = self.tr(
+                "One frame will be rendered per shot. Vast.ai may rent a node."
+            )
+        else:
+            target = self.tr("locally")
+            detail = self.tr(
+                "One frame will be rendered per shot on this workstation."
+            )
         answer = QMessageBox.question(
             self,
             self.tr("Render previews"),
-            self.tr(
-                "Render {0} preview(s) on {1}?\n\n"
-                "One frame will be rendered per shot. Vast.ai may rent a node."
-            ).format(len(shots), backend),
+            self.tr("Render {0} preview(s) {1}?\n\n{2}").format(
+                len(shots), target, detail
+            ),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -1122,6 +1278,7 @@ class RenderPanelWidget(QFrame):
             )
             return
         self._selected_shot = shot
+        self._player_shot_path = shot.relative_path
         self._set_active_card(shot.relative_path)
         fps = shot.setup.fps if shot.setup else 24.0
         if not self.player.is_fullscreen():
@@ -1191,36 +1348,32 @@ class RenderPanelWidget(QFrame):
             return
         ok, message = self.vm.approve_frames(self._selected_shot, frames, approved)
         self._append_log(message)
-        if ok:
-            self.player.set_frames_approved(frames, approved)
-        else:
-            self.player.set_frames_approved(frames, not approved)
+        self._sync_player_approvals(self._selected_shot)
+        if not ok:
             QMessageBox.warning(self, self.tr("Approve frames"), message)
+
+    def _sync_player_approvals(self, shot: RenderShot) -> None:
+        if (
+            self._selected_shot is None
+            or self._selected_shot.relative_path != shot.relative_path
+            or self._player_shot_path != shot.relative_path
+        ):
+            return
+        self.player.set_approved_frames(self.vm.approved_frames(shot))
 
     def _benchmark_selected(self) -> None:
         if self._selected_shot is None:
             QMessageBox.warning(self, self.tr("Benchmark"), self.tr("Select a shot first."))
             return
-        answer = QMessageBox.question(
-            self,
-            self.tr("Benchmark selected shot"),
-            self.tr(
-                "Rent one Vast.ai node and render 3 representative frames of {0}?\n\n"
-                "The median time updates the measured profile. Estimated cost: ~$0.05."
-            ).format(self._selected_shot.name),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if answer == QMessageBox.Yes:
-            self.vm.benchmark_selected(self._selected_shot)
+        self._run_benchmark(self._selected_shot)
 
     def _on_benchmark_finished(self, shot_name: str, median: float) -> None:
-        self._append_log(f"Benchmark {shot_name}: {median:.1f} s/frame")
+        self._append_log(f"Benchmark {shot_name}: {format_rate(median)}/frame")
         QMessageBox.information(
             self,
             self.tr("Benchmark finished"),
-            self.tr("{0}: {1:.1f} s/frame. The plan will be recalculated.").format(
-                shot_name, median
+            self.tr("{0}: {1}/frame. The plan will be recalculated.").format(
+                shot_name, format_rate(median)
             ),
         )
 
@@ -1232,7 +1385,9 @@ class RenderPanelWidget(QFrame):
     def _on_preview_progress(self, shot_name: str, done: int, total: int, seconds: float) -> None:
         self.progress.setRange(0, max(1, total))
         self.progress.setValue(min(done, total))
-        self._append_log(f"{shot_name}: preview frame {done}/{total} ({seconds:.1f}s)")
+        self._append_log(
+            f"{shot_name}: preview frame {done}/{total} ({format_rate(seconds)})"
+        )
 
     def _on_preview_finished(
         self, rendered: int, total: int, failed: list, report
@@ -1319,12 +1474,12 @@ class RenderPanelWidget(QFrame):
             self.tr("Start render"),
             self.tr(
                 "Render {0} frame(s) on {1} node(s)?\n\n"
-                "Backend: {2}\nEstimated wall time: {3:.2f} h\nEstimated cost: ${4:.2f}"
+                "Backend: {2}\nEstimated wall time: {3}\nEstimated cost: ${4:.2f}"
             ).format(
                 self._plan.total_frames,
                 self._plan.required_nodes,
                 self.vm.settings.render_backend,
-                self._plan.estimated_wall_hours,
+                format_duration(self._plan.estimated_wall_seconds),
                 self._plan.estimated_cost,
             ),
             QMessageBox.Yes | QMessageBox.No,
@@ -1338,7 +1493,9 @@ class RenderPanelWidget(QFrame):
         self.btn_cancel.setEnabled(True)
         self._append_log("Starting render...")
         self._shot_progress_timer.start()
-        self.vm.start_render()
+        if not self.vm.start_render():
+            self.btn_start.setEnabled(True)
+            self.btn_cancel.setEnabled(self.vm.has_active_runs())
 
     def _cancel_render(self) -> None:
         self._append_log("Cancelling render...")
@@ -1373,31 +1530,46 @@ class RenderPanelWidget(QFrame):
     def _on_local_progress(self, shot_name: str, done: int, total: int, seconds: float) -> None:
         self.progress.setRange(0, max(1, total))
         self.progress.setValue(min(done, total))
-        self._append_log(f"{shot_name}: frame {done}/{total} ({seconds:.1f}s)")
+        self._append_log(
+            f"{shot_name}: frame {done}/{total} ({format_rate(seconds)})"
+        )
 
     def _on_burst_progress(self, event) -> None:
-        self._append_log(
-            f"[node {event.node}] {event.stage}: {event.message}"
-        )
-        if getattr(event, "stage", "") not in ("frame", "device", "bake"):
+        stage = str(getattr(event, "stage", "") or "")
+        message = str(getattr(event, "message", "") or "")
+        if stage == "frame":
+            try:
+                payload = json.loads(message)
+                self._append_log(
+                    f"[node {event.node}] frame {payload.get('frame', '?')} · "
+                    f"{format_rate(payload.get('seconds'))}"
+                )
+            except (TypeError, ValueError):
+                self._append_log(f"[node {event.node}] frame: {message}")
+        else:
+            self._append_log(f"[node {event.node}] {stage}: {message}")
+        if stage not in ("frame", "device", "bake"):
             self._refresh_shot_progress()
+        if stage == "stage":
+            total = int(getattr(event, "bytes_total", 0) or 0)
+            done = int(getattr(event, "bytes_done", 0) or 0)
+            if total > 0:
+                self.progress.setRange(0, 100)
+                self.progress.setValue(
+                    max(0, min(100, int(done * 100 / total)))
+                )
         if event.frames_total > 0:
             self.progress.setRange(0, event.frames_total)
             self.progress.setValue(min(event.frames_done, event.frames_total))
 
     def _on_render_finished(self, report) -> None:
-        self.progress.setValue(self.progress.maximum())
-        self.btn_cancel.setEnabled(False)
+        active = bool(self.vm.has_active_runs())
+        if not active:
+            self.progress.setValue(self.progress.maximum())
+            self.btn_cancel.setEnabled(False)
+            self._shot_progress_timer.stop()
         missing = self._report_missing_frames(report)
-        self.btn_retry_render.setVisible(bool(missing))
-        self.btn_start.setEnabled(
-            self._plan is not None
-            and self._plan.total_frames > 0
-            and (
-                self.vm.settings.render_backend != "vast"
-                or self.vm.offer is not None
-            )
-        )
+        self.btn_retry_render.setVisible(bool(missing) and not active)
         if isinstance(report, list):
             rendered = sum(item.frames_rendered for item in report)
             expected = sum(item.frames_expected for item in report)
@@ -1406,9 +1578,11 @@ class RenderPanelWidget(QFrame):
             )
         else:
             message = getattr(report, "message", "Render finished.")
-        self._shot_progress_timer.stop()
         self._refresh_shot_progress()
         self._append_log(message)
+        if active:
+            self._append_log(self.tr("Other render runs are still active."))
+            return
         details = self._report_details(report)
         self._show_result_dialog(
             self.tr("Render finished"),
@@ -1486,9 +1660,101 @@ class RenderPanelWidget(QFrame):
     # ------------------------------------------------------------------
     # Misc
     # ------------------------------------------------------------------
+    def _on_render_runs_changed(self, count: int) -> None:
+        active = int(count or 0) > 0
+        self.lbl_busy.setVisible(active)
+        if active:
+            self.lbl_busy.setText(
+                self.tr(
+                    "{0} render run(s) active — shots in those runs are locked. "
+                    "Other shots can start on new instances."
+                ).format(int(count))
+            )
+        self.btn_stop_all.setEnabled(active)
+        self.btn_cancel.setEnabled(active)
+        self.combo_projects.setEnabled(not active)
+        plan = self.vm.plan or self._plan
+        self.btn_start.setEnabled(
+            bool(
+                plan
+                and plan.total_frames > 0
+                and (
+                    self.vm.settings.render_backend != "vast"
+                    or self.vm.offer is not None
+                )
+            )
+        )
+        self._refresh_action_buttons()
+
+    def _on_preview_running(self, running: bool) -> None:
+        self._preview_active = bool(running)
+        self._refresh_action_buttons()
+
+    def _on_benchmark_running(self, running: bool) -> None:
+        self._benchmark_active = bool(running)
+        self._refresh_action_buttons()
+
+    def _refresh_action_buttons(self) -> None:
+        shot = self._selected_shot
+        locked = bool(shot is not None and self.vm.is_shot_locked(shot))
+        self.combo_projects.setEnabled(
+            not (
+                self._preview_active
+                or self._benchmark_active
+                or bool(self.vm.has_active_runs())
+            )
+        )
+        self.btn_preview_selected.setEnabled(
+            shot is not None and not locked and not self._preview_active
+        )
+        self.btn_benchmark.setEnabled(
+            shot is not None
+            and not locked
+            and not self._preview_active
+            and not self._benchmark_active
+        )
+
+    def _on_measurement_conflicts(self, conflicts: list) -> None:
+        for item in conflicts or ():
+            shot = item.get("shot")
+            if shot is None:
+                continue
+            existing = item.get("existing") or {}
+            backend = (
+                self.tr("local")
+                if str(item.get("backend")) == "local"
+                else self.tr("remote")
+            )
+            measured_at = str(existing.get("measured_at") or "")
+            answer = QMessageBox.question(
+                self,
+                self.tr("Overwrite benchmark"),
+                self.tr(
+                    "{0} finished with {1}/frame.\n\n"
+                    "It already has a {2} benchmark of {3}/frame ({4}).\n"
+                    "Replace the benchmark with the measured render time?"
+                ).format(
+                    shot.name,
+                    format_rate(item.get("seconds")),
+                    backend,
+                    format_rate(existing.get("seconds")),
+                    measured_at or self.tr("date unknown"),
+                ),
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            self.vm.resolve_measurement_conflict(
+                item, answer == QMessageBox.Yes
+            )
+
     def _on_busy_changed(self, busy: bool) -> None:
-        self.lbl_busy.setVisible(busy)
-        self.btn_stop_all.setEnabled(busy)
+        active_runs = bool(self.vm.has_active_runs())
+        self.lbl_busy.setVisible(busy or active_runs)
+        if busy:
+            self.lbl_busy.setText(
+                self.tr("Render process in progress — controls are locked.")
+            )
+        self.btn_stop_all.setEnabled(busy or active_runs)
         for card in self._shot_cards.values():
             card.set_busy(busy)
         for widget in (
@@ -1507,12 +1773,17 @@ class RenderPanelWidget(QFrame):
         if busy:
             self.btn_start.setEnabled(False)
             self.btn_cancel.setEnabled(True)
-        elif self._plan is not None and self._plan.total_frames > 0:
-            self.btn_cancel.setEnabled(False)
-            self.btn_start.setEnabled(
-                self.vm.settings.render_backend != "vast"
-                or self.vm.offer is not None
-            )
+            self.btn_stop_all.setEnabled(True)
+        else:
+            active_runs = bool(self.vm.has_active_runs())
+            self.btn_cancel.setEnabled(active_runs)
+            self.btn_stop_all.setEnabled(active_runs)
+            if self._plan is not None and self._plan.total_frames > 0:
+                self.btn_start.setEnabled(
+                    self.vm.settings.render_backend != "vast"
+                    or self.vm.offer is not None
+                )
+        self._refresh_action_buttons()
 
     def _on_scan_progress(self, name: str, index: int, total: int) -> None:
         self.lbl_setup.setText(
@@ -1520,9 +1791,11 @@ class RenderPanelWidget(QFrame):
         )
 
     def _on_error(self, message: str) -> None:
-        self._shot_progress_timer.stop()
+        if not self.vm.has_active_runs():
+            self._shot_progress_timer.stop()
+            self.btn_cancel.setEnabled(False)
+            self.btn_stop_all.setEnabled(False)
         self._append_log(message)
-        self.btn_cancel.setEnabled(False)
         QMessageBox.critical(self, self.tr("Render"), message)
 
     @staticmethod
@@ -1611,18 +1884,18 @@ class RenderPanelWidget(QFrame):
             offer_text = self.tr("local")
         return self.tr(
             "<b>{0}</b> frames · <b>{1:.2f}</b> GPU-h · "
-            "<b>{2}</b> node(s) · ETA <b>{3:.2f} h</b> · "
+            "<b>{2}</b> node(s) · ETA <b>{3}</b> · "
             "cost <b>${4:.2f}</b> · confidence <b>{5}</b><br>"
-            "Offer: {6} · setup {7:.0f} min/node · utilization {8:.0%}"
+            "Offer: {6} · setup {7}/node · utilization {8:.0%}"
         ).format(
             plan.total_frames,
             plan.total_gpu_seconds / 3600.0,
             plan.required_nodes,
-            plan.estimated_wall_hours,
+            format_duration(plan.estimated_wall_seconds),
             plan.estimated_cost,
             plan.confidence,
             offer_text,
-            plan.setup_seconds / 60.0,
+            format_duration(plan.setup_seconds),
             plan.utilization,
         )
 

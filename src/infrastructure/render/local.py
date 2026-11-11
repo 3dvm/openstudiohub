@@ -65,7 +65,7 @@ if quality["engine"] == "CYCLES":
     scene.cycles.use_denoising = bool(quality.get("denoise", True))
     scene.cycles.denoiser = "OPENIMAGEDENOISE"
     scene.render.use_persistent_data = True
-    print("OSDEVICES::" + json.dumps([(d.name, d.type, d.use) for d in prefs.devices]))
+    print("OSDEVICES::" + json.dumps([(d.name, d.type, d.use) for d in prefs.devices]), flush=True)
 elif quality["engine"].upper().startswith("BLENDER_EEVEE"):
     eevee = getattr(scene, "eevee", None)
     if eevee is not None:
@@ -80,7 +80,7 @@ for frame in config["frames"]:
     started = time.monotonic()
     bpy.ops.render.render(write_still=True)
     elapsed = time.monotonic() - started
-    print("OSFRAME::" + json.dumps({"frame": frame, "seconds": round(elapsed, 3)}))
+    print("OSFRAME::" + json.dumps({"frame": frame, "seconds": round(elapsed, 3)}), flush=True)
 """
 
 

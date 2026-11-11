@@ -54,6 +54,7 @@ class TaskBoardWidget(QFrame):
         self._card_widgets: dict = {}
         self._current_cols = 0
         self._comment_task = None
+        self._last_comment_task = None
         self._comment_anim = None
 
         self.setObjectName("TaskBoardWidgetBase")
@@ -128,6 +129,16 @@ class TaskBoardWidget(QFrame):
         for button in (self.btn_view_table, self.btn_view_cards):
             button.setObjectName("BoardToggleButton")
             header.addWidget(button)
+
+        self.btn_comments = QToolButton()
+        self.btn_comments.setCheckable(True)
+        self.btn_comments.setObjectName("BoardToggleButton")
+        self.btn_comments.setIcon(self._colored_icon("message-square.svg", "#E2E8F0"))
+        self.btn_comments.setToolTip(self.tr("Show comments"))
+        self.btn_comments.setCursor(Qt.PointingHandCursor)
+        self.btn_comments.setEnabled(False)
+        self.btn_comments.toggled.connect(self._on_comments_toggled)
+        header.addWidget(self.btn_comments)
 
         layout.addLayout(header)
 
@@ -531,6 +542,9 @@ class TaskBoardWidget(QFrame):
     # ------------------------------------------------------------------
     def _open_comments(self, task: dict) -> None:
         self._comment_task = task
+        self._last_comment_task = task
+        self.btn_comments.setEnabled(True)
+        self._set_comments_toggle(True)
         self.comment_panel.set_task(task)
         self.comment_panel.set_loading(True)
         self.comment_panel.show()
@@ -542,7 +556,28 @@ class TaskBoardWidget(QFrame):
             self._comment_anim.stop()
         self.comment_panel.hide()
         self._comment_task = None
+        self._set_comments_toggle(False)
         self._apply_comment_width(0)
+
+    def _set_comments_toggle(self, checked: bool) -> None:
+        self.btn_comments.blockSignals(True)
+        self.btn_comments.setChecked(bool(checked))
+        self.btn_comments.blockSignals(False)
+        self.btn_comments.setToolTip(
+            self.tr("Hide comments") if checked else self.tr("Show comments")
+        )
+
+    def _on_comments_toggled(self, checked: bool) -> None:
+        if checked:
+            if self._comment_task is not None:
+                return
+            task = self._last_comment_task
+            if task is None:
+                self._set_comments_toggle(False)
+                return
+            self._open_comments(task)
+        elif self._comment_task is not None:
+            self._close_comments()
 
     def _animate_comment_width(self, target: int) -> None:
         if self._comment_anim is not None:

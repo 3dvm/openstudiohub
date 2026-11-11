@@ -1,5 +1,6 @@
 """Unit tests for direct Vast burst planning (no instances are created)."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from src.domain.render.capacity import RenderCapacityCalculator
@@ -216,3 +217,128 @@ def test_failed_boot_reports_every_assigned_frame_as_missing(tmp_path):
 
     assert result.ok is False
     assert result.missing == (101, 102)
+
+
+def test_assign_skips_approved_frames_without_retry(tmp_path):
+    from src.infrastructure.render.frame_state import RenderFrameStateStore
+
+    shot = _shot("sh010", frames=10, start=101)
+    output_root = tmp_path / "03_render"
+    output = output_root / "shots" / "sq010" / "sh010.render"
+    output.mkdir(parents=True)
+    state = RenderFrameStateStore(output)
+    state.approve(102)
+    state.approve(105)
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=output_root,
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+        skip_existing=False,
+    )
+
+    assignments = runner._assign([shot], 1)
+
+    assert [task.frames for task in assignments[0]] == [
+        (101, 103, 104, 106, 107, 108, 109, 110)
+    ]
+
+
+def test_assign_keeps_existing_unapproved_frames_without_retry(tmp_path):
+    shot = _shot("sh010", frames=10, start=101)
+    output_root = tmp_path / "03_render"
+    output = output_root / "shots" / "sq010" / "sh010.render"
+    output.mkdir(parents=True)
+    (output / "frame_0101.png").write_bytes(b"x")
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=output_root,
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+        skip_existing=False,
+    )
+
+    assignments = runner._assign([shot], 1)
+
+    assert [task.frames for task in assignments[0]] == [
+        tuple(range(101, 111))
+    ]
+
+
+def test_render_script_flushes_progress_markers():
+    from src.infrastructure.render.burst import _RENDER_SCRIPT
+
+    lines = _RENDER_SCRIPT.splitlines()
+    for index, line in enumerate(lines):
+        if "OSFRAME::" in line or "OSDEVICES::" in line or "OSBAKE::" in line:
+            window = "\n".join(lines[index : index + 3])
+            assert "flush=True" in window, line
+
+
+def test_assign_keeps_whole_shots_on_one_node_each():
+    first = _shot("070", frames=10, start=101)
+    second = _shot("sh020", frames=10, start=101)
+    first = replace(first, measured_seconds=40.0)
+    second = replace(second, measured_seconds=40.0)
+
+    assignments = _runner()._assign([first, second], 2)
+
+    assert len(assignments) == 2
+    by_shot = {
+        task.shot.name: task.frames
+        for tasks in assignments
+        for task in tasks
+    }
+    assert by_shot["070"] == tuple(range(101, 111))
+    assert by_shot["sh020"] == tuple(range(101, 111))
+    assert all(len(tasks) == 1 for tasks in assignments)
+
+
+def test_assign_does_not_split_a_shot_that_fits_one_instance():
+    from types import SimpleNamespace
+
+    shot = replace(_shot("070", frames=20, start=101), measured_seconds=40.0)
+    plan = SimpleNamespace(
+        target_seconds=3600.0,
+        setup_seconds=600.0,
+        utilization=0.85,
+    )
+
+    assignments = _runner()._assign([shot], 2, plan)
+
+    assert len(assignments[0]) == 1
+    assert assignments[0][0].frames == tuple(range(101, 121))
+    assert assignments[1] == []
+
+
+def test_assign_splits_a_shot_that_exceeds_one_instance():
+    from types import SimpleNamespace
+
+    shot = replace(_shot("070", frames=100, start=101), measured_seconds=40.0)
+    plan = SimpleNamespace(
+        target_seconds=3600.0,
+        setup_seconds=600.0,
+        utilization=0.85,
+    )
+
+    assignments = _runner()._assign([shot], 2, plan)
+
+    assert [len(tasks[0].frames) for tasks in assignments] == [50, 50]
+    assert assignments[0][0].frames[0] == 101
+    assert assignments[1][0].frames[0] == 151
+
+
+def test_parse_rsync_progress_reads_the_percentage():
+    from src.infrastructure.render.burst import _parse_rsync_progress
+
+    assert (
+        _parse_rsync_progress(" 36,759,344,911  45%   12.34MB/s    0:01:02")
+        == 45
+    )
+    assert _parse_rsync_progress(" 1,234,567 100%   1.00GB/s    0:00:36") == 100
+    assert _parse_rsync_progress("sent 123 bytes  received 45 bytes") is None
+    assert _parse_rsync_progress("") is None

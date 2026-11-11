@@ -177,3 +177,22 @@ def test_kitsu_button_forwards_the_task(qapp):
     widget._kitsu_buttons["t1"].click()
 
     assert calls[0]["id"] == "t1"
+
+
+def test_comments_toggle_hides_and_reopens_the_drawer(qapp):
+    widget, vm = _board(qapp)
+
+    assert widget.btn_comments.isEnabled() is False
+    widget._comment_buttons["t1"].click()
+    assert widget.btn_comments.isEnabled() is True
+    assert widget.btn_comments.isChecked() is True
+    assert widget.comment_panel.isHidden() is False
+
+    widget.btn_comments.click()
+    assert widget.btn_comments.isChecked() is False
+    assert widget.comment_panel.isHidden() is True
+
+    widget.btn_comments.click()
+    assert widget.btn_comments.isChecked() is True
+    assert widget.comment_panel.isHidden() is False
+    assert vm.comments.loaded == ["t1", "t1"]

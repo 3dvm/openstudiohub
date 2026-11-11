@@ -13,7 +13,7 @@ are delegated to ``ArtistViewModel``.
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, Qt, QVariantAnimation
-from PySide6.QtGui import QResizeEvent
+from PySide6.QtGui import QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -81,7 +82,8 @@ class ViewArtist(BaseDashboardView):
 
         self._project_widgets = []
         self._current_project_cols = 0
-        self._comment_card = None
+        self._comment_task = None
+        self._last_comment_task = None
         self._comment_anim = None
 
         self.setObjectName("ViewArtistBase")
@@ -203,6 +205,15 @@ class ViewArtist(BaseDashboardView):
         )
         self.btn_update_vcs.clicked.connect(self._on_update_vcs_clicked)
 
+        self.btn_comments = QToolButton()
+        self.btn_comments.setCheckable(True)
+        self.btn_comments.setObjectName("BoardToggleButton")
+        self.btn_comments.setIcon(QIcon("assets/icons/message-square.svg"))
+        self.btn_comments.setToolTip(self.tr("Show comments"))
+        self.btn_comments.setCursor(Qt.PointingHandCursor)
+        self.btn_comments.setEnabled(False)
+        self.btn_comments.toggled.connect(self._on_comments_toggled)
+
         header_layout.addWidget(self.btn_back_projects)
         header_layout.addWidget(lbl_title)
         header_layout.addStretch()
@@ -212,6 +223,7 @@ class ViewArtist(BaseDashboardView):
         header_layout.addWidget(self.combo_projects)
         header_layout.addWidget(QLabel(self.tr("Status:")))
         header_layout.addWidget(self.combo_status)
+        header_layout.addWidget(self.btn_comments)
 
         layout_tasks.addLayout(header_layout)
 
@@ -676,19 +688,46 @@ class ViewArtist(BaseDashboardView):
         self.vm.comments.seen_updated.connect(self._on_seen_updated)
 
     def _open_comments(self, card) -> None:
-        self._comment_card = card
-        self.comment_panel.set_task(card.task_data)
+        self._show_comments_for_task(card.task_data)
+
+    def _show_comments_for_task(self, task: dict) -> None:
+        self._comment_task = task
+        self._last_comment_task = task
+        self.btn_comments.setEnabled(True)
+        self._set_comments_toggle(True)
+        self.comment_panel.set_task(task)
         self.comment_panel.set_loading(True)
         self.comment_panel.show()
         self._animate_comment_width(self.vm.comment_panel_width())
-        self.vm.comments.load(card.task_data, mark_seen=True)
+        self.vm.comments.load(task, mark_seen=True)
 
     def _close_comments(self, instant: bool = False) -> None:
         if self._comment_anim is not None:
             self._comment_anim.stop()
         self.comment_panel.hide()
-        self._comment_card = None
+        self._comment_task = None
+        self._set_comments_toggle(False)
         self._apply_comment_width(0)
+
+    def _set_comments_toggle(self, checked: bool) -> None:
+        self.btn_comments.blockSignals(True)
+        self.btn_comments.setChecked(bool(checked))
+        self.btn_comments.blockSignals(False)
+        self.btn_comments.setToolTip(
+            self.tr("Hide comments") if checked else self.tr("Show comments")
+        )
+
+    def _on_comments_toggled(self, checked: bool) -> None:
+        if checked:
+            if self._comment_task is not None:
+                return
+            task = self._last_comment_task
+            if task is None:
+                self._set_comments_toggle(False)
+                return
+            self._show_comments_for_task(task)
+        elif self._comment_task is not None:
+            self._close_comments()
 
     def _animate_comment_width(self, target: int) -> None:
         if self._comment_anim is not None:
@@ -729,9 +768,9 @@ class ViewArtist(BaseDashboardView):
         self.comment_panel.set_checklist_enabled(not busy)
 
     def _on_comments_loaded(self, task_id: str, comments: list) -> None:
-        if self._comment_card is None:
+        if self._comment_task is None:
             return
-        if str(self._comment_card.task_data.get("id", "")) != str(task_id):
+        if str(self._comment_task.get("id", "")) != str(task_id):
             return
         self.comment_panel.set_comments(comments)
         self.comment_panel.set_posting(False)

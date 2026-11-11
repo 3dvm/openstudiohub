@@ -26,8 +26,8 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSlider,
     QStackedWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -60,12 +60,15 @@ class FrameSequencePlayer(QWidget):
         self._index = 0
         self._in_point: int | None = None
         self._out_point: int | None = None
-        self._updating = False
         self._fullscreen_dialog: QDialog | None = None
         self._restore_stack: QStackedWidget | None = None
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._advance)
+        self._render_timer = QTimer(self)
+        self._render_timer.setSingleShot(True)
+        self._render_timer.timeout.connect(self._refresh_current_pixmap)
+        self._last_pixmap_size = None
 
         main = QHBoxLayout(self)
         main.setContentsMargins(0, 0, 0, 0)
@@ -93,6 +96,19 @@ class FrameSequencePlayer(QWidget):
         self.timeline = FrameTimeline()
         self.timeline.seek_requested.connect(self._show_index)
         viewer_layout.addWidget(self.timeline)
+        self.lbl_legend = QLabel()
+        self.lbl_legend.setObjectName("MutedLabel")
+        self.lbl_legend.setTextFormat(Qt.RichText)
+        self.lbl_legend.setText(
+            self.tr(
+                "<span style='color:#10B981'>●</span> Approved &nbsp; "
+                "<span style='color:#38BDF8'>●</span> Rendered &nbsp; "
+                "<span style='color:#EF4444'>●</span> Missing &nbsp; "
+                "<span style='color:#F97316'>●</span> Selected &nbsp; "
+                "<span style='color:#F8FAFC'>|</span> Current"
+            )
+        )
+        viewer_layout.addWidget(self.lbl_legend)
 
         controls = QHBoxLayout()
         controls.setSpacing(4)
@@ -106,6 +122,14 @@ class FrameSequencePlayer(QWidget):
         self.btn_loop.setCheckable(True)
         self.btn_loop.setChecked(True)
         self.btn_loop.toggled.connect(self._on_loop_toggled)
+        self.btn_comments = QToolButton()
+        self.btn_comments.setCheckable(True)
+        self.btn_comments.setChecked(True)
+        self.btn_comments.setObjectName("BoardToggleButton")
+        self.btn_comments.setIcon(self._icon("message-square.svg"))
+        self.btn_comments.setToolTip(self.tr("Hide comments"))
+        self.btn_comments.setCursor(Qt.PointingHandCursor)
+        self.btn_comments.setFixedWidth(32)
         self.btn_fullscreen = self._icon_button("maximize.svg", "Fullscreen")
         self.btn_fullscreen.clicked.connect(self.toggle_fullscreen)
         self.btn_in = self._icon_button("arrow-left-to-line.svg", "Set in point")
@@ -134,6 +158,7 @@ class FrameSequencePlayer(QWidget):
             self.btn_play,
             self.btn_step_forward,
             self.btn_loop,
+            self.btn_comments,
             self.btn_fullscreen,
             self.btn_in,
             self.btn_out,
@@ -153,9 +178,6 @@ class FrameSequencePlayer(QWidget):
         self.lbl_range.setObjectName("MutedLabel")
         viewer_layout.addWidget(self.lbl_range)
 
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.valueChanged.connect(self._on_slider_changed)
-        viewer_layout.addWidget(self.slider)
         main.addWidget(viewer, 3)
 
         self.comments_panel = QFrame()
@@ -198,6 +220,8 @@ class FrameSequencePlayer(QWidget):
         comment_actions.addStretch()
         comments_layout.addLayout(comment_actions)
         main.addWidget(self.comments_panel, 2)
+        self.btn_comments.toggled.connect(self._set_comments_visible)
+        self._set_comments_visible(True)
 
         self._set_controls_enabled(False)
         self._fullscreen_shortcut = QShortcut(QKeySequence(Qt.Key_F11), self)
@@ -224,15 +248,12 @@ class FrameSequencePlayer(QWidget):
         self._comments = comments or {"shot": [], "frames": {}}
         self._refresh_comment_frames()
         self._cache.clear()
+        self._last_pixmap_size = None
         self._index = 0
         self._in_point = None
         self._out_point = None
         self._fps = max(1.0, float(fps or 24.0))
         self._timer.setInterval(max(1, int(round(1000.0 / self._fps))))
-        self._updating = True
-        self.slider.setRange(0, max(0, len(self._entries) - 1))
-        self.slider.setValue(0)
-        self._updating = False
         self._set_controls_enabled(bool(self._entries))
         self._show_index(0)
         self._update_range_label()
@@ -254,9 +275,6 @@ class FrameSequencePlayer(QWidget):
         self._entries = [entry for entry in self._entries if entry[0] != frame]
         self._approved.discard(frame)
         self._cache.pop(frame, None)
-        self._updating = True
-        self.slider.setRange(0, max(0, len(self._entries) - 1))
-        self._updating = False
         if not self._entries:
             self.pause()
             self._set_controls_enabled(False)
@@ -269,12 +287,20 @@ class FrameSequencePlayer(QWidget):
         self._update_range_label()
 
     def set_frames_approved(self, frames: list[int], approved: bool) -> None:
+        updated = set(self._approved)
         for frame in frames or []:
             if approved:
-                self._approved.add(int(frame))
+                updated.add(int(frame))
             else:
-                self._approved.discard(int(frame))
+                updated.discard(int(frame))
+        self.set_approved_frames(updated)
+
+    def set_approved_frames(self, approved: set[int]) -> None:
+        """Replace the approval set and refresh every approval-dependent widget."""
+        self._approved = {int(frame) for frame in approved or ()}
         self._update_timeline()
+        self._refresh_badge()
+        self._refresh_approval()
 
     def current_frame(self) -> int | None:
         if not self._entries:
@@ -334,32 +360,26 @@ class FrameSequencePlayer(QWidget):
             self.tr("Loop enabled") if enabled else self.tr("Loop disabled")
         )
 
-    def _on_slider_changed(self, value: int) -> None:
-        if self._updating:
-            return
-        self.pause()
-        self._show_index(int(value))
-
     def _show_index(self, index: int) -> None:
         if not self._entries:
             return
         self._index = max(0, min(index, len(self._entries) - 1))
         frame, path = self._entries[self._index]
-        self._updating = True
-        self.slider.setValue(self._index)
-        self._updating = False
         if path is not None and Path(path).is_file():
             pixmap = self._pixmap_for(frame, Path(path))
+            size = self.image_label.size()
+            self._last_pixmap_size = size
             self.image_label.setPixmap(
                 pixmap.scaled(
-                    max(320, self.image_label.width()),
-                    max(220, self.image_label.height()),
+                    max(320, size.width()),
+                    max(220, size.height()),
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation,
                 )
             )
             self.image_label.setToolTip(str(path))
         else:
+            self._last_pixmap_size = None
             self.image_label.setPixmap(
                 QIcon(str(_ASSET_DIR / "image-off.svg")).pixmap(96, 96)
             )
@@ -440,6 +460,18 @@ class FrameSequencePlayer(QWidget):
                     first, last, count
                 )
             )
+        elif self._in_point is not None:
+            self.lbl_range.setText(
+                self.tr("Selection: current frame · In at {0}").format(
+                    self._in_point
+                )
+            )
+        elif self._out_point is not None:
+            self.lbl_range.setText(
+                self.tr("Selection: current frame · Out at {0}").format(
+                    self._out_point
+                )
+            )
         else:
             self.lbl_range.setText(self.tr("Selection: current frame"))
         self._update_timeline()
@@ -485,6 +517,12 @@ class FrameSequencePlayer(QWidget):
     # ------------------------------------------------------------------
     # Comments
     # ------------------------------------------------------------------
+    def _set_comments_visible(self, visible: bool) -> None:
+        self.comments_panel.setVisible(bool(visible))
+        self.btn_comments.setToolTip(
+            self.tr("Hide comments") if visible else self.tr("Show comments")
+        )
+
     def _refresh_comment_frames(self) -> None:
         self._comment_frames = {
             int(frame)
@@ -603,12 +641,12 @@ class FrameSequencePlayer(QWidget):
     def _enter_fullscreen(self) -> None:
         self._trace_fullscreen("enter requested")
         parent = self.parentWidget()
+        host = self.window()
         self._restore_stack = parent if isinstance(parent, QStackedWidget) else None
         if self._restore_stack is not None:
             self._restore_stack.removeWidget(self)
         else:
             self.setParent(None)
-        host = self.window()
         dialog = QDialog(host if host is not self else None)
         dialog.setObjectName("PlayerFullscreen")
         dialog.setWindowTitle(self.tr("Sequence player"))
@@ -616,11 +654,42 @@ class FrameSequencePlayer(QWidget):
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self)
+        self.show()
         dialog.finished.connect(lambda _result: self.exit_fullscreen())
         self._fullscreen_dialog = dialog
         self.btn_fullscreen.setIcon(self._icon("minimize.svg"))
         self.btn_fullscreen.setToolTip(self.tr("Exit fullscreen"))
         dialog.showFullScreen()
+        dialog.raise_()
+        dialog.activateWindow()
+        self._render_timer.start(0)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        super().resizeEvent(event)
+        if self._entries:
+            self._render_timer.start(0)
+
+    def _refresh_current_pixmap(self) -> None:
+        if not self._entries:
+            return
+        frame, path = self._entries[self._index]
+        if path is None or not Path(path).is_file():
+            return
+        size = self.image_label.size()
+        if size == self._last_pixmap_size:
+            return
+        pixmap = self._pixmap_for(frame, Path(path))
+        if pixmap.isNull():
+            return
+        self._last_pixmap_size = size
+        self.image_label.setPixmap(
+            pixmap.scaled(
+                max(320, size.width()),
+                max(220, size.height()),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+        )
 
     def _on_app_quit(self) -> None:
         dialog = self._fullscreen_dialog
@@ -658,6 +727,7 @@ class FrameSequencePlayer(QWidget):
             self._restore_stack = None
         self.btn_fullscreen.setIcon(self._icon("maximize.svg"))
         self.btn_fullscreen.setToolTip(self.tr("Fullscreen"))
+        self._render_timer.start(0)
         self._trace_fullscreen("exit completed")
 
     # ------------------------------------------------------------------
@@ -689,6 +759,5 @@ class FrameSequencePlayer(QWidget):
             self.btn_approve_selection,
             self.btn_unapprove_selection,
             self.btn_delete,
-            self.slider,
         ):
             widget.setEnabled(enabled)

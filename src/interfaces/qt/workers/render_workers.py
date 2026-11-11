@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import statistics
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
@@ -24,6 +23,7 @@ from PySide6.QtCore import Signal
 from src.application.services.launch_service import LaunchService
 from src.application.services.render_service import RenderService
 from src.application.services.task_file_resolver import TaskFileResolver
+from src.domain.render.frames import representative_frames as _representative_frames  # noqa: F401
 from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.qt_worker import ManagedWorker
@@ -214,6 +214,39 @@ class RenderCandidatesWorker(ManagedWorker):
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
             )
             self.candidates_ready.emit(offers)
+        except Exception as error:  # noqa: BLE001
+            self.error.emit(str(error))
+
+
+class RenderOfferWorker(ManagedWorker):
+    """Fetch Vast.ai offers and the balance for a backend switch."""
+
+    offers_ready = Signal(list, float)
+    error = Signal(str)
+
+    def __init__(
+        self, service: RenderService, count: int, settings: RenderSettings
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.count = max(1, int(count or 1))
+        self.settings = settings
+
+    def run(self) -> None:
+        try:
+            offers = self.service.candidate_offers(
+                self.settings.gpu_profile,
+                count=self.count,
+                max_price_per_hour=self.settings.max_price_per_hour,
+                preferred_region=self.settings.preferred_region,
+                min_inet_down_mbps=self.settings.min_inet_down_mbps,
+                min_inet_up_mbps=self.settings.min_inet_up_mbps,
+            )
+            try:
+                balance = self.service.vast_balance()
+            except Exception:  # noqa: BLE001
+                balance = 0.0
+            self.offers_ready.emit(offers, balance)
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))
 
@@ -744,6 +777,9 @@ class RenderBenchmarkWorker(ManagedWorker):
         shot: RenderShot,
         settings: RenderSettings,
         offer,
+        *,
+        audit=None,
+        run_id: str = "",
     ) -> None:
         super().__init__()
         self.service = service
@@ -751,6 +787,8 @@ class RenderBenchmarkWorker(ManagedWorker):
         self.shot = shot
         self.settings = settings
         self.offer = offer
+        self.audit = audit
+        self.run_id = str(run_id or "")
         self.runner = None
 
     def run(self) -> None:
@@ -763,39 +801,26 @@ class RenderBenchmarkWorker(ManagedWorker):
                     min_inet_down_mbps=self.settings.min_inet_down_mbps,
                     min_inet_up_mbps=self.settings.min_inet_up_mbps,
                 )
-            frames = sorted(
-                {
-                    int(self.shot.frame_start),
-                    int((self.shot.frame_start + self.shot.frame_end) // 2),
-                    int(self.shot.frame_end),
-                }
-            )
-            bench_shots = [
-                replace(
-                    self.shot,
-                    frame_start=frame,
-                    frame_end=frame,
-                    frame_step=1,
-                    measured_seconds=None,
-                    measurement_stale=False,
-                )
-                for frame in frames
-            ]
-            plan = self.service.plan(
+            estimate = self.service.benchmark_estimate(
                 self.project_root,
-                target_hours=1.0,
+                self.shot,
                 gpu_profile=self.settings.gpu_profile,
-                quality_override=self.shot.quality,
                 price_per_hour=(
                     self.offer.price_per_hour if self.offer is not None else 0.0
                 ),
-                max_nodes=1,
                 budget=self.settings.budget,
-                shots=bench_shots,
             )
+            if not estimate.selection.frames:
+                self.error.emit(
+                    "The shot has no frames in its scene range to benchmark."
+                )
+                return
+            plan = estimate.plan
             timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             output_root = (
-                self.project_root / "03_render" / ".benchmarks" / timestamp
+                self.service.render_root(self.project_root)
+                if estimate.selection.save_to_render
+                else self.project_root / "03_render" / ".benchmarks" / timestamp
             )
             runner = self.service.build_burst_runner(
                 self.project_root,
@@ -805,6 +830,8 @@ class RenderBenchmarkWorker(ManagedWorker):
                 preferred_region=self.settings.preferred_region,
                 min_inet_down_mbps=self.settings.min_inet_down_mbps,
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                audit=self.audit,
+                run_id=self.run_id,
             )
             self.runner = runner
             timings: list[float] = []

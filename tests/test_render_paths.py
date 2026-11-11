@@ -210,3 +210,64 @@ def test_video_command_uses_the_requested_frame_extension(tmp_path, monkeypatch)
     service.create_video(frames, 101, 101, 24.0, tmp_path / "review.mp4", extension="exr")
 
     assert str(frames / "frame_%04d.exr") in captured["command"]
+
+
+def test_preview_frame_uses_per_shot_override_and_clamps(tmp_path):
+    from src.domain.render.models import RenderSettings
+
+    service = RenderService()
+    shot = _shot()
+    settings = RenderSettings(
+        preview_frame_mode="middle",
+        preview_frames=((shot.relative_path, 150),),
+    )
+
+    assert service.preview_frame(shot, settings) == 150
+
+    clamped = RenderSettings(
+        preview_frames=((shot.relative_path, 5000),)
+    )
+    assert service.preview_frame(shot, clamped) == shot.frame_end
+
+
+def test_preview_frame_falls_back_to_the_configured_mode(tmp_path):
+    from src.domain.render.models import RenderSettings
+
+    service = RenderService()
+    shot = _shot()
+
+    assert service.preview_frame(
+        shot, RenderSettings(preview_frame_mode="first")
+    ) == shot.frame_start
+    assert service.preview_frame(
+        shot, RenderSettings(preview_frame_mode="last")
+    ) == shot.frame_end
+    assert service.preview_frame(
+        shot, RenderSettings(preview_frame_mode="middle")
+    ) == (shot.frame_start + shot.frame_end) // 2
+
+
+def test_local_plan_prefers_measured_local_times(tmp_path):
+    from dataclasses import replace
+
+    from src.domain.render.capacity import RenderCapacityCalculator
+
+    service = RenderService()
+    shot = replace(
+        _shot(),
+        frame_end=110,
+        frames_override=None,
+        measured_seconds=40.0,
+        local_measured_seconds=100.0,
+    )
+    plan = RenderCapacityCalculator().plan(
+        [shot],
+        target_hours=1.0,
+        gpu_profile="rtx_3080",
+        price_per_hour=0.2,
+    )
+
+    adjusted = service.adjust_plan_for_backend(plan, "local", 8.0)
+
+    assert adjusted.required_nodes == 1
+    assert adjusted.estimated_wall_seconds == plan.setup_seconds + 10 * 100.0

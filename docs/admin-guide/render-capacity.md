@@ -67,7 +67,9 @@ The values live in `<vfs_pipeline>/render_profiles.json` (for `p0005`:
 `05_config_estudio/render_profiles.json`). A profile is keyed by blend hash, GPU
 profile and quality. If the `.blend` changes, the old value is marked **stale**
 and shown as a previous benchmark; the panel's **Benchmark selected** button
-re-measures three representative frames.
+re-measures three representative frames of the shot's scene range (the dialog
+lists the exact `.blend`, the frames, the node and the upload size before
+renting).
 
 ## Worked example: p0005
 

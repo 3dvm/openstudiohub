@@ -848,14 +848,27 @@ QRadioButton::indicator {
     width: 14px;
     height: 14px;
     border: 1px solid #475569;
-    border-radius: 3px;
     background-color: #0F172A;
 }
 
-QCheckBox::indicator:checked,
+QCheckBox::indicator {
+    border-radius: 3px;
+}
+
+QRadioButton::indicator {
+    border-radius: 7px;
+}
+
+QCheckBox::indicator:checked {
+    background-color: #F97316;
+    border-color: #F97316;
+    image: url(assets/icons/check-white.svg);
+}
+
 QRadioButton::indicator:checked {
     background-color: #F97316;
     border-color: #F97316;
+    image: url(assets/icons/radio-dot-white.svg);
 }
 
 QGroupBox {

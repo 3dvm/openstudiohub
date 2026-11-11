@@ -18,15 +18,18 @@ import hashlib
 import json
 import shutil
 from datetime import datetime
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Sequence
 
 from src.domain.render.capacity import (
     GPU_PROFILES,
     RenderCapacityCalculator,
+    default_seconds_per_frame,
+    gpu_relative_speed,
     scale_seconds_for_gpu,
 )
+from src.domain.render.frames import BenchmarkFrameSelection, benchmark_frames
 from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
 from src.domain.workspace.blueprint import ProjectBlueprint
@@ -47,6 +50,7 @@ from src.infrastructure.render.profiles import (
     RenderProfileStore,
 )
 from src.infrastructure.render.settings import SETTINGS_FILENAME, RenderSettingsStore
+from src.infrastructure.render.staging import StagingPlan, scan_staging
 from src.infrastructure.render.comments import RenderCommentStore
 from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.local import LocalRenderReport, LocalRenderRunner
@@ -65,6 +69,16 @@ ScanProgressCallback = Callable[[str, int, int], None]
 
 class RenderServiceError(RuntimeError):
     """Raised when a render request cannot be completed."""
+
+
+@dataclass(frozen=True)
+class BenchmarkEstimate:
+    """Everything the UI needs before renting a node for a benchmark."""
+
+    shot: RenderShot
+    selection: BenchmarkFrameSelection
+    plan: RenderPlan
+    staging: StagingPlan
 
 
 class RenderService:
@@ -305,6 +319,9 @@ class RenderService:
                     measurement_stale=measurement_stale,
                     measurement_scaled=measurement_scaled,
                     measurement_source_gpu=measurement_source_gpu,
+                    local_measured_seconds=store.get(
+                        relative_path, "local", quality.key(), blend_hash=blend_hash
+                    ),
                 )
             )
         return shots
@@ -338,6 +355,7 @@ class RenderService:
         measurement_stale: bool = False,
         measurement_scaled: bool = False,
         measurement_source_gpu: str = "",
+        local_measured_seconds: float | None = None,
     ) -> RenderShot:
         relative = path.relative_to(production_root).as_posix()
         warnings: list[str] = []
@@ -404,6 +422,7 @@ class RenderService:
             has_camera=result.has_camera,
             blend_hash=blend_hash,
             measured_seconds=measured,
+            local_measured_seconds=local_measured_seconds,
             measurement_stale=measurement_stale,
             measurement_scaled=measurement_scaled,
             measurement_source_gpu=measurement_source_gpu,
@@ -466,6 +485,23 @@ class RenderService:
             gpu_label=gpu_label,
         )
         store.save()
+
+    def measurement(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        gpu_profile: str,
+    ) -> dict | None:
+        """Return the stored seconds-per-frame reference for one shot."""
+        root = Path(project_root)
+        blueprint = self.load_blueprint(root)
+        store = self.profile_store(root, blueprint)
+        return store.entry(
+            shot.relative_path,
+            gpu_profile,
+            shot.quality.key(),
+            blend_hash=shot.blend_hash,
+        )
 
     # ------------------------------------------------------------------
     # Vast
@@ -576,7 +612,7 @@ class RenderService:
         log_path=None,
     ) -> tuple[LocalRenderReport, Path]:
         root = Path(project_root)
-        frame = self._preview_frame(shot, settings)
+        frame = self.preview_frame(shot, settings)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         output_dir = self.preview_dir(
             root,
@@ -620,7 +656,7 @@ class RenderService:
         preview_shots: list[RenderShot] = []
         frames: dict[str, int] = {}
         for shot in shots:
-            frame = self._preview_frame(shot, settings)
+            frame = self.preview_frame(shot, settings)
             frames[shot.relative_path] = frame
             quality = replace(
                 settings.preview_quality,
@@ -677,7 +713,10 @@ class RenderService:
                 results.append((shot, image))
         return results, report
 
-    def _preview_frame(self, shot: RenderShot, settings: RenderSettings) -> int:
+    def preview_frame(self, shot: RenderShot, settings: RenderSettings) -> int:
+        override = settings.preview_frame_for(shot.relative_path)
+        if override is not None:
+            return max(shot.frame_start, min(shot.frame_end, override))
         mode = (settings.preview_frame_mode or "middle").lower()
         if mode == "first":
             return shot.frame_start
@@ -994,17 +1033,86 @@ class RenderService:
         """Local rendering uses one workstation and an approximate GPU factor."""
         if (backend or "").strip().lower() != "local":
             return plan
+        speed = max(1.0, float(local_speed_factor))
+        total_seconds = 0.0
+        used_local = False
+        for shot in plan.shots:
+            if shot.local_measured_seconds and shot.local_measured_seconds > 0:
+                seconds = float(shot.local_measured_seconds)
+                used_local = True
+            else:
+                seconds = shot.measured_seconds
+                if seconds is None:
+                    seconds = default_seconds_per_frame(
+                        shot.quality, shot.geometry_node_objects
+                    ) / max(0.1, gpu_relative_speed(plan.gpu_profile))
+                seconds = float(seconds) * speed
+            total_seconds += max(0, shot.frames) * max(0.0, seconds)
+        detail = (
+            "Local estimate uses the measured local times where available"
+            if used_local
+            else "Local estimate uses the measured RTX 3090 time"
+        )
         warnings = tuple(plan.warnings) + (
-            "Local estimate uses the measured RTX 3090 time × "
-            f"{local_speed_factor:.1f}; the real time depends on this workstation.",
+            f"{detail} × {speed:.1f} for unmeasured shots; the real time depends "
+            "on this workstation.",
         )
         return replace(
             plan,
             required_nodes=1 if plan.total_frames else 0,
-            estimated_wall_seconds=plan.total_gpu_seconds * max(1.0, local_speed_factor),
+            estimated_wall_seconds=(
+                plan.setup_seconds + total_seconds if plan.total_frames else 0.0
+            ),
             estimated_cost=0.0,
             price_per_hour=0.0,
             warnings=warnings,
+        )
+
+    def staging_estimate(self, project_root: Path | str) -> StagingPlan:
+        """Measure the production folder a Vast node will receive."""
+        root = Path(project_root)
+        blueprint = self.load_blueprint(root)
+        return scan_staging(root, self._production_folder(root, blueprint))
+
+    def benchmark_estimate(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        *,
+        gpu_profile: str = "rtx_3090",
+        price_per_hour: float = 0.0,
+        budget: float = 0.0,
+    ) -> BenchmarkEstimate:
+        """Plan the benchmark frames and the upload they need."""
+        root = Path(project_root)
+        approved = self.frame_state_store(root, shot, "render").approved_frames()
+        selection = benchmark_frames(shot, approved)
+        bench_shots = [
+            replace(
+                shot,
+                frame_start=frame,
+                frame_end=frame,
+                frame_step=1,
+                measured_seconds=None,
+                measurement_stale=False,
+            )
+            for frame in selection.frames
+        ]
+        plan = self.plan(
+            root,
+            target_hours=1.0,
+            gpu_profile=gpu_profile,
+            quality_override=shot.quality,
+            price_per_hour=price_per_hour,
+            max_nodes=1,
+            budget=budget,
+            shots=bench_shots,
+        )
+        return BenchmarkEstimate(
+            shot=shot,
+            selection=selection,
+            plan=plan,
+            staging=self.staging_estimate(root),
         )
 
     def build_burst_runner(

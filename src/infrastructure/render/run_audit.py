@@ -188,5 +188,5 @@ class RenderRunAuditLogger:
 
 
 def _safe_label(value) -> str:
-    text = str(value or "unknown").strip().replace(" ", "-")
+    text = str("" if value is None else value).strip().replace(" ", "-")
     return "".join(ch for ch in text if ch.isalnum() or ch in "-_.") or "unknown"

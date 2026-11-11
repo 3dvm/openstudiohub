@@ -59,8 +59,9 @@ For each node:
 3. Wait until the instance is `running`, then wait for SSH.
 4. Install the project's exact Blender version and its runtime libraries
    (about two to four minutes).
-5. Stage the production folder, `01_Brief_y_Refs` and
-   `04_datos_compartidos` over `rsync`.
+5. Report how many files and bytes will be uploaded, then stage only the
+   production folder (`topography.vfs_svn`) over `rsync`, showing live upload
+   progress on the node card. Briefs and the shared folder are not uploaded.
 6. Render a contiguous frame chunk with Cycles on GPU (CUDA; OptiX is also
    available). EEVEE is wrapped in `xvfb-run`.
 7. Sync the frames to

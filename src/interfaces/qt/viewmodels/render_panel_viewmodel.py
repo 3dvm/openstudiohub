@@ -14,6 +14,8 @@ widgets and forwards user actions.
 from __future__ import annotations
 
 import json
+import statistics
+import uuid
 from collections import deque
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
@@ -27,6 +29,7 @@ from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.status import RenderStatusStore
+from src.interfaces.qt.ui_format import format_rate
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
 from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     VcsPrompt,
@@ -41,6 +44,7 @@ from src.interfaces.qt.workers.render_workers import (
     RenderBurstWorker,
     RenderCandidatesWorker,
     OpenShotBlendWorker,
+    RenderOfferWorker,
     RenderPanelScanWorker,
     RenderPreviewVideoWorker,
     RenderPreviewWorker,
@@ -64,6 +68,9 @@ class RenderNodeCardModel:
     offer_id: int = 0
     frames_done: int = 0
     frames_expected: int = 0
+    upload_bytes_done: int = 0
+    upload_bytes_total: int = 0
+    upload_files: int = 0
     cost: float = 0.0
     stage: str = ""
     current_shot: str = ""
@@ -74,6 +81,28 @@ class RenderNodeCardModel:
     summary_logs: tuple[Path, ...] = field(default_factory=tuple)
     blender_logs: tuple[Path, ...] = field(default_factory=tuple)
     final: bool = False
+    run_id: str = ""
+    run_label: str = ""
+
+    @property
+    def key(self) -> str:
+        return f"{self.run_id}:{self.node}"
+
+
+@dataclass
+class RenderRunState:
+    """State owned by one active render job."""
+
+    run_id: str
+    backend: str
+    plan: RenderPlan
+    gpu_profile: str
+    locked_shots: set[str] = field(default_factory=set)
+    cards: dict[int, RenderNodeCardModel] = field(default_factory=dict)
+    progress_by_node: dict[int, int] = field(default_factory=dict)
+    frame_seconds: dict[str, list[float]] = field(default_factory=dict)
+    retry: bool = False
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass
@@ -141,6 +170,7 @@ _STAGE_TO_STATUS = {
     "create": "creating",
     "boot": "booting",
     "ssh": "ssh",
+    "install": "installing",
     "setup": "installing",
     "stage": "staging",
     "render": "rendering",
@@ -156,7 +186,9 @@ class RenderPanelViewModel(BaseViewModel):
     shots_ready = Signal(list, object, object, float, list)
     shot_reviews_ready = Signal(list)
     node_cards_ready = Signal(list)
-    node_card_updated = Signal(int)
+    node_card_updated = Signal(str)
+    render_runs_changed = Signal(int)
+    measurement_conflicts = Signal(list)
     scan_progress = Signal(str, int, int)
     scan_error = Signal(str)
 
@@ -164,10 +196,12 @@ class RenderPanelViewModel(BaseViewModel):
     preview_progress = Signal(str, int, int, float)
     preview_error = Signal(str)
     preview_finished = Signal(int, int, list, object)
+    preview_running = Signal(bool)
 
     benchmark_progress = Signal(object)
     benchmark_finished = Signal(str, float)
     benchmark_error = Signal(str)
+    benchmark_running = Signal(bool)
 
     burst_progress = Signal(object)
     local_render_progress = Signal(str, int, int, float)
@@ -212,9 +246,9 @@ class RenderPanelViewModel(BaseViewModel):
         self.workers = WorkerManager(self)
         self.burst_progress.connect(self._on_burst_progress_status)
         self.local_render_progress.connect(self._on_local_progress_status)
-        self.scan_error.connect(self._on_error_status)
-        self.preview_error.connect(self._on_error_status)
-        self.render_error.connect(self._on_error_status)
+        self.scan_error.connect(self._on_scan_error)
+        self.preview_error.connect(self._on_preview_error)
+        self.render_error.connect(self._on_render_error)
 
         self.project_name = ""
         self.project_id = ""
@@ -235,6 +269,14 @@ class RenderPanelViewModel(BaseViewModel):
         self.preview_video_paths: dict[str, Path] = {}
         self.node_cards: list[RenderNodeCardModel] = []
         self.candidate_offers: list = []
+        self._runs: dict[str, RenderRunState] = {}
+        self._plan_cards: list[RenderNodeCardModel] = []
+        self._finished_cards: list[RenderNodeCardModel] = []
+        self._preview_cards: list[RenderNodeCardModel] = []
+        self._preview_run_id = ""
+        self._benchmark_cards: list[RenderNodeCardModel] = []
+        self._benchmark_run_id = ""
+        self._local_run_id = ""
         self._progress_by_shot: dict[str, int] = {}
         self._progress_by_node: dict[int, int] = {}
         self._node_frame_seconds: dict[int, deque[float]] = {}
@@ -270,11 +312,20 @@ class RenderPanelViewModel(BaseViewModel):
         self._load_preview_paths()
         self.node_cards = []
         self.candidate_offers = []
+        self._runs = {}
+        self._plan_cards = []
+        self._finished_cards = []
+        self._preview_cards = []
+        self._preview_run_id = ""
+        self._benchmark_cards = []
+        self._benchmark_run_id = ""
+        self._local_run_id = ""
         self._locked_shots = set()
         self._failed_shots = set()
         self._node_frame_seconds = {}
         self.node_cards_ready.emit([])
         self.shot_reviews_ready.emit([])
+        self.render_runs_changed.emit(0)
         try:
             self.settings = self.service.load_settings(self.project_root)
         except Exception:  # noqa: BLE001
@@ -291,6 +342,91 @@ class RenderPanelViewModel(BaseViewModel):
 
     def update_settings(self, settings: RenderSettings) -> None:
         self.settings = settings
+        self._save_settings()
+
+    def update_preview_settings(self, settings: RenderSettings) -> None:
+        """Apply only the preview fields without changing the current plan."""
+        self.settings = replace(
+            self.settings,
+            preview_backend=settings.preview_backend,
+            preview_quality=settings.preview_quality,
+            preview_frame_mode=settings.preview_frame_mode,
+            preview_frame=settings.preview_frame,
+            preview_frames=settings.preview_frames,
+        )
+        self._save_settings()
+
+    def set_render_backend(
+        self, backend: str, settings: RenderSettings | None = None
+    ) -> None:
+        """Switch the final backend and refresh the plan immediately."""
+        value = (backend or "vast").strip().lower()
+        if value not in ("vast", "local"):
+            value = "vast"
+        if value == self.settings.render_backend and self.offer is not None:
+            return
+        updates: dict = {"render_backend": value}
+        if settings is not None:
+            updates.update(
+                gpu_profile=settings.gpu_profile,
+                target_hours=settings.target_hours,
+                max_price_per_hour=settings.max_price_per_hour,
+                max_nodes=settings.max_nodes,
+                budget=settings.budget,
+                preferred_region=settings.preferred_region,
+                min_inet_down_mbps=settings.min_inet_down_mbps,
+                min_inet_up_mbps=settings.min_inet_up_mbps,
+            )
+        self.settings = replace(self.settings, **updates)
+        self._save_settings()
+        self.recalculate()
+        if value == "vast":
+            self._refresh_vast_offer()
+
+    def _refresh_vast_offer(self) -> bool:
+        if self.project_root is None or self.read_only:
+            return False
+        if self.workers.is_running("render_offer"):
+            return False
+        count = max(1, int(self.plan.required_nodes or 1)) if self.plan else 1
+        worker = RenderOfferWorker(self.service, count, self.settings)
+        worker.offers_ready.connect(self._on_offers_ready)
+        worker.error.connect(self._on_offer_error)
+        self.report_status("Searching for a Vast.ai offer...", "yellow")
+        return self.workers.start("render_offer", worker)
+
+    def _on_offers_ready(self, offers: list, balance: float) -> None:
+        self.candidate_offers = list(offers or ())
+        self.offer = self.candidate_offers[0] if self.candidate_offers else None
+        self.balance = float(balance or 0.0)
+        self.recalculate()
+        if self.offer is None:
+            self.report_status(
+                "No Vast.ai offer matched the current price/network limits.", "red"
+            )
+            return
+        self.report_status(
+            f"Vast.ai offer: {self.offer.gpu_name} at "
+            f"${self.offer.price_per_hour:.2f}/h.",
+            "green",
+        )
+
+    def _on_offer_error(self, message: str) -> None:
+        self.offer = None
+        self.candidate_offers = []
+        self.recalculate()
+        self.report_status(message, "red")
+
+    def preview_frame_for(self, shot: RenderShot) -> int:
+        return self.service.preview_frame(shot, self.settings)
+
+    def set_preview_frame(self, shot: RenderShot, frame: int) -> None:
+        value = max(shot.frame_start, min(shot.frame_end, int(frame)))
+        entries = dict(self.settings.preview_frames)
+        entries[shot.relative_path] = value
+        self.settings = replace(
+            self.settings, preview_frames=tuple(sorted(entries.items()))
+        )
         self._save_settings()
 
     def set_selected_shots(self, relative_paths: list[str]) -> None:
@@ -334,52 +470,40 @@ class RenderPanelViewModel(BaseViewModel):
     ) -> None:
         self.set_busy(False)
         self.shots = list(shots)
-        self.plan = plan
         self.offer = offer
         self.balance = balance
+        self.candidate_offers = list(candidates or ())
         if not self.settings.selected_shots:
             ready = [shot.relative_path for shot in self.shots if shot.is_ready]
             self.settings = replace(self.settings, selected_shots=tuple(ready))
             self._save_settings()
-            if ready:
-                selected = self.service.selected_shots(self.shots, self.settings)
-                pending = self.service.pending_shots(
-                    self.project_root, selected, task_type=self.settings.task_type
-                )
-                price = offer.price_per_hour if offer is not None else 0.0
-                self.plan = self._with_offer_warning(
-                    self.service.adjust_plan_for_backend(
-                        self.service.plan(
-                            self.project_root,
-                            target_hours=self.settings.target_hours,
-                            gpu_profile=self.settings.gpu_profile,
-                            quality_override=self.settings.final_quality,
-                            price_per_hour=price,
-                            max_nodes=self.settings.max_nodes,
-                            budget=self.settings.budget,
-                            shots=pending,
-                        ),
-                        self.settings.render_backend,
-                        self.settings.local_speed_factor,
-                    )
-                )
-                plan = self.plan
-        self._write_status(
-            status="ready",
-            message="Render plan ready.",
-            frames_expected=plan.total_frames,
-            frames_done=0,
-            nodes=plan.required_nodes,
-            cost=plan.estimated_cost,
-        )
-        self.candidate_offers = list(candidates or [])
-        self._build_node_cards(plan)
+        self.recalculate()
+        current = self.plan or plan
+        if self._runs:
+            self._write_runs_status("Render plan ready.")
+        else:
+            self._write_status(
+                status="ready",
+                message="Render plan ready.",
+                frames_expected=current.total_frames if current else 0,
+                frames_done=0,
+                nodes=current.required_nodes if current else 0,
+                cost=current.estimated_cost if current else 0.0,
+            )
         self.report_status("Render plan ready.", "green")
-        self.shots_ready.emit(self.shots, plan, offer, balance, self.candidate_offers)
+        self.shots_ready.emit(
+            self.shots, self.plan, self.offer, self.balance, self.candidate_offers
+        )
         self._emit_shot_reviews()
 
     def is_shot_locked(self, shot: RenderShot) -> bool:
         return shot.relative_path in self._locked_shots
+
+    def has_active_runs(self) -> bool:
+        return bool(self._runs)
+
+    def active_run_count(self) -> int:
+        return len(self._runs)
 
     def shot_reviews(self) -> list[ShotReviewModel]:
         return [self._shot_review(shot) for shot in self.shots]
@@ -473,35 +597,30 @@ class RenderPanelViewModel(BaseViewModel):
         ]
 
     def render_single_shot(self, shot: RenderShot) -> bool:
-        if self.is_shot_locked(shot) or self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
-            self.render_error.emit("That shot is already rendering or a render is running.")
+        if self.is_shot_locked(shot):
+            self.render_error.emit("That shot is already rendering.")
             return False
-        self.settings = replace(
-            self.settings, selected_shots=(shot.relative_path,)
-        )
-        self._save_settings()
-        self.recalculate()
-        self._emit_shot_reviews()
-        return self.start_render()
+        plan = self._plan_for_shots([shot])
+        if not plan.shots:
+            self.render_error.emit("That shot has no pending frames.")
+            return False
+        return self._start_render_plan(plan)
 
     def retry_missing_shot(self, shot: RenderShot) -> bool:
-        if self.is_shot_locked(shot) or self.workers.is_running("render_burst") or self.workers.is_running("render_local"):
-            self.render_error.emit("That shot is already rendering or a render is running.")
+        if self.is_shot_locked(shot):
+            self.render_error.emit("That shot is already rendering.")
             return False
-        self.settings = replace(
-            self.settings, selected_shots=(shot.relative_path,)
-        )
-        self._save_settings()
-        self.recalculate()
-        self._emit_shot_reviews()
-        return self.start_render(retry=True)
+        plan = self._plan_for_shots([shot])
+        if not plan.shots:
+            self.render_error.emit("That shot has no missing frames.")
+            return False
+        return self._start_render_plan(plan, retry=True)
 
     def approve_all_rendered(self, shot: RenderShot) -> tuple[bool, str]:
         frames = self._rendered_frames(shot)
         if not frames:
             return False, "The shot has no rendered frames."
         result = self.approve_frames(shot, frames, True)
-        self._emit_shot_reviews()
         return result
 
     def unapprove_all(self, shot: RenderShot) -> tuple[bool, str]:
@@ -515,7 +634,6 @@ class RenderPanelViewModel(BaseViewModel):
         if not approved:
             return False, "The shot has no approved frames."
         result = self.approve_frames(shot, approved, False)
-        self._emit_shot_reviews()
         return result
 
     def delete_unapproved(self, shot: RenderShot) -> tuple[bool, str]:
@@ -531,7 +649,17 @@ class RenderPanelViewModel(BaseViewModel):
         self._emit_shot_reviews()
         return ok, message
 
+    @staticmethod
+    def _run_label(plan: RenderPlan) -> str:
+        names = [shot.name for shot in getattr(plan, "shots", ()) or ()]
+        if not names:
+            return ""
+        if len(names) <= 2:
+            return ", ".join(names)
+        return f"{names[0]}, {names[1]} +{len(names) - 2}"
+
     def _build_node_cards(self, plan: RenderPlan) -> None:
+        label = self._run_label(plan)
         if self.settings.render_backend == "local":
             cards = [
                 RenderNodeCardModel(
@@ -540,6 +668,8 @@ class RenderPanelViewModel(BaseViewModel):
                     message="Runs on this workstation.",
                     gpu_name="Local workstation",
                     final=True,
+                    run_id="plan",
+                    run_label=label,
                 )
             ]
         else:
@@ -556,6 +686,8 @@ class RenderPanelViewModel(BaseViewModel):
                             node=index,
                             status="candidate",
                             message="No candidate offer.",
+                            run_id="plan",
+                            run_label=label,
                         )
                     )
                     continue
@@ -571,8 +703,23 @@ class RenderPanelViewModel(BaseViewModel):
                         down_mbps=float(getattr(offer, "inet_down_mbps", 0.0) or 0.0),
                         up_mbps=float(getattr(offer, "inet_up_mbps", 0.0) or 0.0),
                         offer_id=int(getattr(offer, "id", 0) or 0),
+                        run_id="plan",
+                        run_label=label,
                     )
                 )
+        self._plan_cards = cards
+        self._sync_node_cards()
+
+    def _sync_node_cards(self) -> None:
+        cards: list[RenderNodeCardModel] = []
+        for run in sorted(self._runs.values(), key=lambda item: item.started_at):
+            cards.extend(
+                card for _node, card in sorted(run.cards.items())
+            )
+        cards.extend(self._finished_cards)
+        cards.extend(self._preview_cards)
+        cards.extend(self._benchmark_cards)
+        cards.extend(self._plan_cards)
         self.node_cards = cards
         self.node_cards_ready.emit(list(cards))
 
@@ -602,41 +749,100 @@ class RenderPanelViewModel(BaseViewModel):
             self._build_node_cards(self.plan)
         self.report_status("Candidate offers refreshed.", "green")
 
-    def _ensure_node_card(self, index: int) -> RenderNodeCardModel:
-        while len(self.node_cards) <= index:
-            self.node_cards.append(
-                RenderNodeCardModel(node=len(self.node_cards), status="queued")
+    def _ensure_node_card(self, run_id: str, node: int) -> RenderNodeCardModel:
+        run_id = str(run_id or "")
+        if run_id and run_id == self._preview_run_id:
+            while len(self._preview_cards) <= int(node):
+                self._preview_cards.append(
+                    RenderNodeCardModel(
+                        node=len(self._preview_cards),
+                        status="queued",
+                        run_id=run_id,
+                        run_label="preview",
+                    )
+                )
+                self._sync_node_cards()
+            return self._preview_cards[int(node)]
+        if run_id and run_id == self._benchmark_run_id:
+            while len(self._benchmark_cards) <= int(node):
+                self._benchmark_cards.append(
+                    RenderNodeCardModel(
+                        node=len(self._benchmark_cards),
+                        status="queued",
+                        run_id=run_id,
+                        run_label="benchmark",
+                    )
+                )
+                self._sync_node_cards()
+            return self._benchmark_cards[int(node)]
+        run = self._runs.get(run_id)
+        if run is not None:
+            card = run.cards.get(int(node))
+            if card is None:
+                card = RenderNodeCardModel(
+                    node=int(node),
+                    status="queued",
+                    run_id=run.run_id,
+                    run_label=self._run_label(run.plan),
+                )
+                run.cards[int(node)] = card
+                self._sync_node_cards()
+            return card
+        while len(self._plan_cards) <= int(node):
+            self._plan_cards.append(
+                RenderNodeCardModel(
+                    node=len(self._plan_cards),
+                    status="queued",
+                    run_id="plan",
+                )
             )
-        return self.node_cards[index]
+            self._sync_node_cards()
+        return self._plan_cards[int(node)]
 
-    def _mark_cards_queued(self) -> None:
-        self._node_frame_seconds = {}
-        for card in self.node_cards:
-            card.status = "queued"
-            card.final = False
-            card.message = "Waiting for a node."
-            card.instance_id = 0
-            card.frames_done = 0
-            card.frames_expected = 0
-            card.cost = 0.0
-            card.current_shot = ""
-            card.progress_percent = 0.0
-            card.seconds_per_frame = 0.0
-            card.eta_seconds = 0.0
-            card.hub_logs = ()
-            card.summary_logs = ()
-            card.blender_logs = ()
-        self.node_cards_ready.emit(list(self.node_cards))
-
-    def recalculate(self) -> None:
-        if not self.shots or self.project_root is None:
+    def _create_run_cards(self, run: RenderRunState) -> None:
+        label = self._run_label(run.plan)
+        cards: dict[int, RenderNodeCardModel] = {}
+        if run.backend == "local":
+            cards[0] = RenderNodeCardModel(
+                node=0,
+                status="queued",
+                message="Waiting for the workstation.",
+                run_id=run.run_id,
+                run_label=label,
+                gpu_name="Local workstation",
+            )
+            run.cards = cards
             return
-        selected = self.selected_shots
+        for index in range(max(1, int(run.plan.required_nodes or 1))):
+            offer = (
+                self.candidate_offers[index]
+                if index < len(self.candidate_offers)
+                else None
+            )
+            cards[index] = RenderNodeCardModel(
+                node=index,
+                status="queued",
+                message="Waiting for a node.",
+                run_id=run.run_id,
+                run_label=label,
+                gpu_name=str(getattr(offer, "gpu_name", "") or ""),
+                region=str(getattr(offer, "geolocation", "") or ""),
+                price_per_hour=float(getattr(offer, "price_per_hour", 0.0) or 0.0),
+                offer_id=int(getattr(offer, "id", 0) or 0),
+            )
+        run.cards = cards
+
+    def _available_selected_shots(self) -> list[RenderShot]:
+        return [
+            shot for shot in self.selected_shots if not self.is_shot_locked(shot)
+        ]
+
+    def _plan_for_shots(self, shots: list[RenderShot]) -> RenderPlan:
         pending = self.service.pending_shots(
-            self.project_root, selected, task_type=self.settings.task_type
+            self.project_root, shots, task_type=self.settings.task_type
         )
         price = self.offer.price_per_hour if self.offer is not None else 0.0
-        self.plan = self._with_offer_warning(
+        return self._with_offer_warning(
             self.service.adjust_plan_for_backend(
                 self.service.plan(
                     self.project_root,
@@ -652,6 +858,11 @@ class RenderPanelViewModel(BaseViewModel):
                 self.settings.local_speed_factor,
             )
         )
+
+    def recalculate(self) -> None:
+        if not self.shots or self.project_root is None:
+            return
+        self.plan = self._plan_for_shots(self._available_selected_shots())
         self._build_node_cards(self.plan)
         self.shots_ready.emit(
             self.shots, self.plan, self.offer, self.balance, self.candidate_offers
@@ -665,15 +876,16 @@ class RenderPanelViewModel(BaseViewModel):
             return False
         if self.workers.is_running("render_preview"):
             return False
-        if (
-            self.workers.is_running("render_burst")
-            or self.workers.is_running("render_local")
-            or self.workers.is_running("render_benchmark")
-        ):
-            self.preview_error.emit("A render process is already running.")
+        if self.workers.is_running("render_benchmark"):
+            self.preview_error.emit("A benchmark is already running.")
             return False
-        targets = list(shots or self.selected_shots)
+        targets = [
+            shot
+            for shot in (shots or self.selected_shots)
+            if not self.is_shot_locked(shot)
+        ]
         if not targets:
+            self.preview_error.emit("The selected shots are already rendering.")
             return False
         if self.settings.preview_backend == "vast" and self.offer is None:
             self.preview_error.emit(
@@ -683,6 +895,9 @@ class RenderPanelViewModel(BaseViewModel):
         import uuid
 
         self._active_run_id = uuid.uuid4().hex[:12]
+        self._preview_run_id = self._active_run_id
+        self._preview_cards = []
+        self._sync_node_cards()
         backend = (
             "vast" if self.settings.preview_backend == "vast" else "local"
         )
@@ -707,17 +922,18 @@ class RenderPanelViewModel(BaseViewModel):
         worker.preview_progress.connect(self.preview_progress)
         worker.burst_progress.connect(self.burst_progress)
         worker.finished_previews.connect(self._on_previews_finished)
-        self.set_busy(True)
-        self._write_status(
-            status="previewing",
-            backend=backend,
-            message="Rendering previews.",
-            frames_expected=len(targets),
-            frames_done=0,
-            nodes=1 if backend == "vast" else 0,
-            cost=0.0,
-            started_at=datetime.now(timezone.utc).isoformat(),
-        )
+        self.preview_running.emit(True)
+        if not self._runs:
+            self._write_status(
+                status="previewing",
+                backend=backend,
+                message="Rendering previews.",
+                frames_expected=len(targets),
+                frames_done=0,
+                nodes=1 if backend == "vast" else 0,
+                cost=0.0,
+                started_at=datetime.now(timezone.utc).isoformat(),
+            )
         location = "on Vast.ai" if backend == "vast" else "locally"
         self.report_status(
             f"Rendering {len(targets)} preview(s) {location}...", "yellow"
@@ -739,20 +955,30 @@ class RenderPanelViewModel(BaseViewModel):
     def _on_previews_finished(
         self, rendered: int, total: int, failed: list, report
     ) -> None:
-        self.set_busy(False)
+        self.preview_running.emit(False)
         self._finish_audit(
+            self._active_run_id,
             ok=not failed,
             message=f"Previews finished ({rendered}/{total}).",
         )
+        for card in self._preview_cards:
+            card.final = True
+            card.eta_seconds = 0.0
+            card.status = "completed" if not failed else "failed"
+        self._preview_run_id = ""
+        self._sync_node_cards()
         self.last_preview_failed = list(failed or [])
         self.last_preview_report = report
-        self._write_status(
-            status="ready" if not failed else "failed",
-            message=f"Previews finished ({rendered}/{total}).",
-            frames_done=rendered,
-            frames_expected=total,
-            cost=getattr(report, "cost", 0.0) if report is not None else 0.0,
-        )
+        if self._runs:
+            self._write_runs_status(f"Previews finished ({rendered}/{total}).")
+        else:
+            self._write_status(
+                status="ready" if not failed else "failed",
+                message=f"Previews finished ({rendered}/{total}).",
+                frames_done=rendered,
+                frames_expected=total,
+                cost=getattr(report, "cost", 0.0) if report is not None else 0.0,
+            )
         self.preview_finished.emit(rendered, total, list(failed or []), report)
 
     def retry_failed_previews(self) -> bool:
@@ -762,7 +988,34 @@ class RenderPanelViewModel(BaseViewModel):
             return False
         return self.preview_shots(targets)
 
-    def benchmark_selected(self, shot: RenderShot | None = None) -> bool:
+    def measurement_for(self, shot: RenderShot, backend: str = "remote") -> dict | None:
+        if self.project_root is None:
+            return None
+        profile = "local" if backend == "local" else self.settings.gpu_profile
+        try:
+            return self.service.measurement(self.project_root, shot, profile)
+        except Exception:  # noqa: BLE001
+            return None
+
+    def benchmark_estimate(self, shot: RenderShot | None = None):
+        """Upload/GPU/frame estimate shown before renting a benchmark node."""
+        if self.project_root is None or shot is None:
+            return None
+        price = float(getattr(self.offer, "price_per_hour", 0.0) or 0.0)
+        try:
+            return self.service.benchmark_estimate(
+                self.project_root,
+                shot,
+                gpu_profile=self.settings.gpu_profile,
+                price_per_hour=price,
+                budget=self.settings.budget,
+            )
+        except Exception:  # noqa: BLE001 - the dialog falls back to the plain prompt
+            return None
+
+    def benchmark_selected(
+        self, shot: RenderShot | None = None, *, overwrite: bool = False
+    ) -> bool:
         if self.project_root is None or self.read_only or not self.shots:
             self.benchmark_error.emit(
                 "Scan the project and select a shot before benchmarking."
@@ -772,23 +1025,78 @@ class RenderPanelViewModel(BaseViewModel):
         if shot is None:
             self.benchmark_error.emit("Select a shot to benchmark.")
             return False
+        if self.is_shot_locked(shot):
+            self.benchmark_error.emit("That shot is already rendering.")
+            return False
         if (
             self.workers.is_running("render_benchmark")
             or self.workers.is_running("render_preview")
-            or self.workers.is_running("render_burst")
-            or self.workers.is_running("render_local")
         ):
-            self.benchmark_error.emit("Another render process is already running.")
+            self.benchmark_error.emit("A benchmark or preview is already running.")
             return False
+        if not overwrite and self.measurement_for(shot) is not None:
+            self.benchmark_error.emit(
+                "A benchmark already exists for this shot; confirm the overwrite."
+            )
+            return False
+        estimate = self.benchmark_estimate(shot)
+        if estimate is not None and not estimate.selection.frames:
+            self.benchmark_error.emit(
+                "The shot has no frames in its scene range to benchmark."
+            )
+            return False
+        run_id = uuid.uuid4().hex[:12]
+        self._benchmark_run_id = run_id
+        self._benchmark_cards = [
+            RenderNodeCardModel(
+                node=0,
+                status="queued",
+                message=f"Preparing the benchmark of {shot.relative_path}",
+                run_id=run_id,
+                run_label="benchmark",
+                current_shot=shot.name,
+                frames_expected=(
+                    len(estimate.selection.frames) if estimate is not None else 0
+                ),
+            )
+        ]
+        self._sync_node_cards()
+        self.audit.log(
+            "run_start",
+            run_id=run_id,
+            backend="benchmark-vast",
+            project=self.project_name,
+            shot=shot.name,
+            blend=shot.relative_path,
+            frames=(
+                list(estimate.selection.frames) if estimate is not None else []
+            ),
+            upload_bytes=estimate.staging.bytes if estimate is not None else 0,
+            upload_files=estimate.staging.files if estimate is not None else 0,
+            nodes=1,
+        )
         worker = RenderBenchmarkWorker(
-            self.service, self.project_root, shot, self.settings, self.offer
+            self.service,
+            self.project_root,
+            shot,
+            self.settings,
+            self.offer,
+            audit=self.audit,
+            run_id=run_id,
         )
         worker.benchmark_progress.connect(self.benchmark_progress)
+        worker.benchmark_progress.connect(self._on_burst_progress_status)
         worker.benchmark_finished.connect(self._on_benchmark_finished)
-        worker.error.connect(self.benchmark_error)
-        self.set_busy(True)
+        worker.error.connect(self._on_benchmark_error)
+        self.benchmark_running.emit(True)
+        frames = (
+            ", ".join(str(frame) for frame in estimate.selection.frames)
+            if estimate is not None
+            else "?"
+        )
         self.report_status(
-            f"Benchmarking {shot.name} on a Vast.ai node...", "yellow"
+            f"Benchmarking {shot.name} (frames {frames}) on a Vast.ai node...",
+            "yellow",
         )
         return self.workers.start("render_benchmark", worker, critical=True)
 
@@ -801,115 +1109,183 @@ class RenderPanelViewModel(BaseViewModel):
         return self.shots[0]
 
     def _on_benchmark_finished(self, shot_name: str, median: float) -> None:
-        self.set_busy(False)
-        self.report_status(
-            f"Benchmark for {shot_name}: {median:.1f} s/frame.", "green"
+        run_id = self._benchmark_run_id
+        message = f"Benchmark for {shot_name}: {format_rate(median)}/frame."
+        self._finish_benchmark_cards("completed", message)
+        self.audit.log(
+            "run_finished", run_id=run_id, ok=True, message=message
         )
+        self._benchmark_run_id = ""
+        self.benchmark_running.emit(False)
+        self.report_status(message, "green")
         self.benchmark_finished.emit(shot_name, median)
         self.scan()
+
+    def _on_benchmark_error(self, message: str) -> None:
+        run_id = self._benchmark_run_id
+        self._finish_benchmark_cards("failed", message)
+        self.audit.log(
+            "run_finished", run_id=run_id, ok=False, message=message
+        )
+        self._benchmark_run_id = ""
+        self.benchmark_running.emit(False)
+        self.benchmark_error.emit(message)
+
+    def _finish_benchmark_cards(self, status: str, message: str) -> None:
+        for card in self._benchmark_cards:
+            card.status = status
+            card.message = message
+            card.final = True
+            card.eta_seconds = 0.0
+        self._sync_node_cards()
 
     # ------------------------------------------------------------------
     # Render
     # ------------------------------------------------------------------
     def start_render(self, retry: bool = False) -> bool:
-        if self.project_root is None or self.read_only or self.plan is None:
+        return self._start_render_plan(self.plan, retry=retry)
+
+    def _start_render_plan(self, plan: RenderPlan | None, retry: bool = False) -> bool:
+        if self.project_root is None or self.read_only or plan is None:
             return False
-        if not self.plan.shots:
+        targets = [
+            shot for shot in plan.shots if not self.is_shot_locked(shot)
+        ]
+        if not targets:
             self.render_error.emit("No shots selected for render.")
+            return False
+        if (
+            self.settings.render_backend == "vast"
+            and self.workers.is_running("render_offer")
+        ):
+            self.render_error.emit(
+                "Still searching for a Vast.ai offer. Try again in a moment."
+            )
             return False
         if self.settings.render_backend == "vast" and self.offer is None:
             self.render_error.emit(
                 "No Vast.ai offer within the price cap; raise the max price or use local."
             )
             return False
-        if (
-            self.workers.is_running("render_burst")
-            or self.workers.is_running("render_local")
-            or self.workers.is_running("render_preview")
-            or self.workers.is_running("render_benchmark")
-        ):
-            self.render_error.emit("Another render process is already running.")
+        if self.workers.is_running("render_preview"):
+            self.render_error.emit("A preview is already running.")
             return False
-        self._mark_cards_queued()
-        selected = self.service.selected_shots(self.shots, self.settings)
-        self._locked_shots = {shot.relative_path for shot in selected}
-        self._failed_shots.clear()
-        self._emit_shot_reviews()
-        if self.settings.render_backend == "local":
-            self._start_audit("local")
+        if len(targets) != len(plan.shots):
+            plan = self._plan_for_shots(targets)
+            if not plan.shots:
+                self.render_error.emit("No pending frames for the unlocked shots.")
+                return False
+        backend = self.settings.render_backend
+        if backend == "local" and any(
+            run.backend == "local" for run in self._runs.values()
+        ):
+            self.render_error.emit("A local render is already running.")
+            return False
+        if backend == "vast" and self.balance > 0:
+            reserved = sum(
+                run.plan.estimated_cost
+                for run in self._runs.values()
+                if run.backend == "vast"
+            ) + float(plan.estimated_cost or 0.0)
+            if reserved > self.balance:
+                self.render_error.emit(
+                    "The active runs plus this plan exceed the Vast.ai balance "
+                    f"(${reserved:.2f} > ${self.balance:.2f})."
+                )
+                return False
+        run_id = uuid.uuid4().hex[:12]
+        run = RenderRunState(
+            run_id=run_id,
+            backend=backend,
+            plan=plan,
+            gpu_profile=self.settings.gpu_profile,
+            locked_shots={shot.relative_path for shot in plan.shots},
+            retry=retry,
+        )
+        self._start_audit(run_id, backend, plan)
+        self._failed_shots.difference_update(run.locked_shots)
+        if backend == "local":
+            self._local_run_id = run_id
+            self._create_run_cards(run)
+            self._register_run(run)
             worker = LocalRenderWorker(
                 self.service,
                 self.project_root,
-                list(self.plan.shots),
+                list(plan.shots),
                 self.settings,
                 skip_existing=retry,
                 audit=self.audit,
-                run_id=self._active_run_id,
+                run_id=run_id,
             )
             worker.render_progress.connect(self.local_render_progress)
-            worker.finished_render.connect(self._on_local_finished)
-            worker.error.connect(self.render_error)
-            self.set_busy(True)
-            self._progress_by_shot = {}
-            self._progress_by_node = {}
-            self._write_status(
-                status="rendering",
-                backend="local",
-                message="Rendering locally.",
-                frames_expected=self.plan.total_frames,
-                frames_done=0,
-                nodes=1,
-                started_at=datetime.now(timezone.utc).isoformat(),
+            worker.finished_render.connect(
+                lambda reports, rid=run_id: self._on_local_finished(rid, reports)
             )
+            worker.error.connect(
+                lambda message, rid=run_id: self._on_run_error(rid, message)
+            )
+            self._progress_by_shot = {}
             self.report_status(
-                f"Rendering {self.plan.total_frames} frame(s) locally...", "yellow"
+                f"Rendering {plan.total_frames} frame(s) locally...", "yellow"
             )
             return self.workers.start("render_local", worker, critical=True)
 
-        self._start_audit("vast")
+        self._create_run_cards(run)
+        self._register_run(run)
         worker = RenderBurstWorker(
             self.service,
             self.project_root,
-            self.plan,
+            plan,
             max_price_per_hour=self.settings.max_price_per_hour,
             preferred_region=self.settings.preferred_region,
             min_inet_down_mbps=self.settings.min_inet_down_mbps,
             min_inet_up_mbps=self.settings.min_inet_up_mbps,
             audit=self.audit,
-            run_id=self._active_run_id,
+            run_id=run_id,
             skip_existing=retry,
         )
         worker.burst_progress.connect(self.burst_progress)
         worker.report_ready.connect(self._handle_burst_finished)
-        worker.error.connect(self.render_error)
-        self.set_busy(True)
-        self._progress_by_node = {}
-        self._write_status(
-            status="rendering",
-            backend="vast",
-            message="Starting Vast.ai nodes.",
-            frames_expected=self.plan.total_frames,
-            frames_done=0,
-            nodes=self.plan.required_nodes,
-            started_at=datetime.now(timezone.utc).isoformat(),
+        worker.error.connect(
+            lambda message, rid=run_id: self._on_run_error(rid, message)
         )
         self.report_status(
-            f"Starting {self.plan.required_nodes} Vast.ai node(s)...", "yellow"
+            f"Starting {plan.required_nodes} Vast.ai node(s)...", "yellow"
         )
-        return self.workers.start("render_burst", worker, critical=True)
+        return self.workers.start(f"render_burst:{run_id}", worker, critical=True)
 
-    def _on_local_finished(self, reports: list) -> None:
-        self.set_busy(False)
+    def _register_run(self, run: RenderRunState) -> None:
+        self._runs[run.run_id] = run
+        self._finished_cards = []
+        self._locked_shots.update(run.locked_shots)
+        self._sync_node_cards()
+        self._emit_shot_reviews()
+        self.render_runs_changed.emit(len(self._runs))
+        self._write_runs_status()
+        self.recalculate()
+
+    def _on_local_finished(self, run_id: str, reports: list) -> None:
+        run = self._runs.pop(run_id, None)
+        self._local_run_id = ""
         rendered = sum(item.frames_rendered for item in reports)
-        self._write_status(
-            status="completed" if all(item.ok for item in reports) else "failed",
-            message=f"Local render: {rendered} frame(s).",
-            frames_done=rendered,
-        )
         ok = bool(reports) and all(item.ok for item in reports)
-        self._finish_audit(ok=ok, message="Local render finished.")
-        self._update_local_cards(reports)
-        self._finish_shot_run(ok, sum(item.frames_rendered for item in reports))
+        message = f"Local render: {rendered} frame(s)."
+        self._finish_audit(run_id, ok=ok, message="Local render finished.")
+        if run is not None:
+            self._update_local_run_cards(run, reports)
+            self._store_run_measurements(run)
+            self._release_run(run, ok=ok, rendered=rendered)
+        if self._runs:
+            self._write_runs_status(message)
+        else:
+            self._write_status(
+                status="completed" if ok else "failed",
+                message=message,
+                frames_done=rendered,
+                frames_expected=None,
+                nodes=0,
+                runs=[],
+            )
         self.render_finished.emit(reports)
 
     def _preview_index_path(self) -> Path | None:
@@ -1071,7 +1447,12 @@ class RenderPanelViewModel(BaseViewModel):
         self.shot_launch_finished.emit(relative_path, ok, message)
 
     def cancel_render(self) -> None:
-        for key in ("render_burst", "render_local", "render_preview"):
+        for key in self.workers.keys():
+            if not (
+                key.startswith("render_burst:")
+                or key in ("render_local", "render_preview")
+            ):
+                continue
             worker = self.workers.get(key)
             if worker is not None and hasattr(worker, "cancel"):
                 worker.cancel()
@@ -1093,38 +1474,83 @@ class RenderPanelViewModel(BaseViewModel):
         self.report_status("Stopping all render processes...", "yellow")
 
     def _handle_burst_finished(self, report) -> None:
-        self.set_busy(False)
-        self._write_status(
-            status="completed" if getattr(report, "ok", False) else "failed",
-            message=getattr(report, "message", "Render finished."),
-            frames_done=getattr(report, "frames_rendered", 0),
-            cost=getattr(report, "cost", 0.0),
-        )
+        run_id = str(getattr(report, "run_id", "") or "")
+        run = self._runs.pop(run_id, None)
+        ok = bool(getattr(report, "ok", False))
+        message = getattr(report, "message", "Render finished.")
         self.last_burst_report = report
-        self._finish_audit(
-            ok=bool(getattr(report, "ok", False)),
-            message=getattr(report, "message", ""),
-        )
-        self._update_burst_cards(report)
-        self._finish_shot_run(
-            bool(getattr(report, "ok", False)),
-            int(getattr(report, "frames_rendered", 0)),
-        )
+        self._finish_audit(run_id, ok=ok, message=message)
+        if run is not None:
+            self._update_burst_run_cards(run, report)
+            self._store_run_measurements(run)
+            self._release_run(
+                run, ok=ok, rendered=int(getattr(report, "frames_rendered", 0))
+            )
+        if self._runs:
+            self._write_runs_status(message)
+        else:
+            self._write_status(
+                status="completed" if ok else "failed",
+                message=message,
+                frames_done=getattr(report, "frames_rendered", 0),
+                cost=getattr(report, "cost", 0.0),
+                nodes=0,
+                runs=[],
+            )
         self.render_finished.emit(report)
 
-    def _finish_shot_run(self, ok: bool, rendered: int) -> None:
-        locked = set(self._locked_shots)
+    def _on_run_error(self, run_id: str, message: str) -> None:
+        run = self._runs.pop(str(run_id or ""), None)
+        if self._local_run_id == str(run_id or ""):
+            self._local_run_id = ""
+        self._finish_audit(run_id, ok=False, message=message)
+        if run is not None:
+            for card in run.cards.values():
+                if not card.final:
+                    card.status = "failed"
+                    card.message = message
+                    card.final = True
+                    card.eta_seconds = 0.0
+            self._release_run(run, ok=False, rendered=0)
+        if self._runs:
+            self._write_runs_status(message)
+        else:
+            self._write_status(
+                status="failed", message=message, nodes=0, runs=[]
+            )
+        self.render_error.emit(message)
+
+    def _release_run(self, run: RenderRunState, *, ok: bool, rendered: int) -> None:
+        locked = set(run.locked_shots)
         if not ok and rendered <= 0:
             self._failed_shots.update(locked)
         else:
             self._failed_shots.difference_update(locked)
-        self._locked_shots.clear()
+        self._locked_shots.difference_update(locked)
+        self._finished_cards.extend(
+            card for _node, card in sorted(run.cards.items())
+        )
+        self._sync_node_cards()
         self._emit_shot_reviews()
+        self.render_runs_changed.emit(len(self._runs))
+        self.recalculate()
 
-    def _update_burst_cards(self, report) -> None:
-        run_id = getattr(report, "run_id", self._active_run_id)
+    def _update_burst_run_cards(self, run: RenderRunState, report) -> None:
+        used_nodes = {
+            int(result.node) for result in (getattr(report, "nodes", ()) or ())
+        }
+        for node in list(run.cards):
+            if node not in used_nodes:
+                del run.cards[node]
         for result in getattr(report, "nodes", ()) or ():
-            card = self._ensure_node_card(int(result.node))
+            card = run.cards.get(int(result.node))
+            if card is None:
+                card = RenderNodeCardModel(
+                    node=int(result.node),
+                    run_id=run.run_id,
+                    run_label=self._run_label(run.plan),
+                )
+                run.cards[int(result.node)] = card
             card.status = "completed" if result.ok else "failed"
             card.message = result.message
             card.stage = result.stage
@@ -1141,17 +1567,22 @@ class RenderPanelViewModel(BaseViewModel):
             card.gpu_name = result.gpu_name or card.gpu_name
             card.region = result.region or card.region
             card.price_per_hour = result.price_per_hour or card.price_per_hour
-            card.hub_logs = (self.audit.node_log_path(run_id, result.node),)
+            card.hub_logs = (self.audit.node_log_path(run.run_id, result.node),)
             card.summary_logs = (
-                self.audit.run_dir(run_id) / f"node-{result.node}.json",
+                self.audit.run_dir(run.run_id) / f"node-{result.node}.json",
             )
             card.blender_logs = tuple(Path(path) for path in result.blender_logs or ())
             card.final = True
-            self.node_card_updated.emit(card.node)
+            self.node_card_updated.emit(card.key)
 
-    def _update_local_cards(self, reports: list) -> None:
-        card = self._ensure_node_card(0)
-        shots = list(self.plan.shots) if self.plan is not None else []
+    def _update_local_run_cards(self, run: RenderRunState, reports: list) -> None:
+        card = run.cards.get(0)
+        if card is None:
+            card = RenderNodeCardModel(
+                node=0, run_id=run.run_id, run_label=self._run_label(run.plan)
+            )
+            run.cards[0] = card
+        shots = list(run.plan.shots)
         hub_logs: list[Path] = []
         summary_logs: list[Path] = []
         blender_logs: list[Path] = []
@@ -1160,14 +1591,16 @@ class RenderPanelViewModel(BaseViewModel):
             if shot is None:
                 continue
             node_id = f"local-{shot.name}"
-            hub_logs.append(self.audit.node_log_path(self._active_run_id, node_id))
+            hub_logs.append(self.audit.node_log_path(run.run_id, node_id))
             summary_logs.append(
-                self.audit.run_dir(self._active_run_id) / f"node-{node_id}.json"
+                self.audit.run_dir(run.run_id) / f"node-{node_id}.json"
             )
             blender_logs.append(
-                self.audit.blender_log_path(self._active_run_id, node_id)
+                self.audit.blender_log_path(run.run_id, node_id)
             )
-        card.status = "completed" if not reports or all(item.ok for item in reports) else "failed"
+        card.status = (
+            "completed" if not reports or all(item.ok for item in reports) else "failed"
+        )
         card.gpu_name = card.gpu_name or "Local workstation"
         card.frames_done = sum(item.frames_rendered for item in reports or [])
         card.frames_expected = sum(item.frames_expected for item in reports or [])
@@ -1182,7 +1615,84 @@ class RenderPanelViewModel(BaseViewModel):
         card.summary_logs = tuple(summary_logs)
         card.blender_logs = tuple(blender_logs)
         card.final = True
-        self.node_card_updated.emit(0)
+        self.node_card_updated.emit(card.key)
+
+    def _store_run_measurements(self, run: RenderRunState) -> None:
+        if self.project_root is None:
+            return
+        backend = "local" if run.backend == "local" else "remote"
+        profile = "local" if backend == "local" else run.gpu_profile
+        gpu_label = (
+            run.cards[0].gpu_name
+            if run.cards and run.cards[0].gpu_name
+            else ("Local workstation" if backend == "local" else "")
+        )
+        conflicts: list[dict] = []
+        for shot in run.plan.shots:
+            samples = run.frame_seconds.get(shot.name) or []
+            if not samples:
+                continue
+            seconds = float(statistics.median(samples))
+            if seconds <= 0:
+                continue
+            existing = self.measurement_for(shot, backend)
+            item = {
+                "shot": shot,
+                "backend": backend,
+                "gpu_profile": profile,
+                "seconds": seconds,
+                "existing": existing,
+                "gpu_label": gpu_label,
+            }
+            if existing is None:
+                self._apply_measurement(item)
+            else:
+                conflicts.append(item)
+        if conflicts:
+            self.measurement_conflicts.emit(conflicts)
+
+    def resolve_measurement_conflict(self, item: dict, replace_it: bool) -> None:
+        if replace_it:
+            self._apply_measurement(item)
+            self.recalculate()
+
+    def _apply_measurement(self, item: dict) -> None:
+        if self.project_root is None:
+            return
+        shot = item["shot"]
+        seconds = float(item.get("seconds") or 0.0)
+        if seconds <= 0:
+            return
+        backend = str(item.get("backend") or "remote")
+        profile = "local" if backend == "local" else str(
+            item.get("gpu_profile") or self.settings.gpu_profile
+        )
+        try:
+            self.service.record_measurement(
+                self.project_root,
+                shot,
+                profile,
+                seconds,
+                gpu_label=str(item.get("gpu_label") or ""),
+            )
+        except Exception:  # noqa: BLE001
+            return
+        for index, candidate in enumerate(self.shots):
+            if candidate.relative_path != shot.relative_path:
+                continue
+            if backend == "local":
+                self.shots[index] = replace(
+                    candidate, local_measured_seconds=seconds
+                )
+            else:
+                self.shots[index] = replace(
+                    candidate,
+                    measured_seconds=seconds,
+                    measurement_stale=False,
+                    measurement_scaled=False,
+                    measurement_source_gpu="",
+                )
+            break
 
     def run_log_dir(self) -> Path:
         """Folder that contains the detailed node logs for the last run."""
@@ -1208,26 +1718,25 @@ class RenderPanelViewModel(BaseViewModel):
             return candidate
         return self.audit.run_dir(run_id)
 
-    def _start_audit(self, backend: str) -> None:
-        import uuid
-
-        self._active_run_id = uuid.uuid4().hex[:12]
+    def _start_audit(self, run_id: str, backend: str, plan: RenderPlan | None = None) -> None:
+        self._active_run_id = run_id
+        audit_plan = plan or self.plan
         self.audit.log(
             "run_start",
-            run_id=self._active_run_id,
+            run_id=run_id,
             backend=backend,
             project=self.project_name,
-            frames=self.plan.total_frames if self.plan else 0,
-            nodes=self.plan.required_nodes if self.plan else 0,
-            cost=self.plan.estimated_cost if self.plan else 0.0,
+            frames=audit_plan.total_frames if audit_plan else 0,
+            nodes=audit_plan.required_nodes if audit_plan else 0,
+            cost=audit_plan.estimated_cost if audit_plan else 0.0,
         )
 
-    def _finish_audit(self, *, ok: bool, message: str) -> None:
-        if not self._active_run_id:
+    def _finish_audit(self, run_id: str, *, ok: bool, message: str) -> None:
+        if not run_id:
             return
         self.audit.log(
             "run_finished",
-            run_id=self._active_run_id,
+            run_id=run_id,
             ok=bool(ok),
             message=str(message or ""),
         )
@@ -1392,6 +1901,8 @@ class RenderPanelViewModel(BaseViewModel):
             approved,
             task_type=self.settings.task_type,
         )
+        if result[0]:
+            self._emit_shot_reviews()
         self.report_status(result[1], "green" if result[0] else "red")
         return result
 
@@ -1462,13 +1973,86 @@ class RenderPanelViewModel(BaseViewModel):
         ]
         self.status_store.write(data)
 
+    def _write_runs_status(self, message: str = "") -> None:
+        if self.status_store is None or not self._runs:
+            return
+        data = self.status_store.read()
+        data["project"] = self.project_name
+        runs: list[dict] = []
+        done = expected = nodes = 0
+        cost = 0.0
+        for run in sorted(self._runs.values(), key=lambda item: item.started_at):
+            run_done = sum(run.progress_by_node.values())
+            run_expected = sum(
+                card.frames_expected
+                for card in run.cards.values()
+                if card.frames_expected
+            ) or int(run.plan.total_frames or 0)
+            run_nodes = len(run.cards) or int(run.plan.required_nodes)
+            run_cost = sum(card.cost for card in run.cards.values())
+            done += run_done
+            expected += run_expected
+            nodes += run_nodes
+            cost += run_cost
+            runs.append(
+                {
+                    "run_id": run.run_id,
+                    "backend": run.backend,
+                    "frames_done": run_done,
+                    "frames_expected": run_expected,
+                    "nodes": run_nodes,
+                    "shots": [shot.name for shot in run.plan.shots],
+                    "started_at": run.started_at.isoformat(),
+                }
+            )
+        backends = {run.backend for run in self._runs.values()}
+        data.update(
+            {
+                "status": "rendering",
+                "backend": next(iter(backends)) if len(backends) == 1 else "mixed",
+                "message": message or f"{len(runs)} render run(s) active.",
+                "frames_done": done,
+                "frames_expected": expected,
+                "nodes": nodes,
+                "cost": cost,
+                "runs": runs,
+                "started_at": min(
+                    run.started_at for run in self._runs.values()
+                ).isoformat(),
+            }
+        )
+        data["shots"] = [
+            {"name": shot.name, "frames": shot.frames, "ready": shot.is_ready}
+            for shot in self.shots
+        ]
+        self.status_store.write(data)
+
     def _on_burst_progress_status(self, event) -> None:
         node = int(getattr(event, "node", 0))
-        if getattr(event, "frames_total", 0):
+        run_id = str(getattr(event, "run_id", "") or "")
+        run = self._runs.get(run_id)
+        if run is None and getattr(event, "frames_total", 0):
             self._progress_by_node[node] = int(getattr(event, "frames_done", 0))
-        card = self._ensure_node_card(node)
+        card = self._ensure_node_card(run_id, node)
         stage = str(getattr(event, "stage", "") or "")
-        card.status = _STAGE_TO_STATUS.get(stage, card.status or "rendering")
+        terminal = stage in ("finished", "failed")
+        if card.final and not terminal:
+            return
+        log_run_id = run_id or self._active_run_id
+        if terminal:
+            ok = bool(getattr(event, "ok", stage == "finished"))
+            card.status = "completed" if ok else "failed"
+            card.final = True
+            card.eta_seconds = 0.0
+            card.hub_logs = (self.audit.node_log_path(log_run_id, node),)
+            card.summary_logs = (
+                self.audit.run_dir(log_run_id) / f"node-{node}.json",
+            )
+            card.blender_logs = tuple(
+                Path(path) for path in getattr(event, "blender_logs", ()) or ()
+            )
+        else:
+            card.status = _STAGE_TO_STATUS.get(stage, card.status or "rendering")
         card.stage = stage
         card.message = str(getattr(event, "message", "") or "")
         card.instance_id = int(getattr(event, "instance_id", 0) or card.instance_id or 0)
@@ -1482,11 +2066,23 @@ class RenderPanelViewModel(BaseViewModel):
             card.offer_id = int(event.offer_id)
         if getattr(event, "shot", ""):
             card.current_shot = str(event.shot)
+        bytes_total = int(getattr(event, "bytes_total", 0) or 0)
+        if bytes_total > 0:
+            card.upload_bytes_total = bytes_total
+            card.upload_bytes_done = int(getattr(event, "bytes_done", 0) or 0)
+        files_total = int(getattr(event, "files_total", 0) or 0)
+        if files_total > 0:
+            card.upload_files = files_total
         card.frames_done = int(getattr(event, "frames_done", 0) or card.frames_done or 0)
         card.frames_expected = int(
             getattr(event, "frames_total", 0) or card.frames_expected or 0
         )
-        if card.frames_expected > 0:
+        if stage == "stage" and card.upload_bytes_total > 0:
+            card.progress_percent = min(
+                100.0,
+                card.upload_bytes_done * 100.0 / card.upload_bytes_total,
+            )
+        elif card.frames_expected > 0:
             card.progress_percent = min(
                 100.0, card.frames_done * 100.0 / card.frames_expected
             )
@@ -1498,56 +2094,104 @@ class RenderPanelViewModel(BaseViewModel):
             except (TypeError, ValueError):
                 seconds = 0.0
             if seconds > 0:
-                samples = self._node_frame_seconds.setdefault(node, deque(maxlen=8))
+                samples = self._node_frame_seconds.setdefault(
+                    card.key, deque(maxlen=8)
+                )
                 samples.append(seconds)
                 card.seconds_per_frame = sum(samples) / len(samples)
+                if run is not None and getattr(event, "shot", ""):
+                    run.frame_seconds.setdefault(str(event.shot), []).append(seconds)
+        if run is not None:
+            run.progress_by_node[node] = card.frames_done
         remaining = max(0, card.frames_expected - card.frames_done)
         if card.seconds_per_frame > 0 and stage in ("frame", "render"):
             card.eta_seconds = card.seconds_per_frame * remaining
         elif stage in ("sync", "validate", "destroy") or card.status in ("completed", "failed", "destroyed"):
             card.eta_seconds = 0.0
-        self.node_card_updated.emit(node)
+        self.node_card_updated.emit(card.key)
+        if run is not None:
+            self._write_runs_status(str(getattr(event, "message", "") or ""))
+            return
+        if run_id and run_id == self._preview_run_id:
+            if not self._runs:
+                self._write_status(
+                    status="previewing",
+                    message=getattr(event, "message", ""),
+                )
+            return
+        if run_id and run_id == self._benchmark_run_id:
+            return
+        expected_total = sum(
+            card.frames_expected for card in self.node_cards if card.frames_expected
+        )
         self._write_status(
             status="rendering",
             message=getattr(event, "message", ""),
             frames_done=sum(self._progress_by_node.values()),
-            frames_expected=(self.plan.total_frames if self.plan else None),
+            frames_expected=(
+                expected_total
+                or (self.plan.total_frames if self.plan else None)
+            ),
         )
 
     def _on_local_progress_status(self, shot_name: str, done: int, total: int, seconds: float) -> None:
+        run = self._runs.get(self._local_run_id)
         self._progress_by_shot[shot_name] = int(done)
-        card = self._ensure_node_card(0)
+        card = self._ensure_node_card(self._local_run_id, 0)
         card.status = "rendering"
         card.current_shot = shot_name
-        card.message = f"{shot_name}: {done}/{total} ({seconds:.1f}s)"
+        card.message = f"{shot_name}: {done}/{total} ({format_rate(seconds)})"
         card.frames_done = sum(self._progress_by_shot.values())
-        card.frames_expected = self.plan.total_frames if self.plan else card.frames_expected
+        card.frames_expected = (
+            run.plan.total_frames
+            if run is not None
+            else (self.plan.total_frames if self.plan else card.frames_expected)
+        )
         if card.frames_expected:
             card.progress_percent = min(
                 100.0, card.frames_done * 100.0 / card.frames_expected
             )
         if seconds > 0:
-            samples = self._node_frame_seconds.setdefault(0, deque(maxlen=8))
+            samples = self._node_frame_seconds.setdefault(
+                card.key, deque(maxlen=8)
+            )
             samples.append(float(seconds))
             card.seconds_per_frame = sum(samples) / len(samples)
             card.eta_seconds = card.seconds_per_frame * max(
                 0, card.frames_expected - card.frames_done
             )
-        self.node_card_updated.emit(0)
+            if run is not None:
+                run.frame_seconds.setdefault(shot_name, []).append(float(seconds))
+        if run is not None:
+            run.progress_by_node[0] = card.frames_done
+        self.node_card_updated.emit(card.key)
+        if run is not None:
+            self._write_runs_status(
+                f"{shot_name}: {done}/{total} ({format_rate(seconds)})"
+            )
+            return
         self._write_status(
             status="rendering",
-            message=f"{shot_name}: {done}/{total} ({seconds:.1f}s)",
+            message=f"{shot_name}: {done}/{total} ({format_rate(seconds)})",
             frames_done=sum(self._progress_by_shot.values()),
         )
 
-    def _on_error_status(self, message: str) -> None:
+    def _on_scan_error(self, message: str) -> None:
         self.set_busy(False)
-        self._finish_audit(ok=False, message=message)
-        if self._locked_shots:
-            self._failed_shots.update(self._locked_shots)
-            self._locked_shots.clear()
-            self._emit_shot_reviews()
-        self._write_status(status="failed", message=message)
+        self.report_status(message, "red")
+        if not self._runs:
+            self._write_status(status="failed", message=message)
+
+    def _on_preview_error(self, message: str) -> None:
+        self.preview_running.emit(False)
+        self.report_status(message, "red")
+        if not self._runs:
+            self._write_status(status="failed", message=message)
+
+    def _on_render_error(self, message: str) -> None:
+        self.report_status(message, "red")
+        if not self._runs:
+            self._write_status(status="failed", message=message)
 
     # ------------------------------------------------------------------
     # Lifecycle

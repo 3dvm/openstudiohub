@@ -115,3 +115,20 @@ def test_shot_with_quality_preserves_setup_and_stale_flag():
     assert changed.measured_seconds == 29.5
     assert changed.measurement_stale is True
     assert changed.setup is setup
+
+
+def test_preview_frames_round_trip_per_shot(tmp_path):
+    store = RenderSettingsStore(tmp_path / "render_settings.json")
+    settings = RenderSettings(
+        preview_frames=(
+            ("pro/shots/sq010/070/070-layout.blend", 150),
+            ("pro/shots/sq010/sh020/sh020-layout.blend", 222),
+        )
+    )
+    store.save(settings)
+
+    loaded = RenderSettingsStore(store.path).load()
+
+    assert loaded.preview_frame_for("pro/shots/sq010/070/070-layout.blend") == 150
+    assert loaded.preview_frame_for("pro/shots/sq010/sh020/sh020-layout.blend") == 222
+    assert loaded.preview_frame_for("missing") is None

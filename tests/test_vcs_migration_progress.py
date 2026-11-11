@@ -77,6 +77,8 @@ def test_dialog_updates_and_finalizes(qapp):
 
     assert dialog.progress.value() == 42
     assert "rev 5/10" in dialog.lbl_stats.text()
+    assert "ETA 12s" in dialog.lbl_stats.text()
+    assert "elapsed 3s" in dialog.lbl_stats.text()
 
     dialog.finalize(True, "all good")
     assert dialog.btn_cancel.isHidden() is True

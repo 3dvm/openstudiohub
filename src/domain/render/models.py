@@ -169,10 +169,18 @@ class RenderSettings:
     video_version: str = ""
     preview_frame_mode: str = "middle"
     preview_frame: int = 0
+    preview_frames: tuple[tuple[str, int], ...] = ()
     local_speed_factor: float = 8.0
     preferred_region: str = "prefer_americas"
     min_inet_down_mbps: float = 100.0
     min_inet_up_mbps: float = 50.0
+
+    def preview_frame_for(self, relative_path: str) -> int | None:
+        """Return the explicit preview frame for a shot, when configured."""
+        for path, frame in self.preview_frames:
+            if path == relative_path:
+                return int(frame)
+        return None
 
     def to_dict(self) -> dict:
         return {
@@ -192,6 +200,9 @@ class RenderSettings:
             "video_version": self.video_version,
             "preview_frame_mode": self.preview_frame_mode,
             "preview_frame": self.preview_frame,
+            "preview_frames": {
+                str(path): int(frame) for path, frame in self.preview_frames
+            },
             "local_speed_factor": self.local_speed_factor,
             "preferred_region": self.preferred_region,
             "min_inet_down_mbps": self.min_inet_down_mbps,
@@ -225,6 +236,7 @@ class RenderSettings:
             video_version=str(data.get("video_version") or ""),
             preview_frame_mode=str(data.get("preview_frame_mode") or "middle"),
             preview_frame=int(data.get("preview_frame") or 0),
+            preview_frames=_preview_frames_from_dict(data.get("preview_frames")),
             local_speed_factor=float(data.get("local_speed_factor") or 8.0),
             preferred_region=str(data.get("preferred_region") or "prefer_americas"),
             min_inet_down_mbps=float(data.get("min_inet_down_mbps") or 100.0),
@@ -263,6 +275,21 @@ def _quality_from_dict(data: dict | None, fallback: RenderQuality) -> RenderQual
     )
 
 
+def _preview_frames_from_dict(data) -> tuple[tuple[str, int], ...]:
+    if not isinstance(data, dict):
+        return ()
+    entries: list[tuple[str, int]] = []
+    for path, frame in data.items():
+        try:
+            value = int(frame)
+        except (TypeError, ValueError):
+            continue
+        text = str(path or "").strip()
+        if text:
+            entries.append((text, value))
+    return tuple(sorted(entries))
+
+
 @dataclass(frozen=True)
 class RenderShot:
     """One renderable shot and its measured (or estimated) cost."""
@@ -283,6 +310,7 @@ class RenderShot:
     has_camera: bool = True
     blend_hash: str = ""
     measured_seconds: float | None = None
+    local_measured_seconds: float | None = None
     measurement_stale: bool = False
     measurement_scaled: bool = False
     measurement_source_gpu: str = ""

@@ -21,6 +21,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from src.interfaces.qt.ui_format import format_bytes, format_duration, format_rate
+
 _STATUS_COLORS = {
     "candidate": "#94A3B8",
     "queued": "#94A3B8",
@@ -89,9 +91,15 @@ class RenderNodeCard(QFrame):
 
     def update_model(self, card) -> None:
         is_local = str(getattr(card, "gpu_name", "")).lower().startswith("local")
-        self.lbl_title.setText(
-            self.tr("Local workstation") if is_local else self.tr("Node {0}").format(card.node + 1)
+        title = (
+            self.tr("Local workstation")
+            if is_local
+            else self.tr("Node {0}").format(card.node + 1)
         )
+        run_label = str(getattr(card, "run_label", "") or "")
+        if run_label and not is_local:
+            title = f"{title} · {run_label}"
+        self.lbl_title.setText(title)
         status = str(getattr(card, "status", "") or "candidate")
         self.lbl_status.setText(status.replace("_", " ").title())
         self.lbl_status.setStyleSheet(
@@ -111,9 +119,20 @@ class RenderNodeCard(QFrame):
         done = int(getattr(card, "frames_done", 0) or 0)
         expected = int(getattr(card, "frames_expected", 0) or 0)
         percent = float(getattr(card, "progress_percent", 0.0) or 0.0)
-        meta.append(f"{done}/{expected} frames · {percent:.0f}%")
+        upload_total = int(getattr(card, "upload_bytes_total", 0) or 0)
+        upload_done = int(getattr(card, "upload_bytes_done", 0) or 0)
+        if upload_total > 0 and str(getattr(card, "stage", "")) == "stage":
+            meta.append(
+                f"{format_bytes(upload_done)} / {format_bytes(upload_total)} "
+                f"· {percent:.0f}%"
+            )
+            files = int(getattr(card, "upload_files", 0) or 0)
+            if files:
+                meta.append(f"{files:,} file(s)")
+        elif expected > 0:
+            meta.append(f"{done}/{expected} frames · {percent:.0f}%")
         if getattr(card, "seconds_per_frame", 0):
-            meta.append(f"{float(card.seconds_per_frame):.1f}s/frame")
+            meta.append(f"{format_rate(float(card.seconds_per_frame))}/frame")
         if getattr(card, "cost", 0):
             meta.append(f"${float(card.cost):.3f}")
         self.lbl_meta.setText(" · ".join(meta))
@@ -123,11 +142,8 @@ class RenderNodeCard(QFrame):
         if getattr(card, "final", False):
             self.lbl_eta.setText("")
         elif eta > 0:
-            minutes, seconds = divmod(int(eta), 60)
             self.lbl_eta.setText(
-                f"~{minutes}m {seconds:02d}s remaining"
-                if minutes
-                else f"~{seconds}s remaining"
+                self.tr("~{0} remaining").format(format_duration(eta))
             )
         elif status in ("rendering", "queued"):
             self.lbl_eta.setText(self.tr("Estimating remaining time..."))

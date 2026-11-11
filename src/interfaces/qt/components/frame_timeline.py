@@ -21,7 +21,7 @@ class FrameTimeline(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("FrameTimeline")
-        self.setMinimumHeight(30)
+        self.setMinimumHeight(42)
         self.setMouseTracking(True)
         self._entries: list[tuple[int, Path | None]] = []
         self._approved: set[int] = set()
@@ -60,18 +60,32 @@ class FrameTimeline(QWidget):
 
         count = len(self._entries)
         frame_width = max(1.0, width / max(1, count))
-        first, last = self._entries[0][0], self._entries[-1][0]
-        low, high = sorted((self._in_point or first, self._out_point or first))
-        if self._in_point is None or self._out_point is None:
-            low = high = None
+        bar_top = 6.0
+        band_height = 4.0
+        band_top = height - 8.0
+        bar_height = max(2.0, band_top - 3.0 - bar_top)
+        positions = {
+            frame: position for position, (frame, _path) in enumerate(self._entries)
+        }
+        in_index = positions.get(self._in_point)
+        out_index = positions.get(self._out_point)
 
-        if low is not None:
-            start = (low - first) / max(1, last - first) * width
-            end = (high - first) / max(1, last - first) * width
+        if in_index is not None and out_index is not None:
+            low_index, high_index = sorted((in_index, out_index))
+            start = low_index * frame_width
+            end = (high_index + 1) * frame_width
+        else:
+            start = self._index * frame_width
+            end = (self._index + 1) * frame_width
+        if in_index is not None and out_index is not None:
             painter.fillRect(
                 QRectF(start, 0, max(2.0, end - start), height),
-                QColor(249, 115, 22, 55),
+                QColor(249, 115, 22, 34),
             )
+        painter.fillRect(
+            QRectF(start, band_top, max(2.0, end - start), band_height),
+            QColor("#F97316"),
+        )
 
         for position, (frame, path) in enumerate(self._entries):
             x = position * frame_width
@@ -81,11 +95,33 @@ class FrameTimeline(QWidget):
                 color = QColor("#10B981")
             else:
                 color = QColor("#38BDF8")
-            painter.fillRect(QRectF(x, 4, max(1.0, frame_width), height - 8), color)
+            painter.fillRect(
+                QRectF(x, bar_top, max(1.0, frame_width), bar_height), color
+            )
             if frame in self._comment_frames:
                 painter.setBrush(QColor("#F59E0B"))
                 painter.setPen(Qt.NoPen)
-                painter.drawEllipse(QRectF(x - 2, height - 8, 5, 5))
+                painter.drawEllipse(
+                    QRectF(x + frame_width / 2 - 2, 1, 4, 4)
+                )
+
+        marker_color = QColor("#F97316")
+        if in_index is not None:
+            x = (
+                min(in_index, out_index) * frame_width
+                if out_index is not None
+                else in_index * frame_width + frame_width / 2
+            )
+            painter.fillRect(QRectF(x - 1, 2, 2, height - 4), marker_color)
+            painter.fillRect(QRectF(x - 4, 1, 8, 3), marker_color)
+        if out_index is not None:
+            x = (
+                (max(in_index, out_index) + 1) * frame_width
+                if in_index is not None
+                else out_index * frame_width + frame_width / 2
+            )
+            painter.fillRect(QRectF(x - 1, 2, 2, height - 4), marker_color)
+            painter.fillRect(QRectF(x - 4, 1, 8, 3), marker_color)
 
         if self._index < count:
             x = self._index * frame_width + frame_width / 2
@@ -106,6 +142,16 @@ class FrameTimeline(QWidget):
                 state = "missing" if path is None else (
                     "approved" if frame in self._approved else "rendered"
                 )
+                selected = False
+                if self._in_point is not None and self._out_point is not None:
+                    low, high = sorted((self._in_point, self._out_point))
+                    selected = low <= frame <= high
+                elif self._in_point is not None:
+                    selected = frame == self._in_point
+                elif self._out_point is not None:
+                    selected = frame == self._out_point
+                if selected:
+                    state += " · selected"
                 QToolTip.showText(
                     event.globalPosition().toPoint(),
                     f"Frame {frame} · {state}",

@@ -197,3 +197,256 @@ def test_preview_poster_offers_play_only_with_a_sequence(qapp, tmp_path):
     assert poster.btn_play.isHidden() is False
     assert poster.btn_play.isEnabled() is True
     poster.deleteLater()
+
+
+def test_preview_frame_spin_tracks_the_selected_shot(qapp):
+    from pathlib import Path
+
+    from src.domain.render.models import RenderQuality, RenderShot
+
+    widget = _widget()
+    shot = RenderShot(
+        name="sh010",
+        blend_path=Path("/project/sh010.blend"),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(samples=128),
+        frame_start=101,
+        frame_end=196,
+        object_count=20,
+        mesh_count=10,
+        has_camera=True,
+    )
+    widget._shots = [shot]
+
+    widget._select_shot(shot.relative_path)
+    assert widget.spin_preview_frame.minimum() == 101
+    assert widget.spin_preview_frame.maximum() == 196
+    assert widget.spin_preview_frame.value() == 148
+
+    widget.spin_preview_frame.setValue(120)
+    assert widget.vm.settings.preview_frame_for(shot.relative_path) == 120
+    widget.deleteLater()
+
+
+def test_preview_dialog_uses_the_preview_backend(qapp, monkeypatch):
+    from pathlib import Path
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.domain.render.models import RenderQuality, RenderSettings, RenderShot
+
+    widget = _widget()
+    shot = RenderShot(
+        name="sh010",
+        blend_path=Path("/project/sh010.blend"),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(samples=128),
+        frame_start=101,
+        frame_end=196,
+        object_count=20,
+        mesh_count=10,
+        has_camera=True,
+    )
+    widget._shots = [shot]
+    widget._selected_shot = shot
+    widget.vm.settings = RenderSettings(
+        render_backend="vast", preview_backend="vast"
+    )
+    _set_backend(widget.combo_preview_backend, "local")
+    texts = []
+    previews = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: texts.append(args[2]) or QMessageBox.Yes,
+    )
+    monkeypatch.setattr(
+        widget.vm,
+        "preview_shots",
+        lambda shots: previews.append(shots) or True,
+    )
+
+    widget._preview_selected()
+
+    assert widget.vm.settings.preview_backend == "local"
+    assert widget.vm.settings.render_backend == "vast"
+    assert texts and "locally" in texts[0]
+    assert "Vast.ai" not in texts[0]
+    assert previews == [[shot]]
+    widget.deleteLater()
+
+
+def test_preview_dialog_reports_vast_for_the_vast_preview_backend(qapp, monkeypatch):
+    from pathlib import Path
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.domain.render.models import RenderQuality, RenderSettings, RenderShot
+
+    widget = _widget()
+    shot = RenderShot(
+        name="sh010",
+        blend_path=Path("/project/sh010.blend"),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(samples=128),
+        frame_start=101,
+        frame_end=196,
+        object_count=20,
+        mesh_count=10,
+        has_camera=True,
+    )
+    widget._shots = [shot]
+    widget._selected_shot = shot
+    widget.vm.settings = RenderSettings(
+        render_backend="local", preview_backend="local"
+    )
+    _set_backend(widget.combo_preview_backend, "vast")
+    texts = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: texts.append(args[2]) or QMessageBox.Yes,
+    )
+    monkeypatch.setattr(widget.vm, "preview_shots", lambda shots: True)
+
+    widget._preview_selected()
+
+    assert widget.vm.settings.preview_backend == "vast"
+    assert widget.vm.settings.render_backend == "local"
+    assert texts and "Vast.ai" in texts[0]
+    widget.deleteLater()
+
+
+def test_final_backend_combo_recalculates_the_plan(qapp, monkeypatch):
+    widget = _widget()
+    calls = []
+    monkeypatch.setattr(
+        widget.vm,
+        "set_render_backend",
+        lambda backend, settings=None: calls.append(backend),
+    )
+
+    _set_backend(widget.combo_backend, "local")
+    _set_backend(widget.combo_backend, "vast")
+
+    assert calls == ["local", "vast"]
+    widget.deleteLater()
+
+
+def _approval_widget(tmp_path):
+    from pathlib import Path
+
+    from src.domain.render.models import RenderQuality, RenderShot
+
+    widget = _widget()
+    shot = RenderShot(
+        name="sh010",
+        blend_path=Path("/project/sh010.blend"),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(samples=128),
+        frame_start=101,
+        frame_end=101,
+        object_count=20,
+        mesh_count=10,
+        has_camera=True,
+    )
+    frame = tmp_path / "frame_0101.png"
+    frame.write_bytes(b"x")
+    widget._shots = [shot]
+    widget._selected_shot = shot
+    widget._player_shot_path = shot.relative_path
+    widget.player.set_sequence([(101, frame)], fps=24, autoplay=False)
+    return widget, shot
+
+
+def test_player_approve_refreshes_badge_and_buttons(qapp, tmp_path, monkeypatch):
+    widget, shot = _approval_widget(tmp_path)
+    monkeypatch.setattr(
+        widget.vm,
+        "approve_frames",
+        lambda *args, **kwargs: (True, "1 frame(s) approved."),
+    )
+    monkeypatch.setattr(widget.vm, "approved_frames", lambda _shot: {101})
+
+    widget._approve_frames([101], True)
+
+    assert "Approved" in widget.player.lbl_badge.text()
+    assert widget.player.btn_unapprove_selection.isEnabled() is True
+    widget.deleteLater()
+
+
+def test_approve_all_refreshes_the_open_player(qapp, tmp_path, monkeypatch):
+    widget, shot = _approval_widget(tmp_path)
+    monkeypatch.setattr(
+        widget.vm,
+        "approve_all_rendered",
+        lambda _shot: (True, "1 frame(s) approved."),
+    )
+    monkeypatch.setattr(widget.vm, "approved_frames", lambda _shot: {101})
+
+    widget._on_shot_action(shot.relative_path, "approve_all")
+
+    assert "Approved" in widget.player.lbl_badge.text()
+    assert widget.player.btn_unapprove_selection.isEnabled() is True
+    widget.deleteLater()
+
+
+def test_render_node_card_eta_uses_adaptive_duration(qapp):
+    from src.interfaces.qt.components.render_node_card import RenderNodeCard
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderNodeCardModel
+
+    widget = RenderNodeCard()
+    widget.update_model(
+        RenderNodeCardModel(
+            node=0,
+            status="rendering",
+            frames_done=1,
+            frames_expected=10,
+            eta_seconds=3661,
+        )
+    )
+    assert widget.lbl_eta.text() == "~1h 1m 1s remaining"
+
+    widget.update_model(
+        RenderNodeCardModel(
+            node=0,
+            status="rendering",
+            frames_done=1,
+            frames_expected=10,
+            eta_seconds=45,
+        )
+    )
+    assert widget.lbl_eta.text() == "~45s remaining"
+
+    widget.update_model(
+        RenderNodeCardModel(
+            node=0,
+            status="rendering",
+            frames_done=1,
+            frames_expected=10,
+            eta_seconds=8 * 86400 + 3600,
+        )
+    )
+    assert widget.lbl_eta.text() == "~1w 1d 1h remaining"
+    widget.deleteLater()
+
+
+def test_target_wall_time_uses_adaptive_duration(qapp):
+    widget = _widget()
+
+    assert widget.combo_target.itemText(0) == "1h"
+    assert widget.combo_target.itemText(1) == "2h"
+
+    widget.spin_hours.setValue(1.5)
+    assert widget.lbl_target_duration.text() == "1h 30m"
+
+    widget.spin_hours.setValue(0.25)
+    assert widget.lbl_target_duration.text() == "15m"
+
+    widget.spin_hours.setValue(30)
+    assert widget.lbl_target_duration.text() == "1d 6h"
+    widget.deleteLater()

@@ -44,14 +44,15 @@ class RenderProfileStore:
     def shots(self) -> dict:
         return self._data.setdefault("shots", {})
 
-    def get(
+    def entry(
         self,
         relative_path: str,
         gpu_profile: str,
         quality_key: str,
         *,
         blend_hash: str = "",
-    ) -> float | None:
+    ) -> dict | None:
+        """Return the stored measurement entry, including its metadata."""
         with self._lock:
             entry = self.shots.get(relative_path) or {}
             if blend_hash and entry.get("blend_hash") and entry["blend_hash"] != blend_hash:
@@ -63,7 +64,30 @@ class RenderProfileStore:
             seconds = float(profile.get("seconds"))
         except (TypeError, ValueError):
             return None
-        return seconds if seconds > 0 else None
+        if seconds <= 0:
+            return None
+        return {
+            "seconds": seconds,
+            "gpu": str(profile.get("gpu") or gpu_profile),
+            "measured_at": str(profile.get("measured_at") or ""),
+            "gpu_profile": gpu_profile,
+        }
+
+    def get(
+        self,
+        relative_path: str,
+        gpu_profile: str,
+        quality_key: str,
+        *,
+        blend_hash: str = "",
+    ) -> float | None:
+        entry = self.entry(
+            relative_path,
+            gpu_profile,
+            quality_key,
+            blend_hash=blend_hash,
+        )
+        return float(entry["seconds"]) if entry is not None else None
 
     def set(
         self,

@@ -18,6 +18,8 @@ persistent farm does not apply to an ephemeral per-job burst.
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 from collections import deque
 import tempfile
@@ -29,10 +31,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
+from src.domain.render.capacity import default_seconds_per_frame
+from src.domain.render.formatting import format_bytes
 from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderShot
 from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
+from src.infrastructure.render.staging import STAGING_EXCLUDES, scan_staging
 from src.infrastructure.render.vast import (
     DEFAULT_DISK_GB,
     DEFAULT_IMAGE,
@@ -80,14 +85,17 @@ if config["engine"] == "CYCLES":
     scene.cycles.use_denoising = bool(config.get("denoise", True))
     scene.cycles.denoiser = "OPENIMAGEDENOISE"
     scene.render.use_persistent_data = True
-    print("OSDEVICES::" + json.dumps([(d.name, d.type, d.use) for d in prefs.devices]))
+    print(
+        "OSDEVICES::" + json.dumps([(d.name, d.type, d.use) for d in prefs.devices]),
+        flush=True,
+    )
 elif config["engine"].upper().startswith("BLENDER_EEVEE"):
     eevee = getattr(scene, "eevee", None)
     if eevee is not None:
         eevee.taa_render_samples = int(config["samples"])
 
 if config.get("bake_particles"):
-    print("OSBAKE::start")
+    print("OSBAKE::start", flush=True)
     scene.frame_start = int(config.get("frame_start", scene.frame_start))
     scene.frame_end = int(config.get("frame_end", scene.frame_end))
     baked = 0
@@ -108,17 +116,20 @@ if config.get("bake_particles"):
                 ):
                     bpy.ops.ptcache.bake(bake=True)
                 baked += 1
-                print("OSBAKE::baked::%s::%s" % (obj.name, psys.name))
+                print("OSBAKE::baked::%s::%s" % (obj.name, psys.name), flush=True)
             except Exception as exc:
-                print("OSBAKE::error::%s::%s::%s" % (obj.name, psys.name, exc))
+                print(
+                    "OSBAKE::error::%s::%s::%s" % (obj.name, psys.name, exc),
+                    flush=True,
+                )
     if baked == 0:
         try:
             with bpy.context.temp_override(scene=scene):
                 bpy.ops.ptcache.bake_all(bake=True)
-            print("OSBAKE::bake_all_done")
+            print("OSBAKE::bake_all_done", flush=True)
         except Exception as exc:
-            print("OSBAKE::bake_all_error::%s" % exc)
-    print("OSBAKE::done::%d" % baked)
+            print("OSBAKE::bake_all_error::%s" % exc, flush=True)
+    print("OSBAKE::done::%d" % baked, flush=True)
 
 output_dir = config["output_dir"]
 os.makedirs(output_dir, exist_ok=True)
@@ -129,7 +140,10 @@ for frame in config["frames"]:
     started = time.monotonic()
     bpy.ops.render.render(write_still=True)
     elapsed = time.monotonic() - started
-    print("OSFRAME::" + json.dumps({"frame": frame, "seconds": round(elapsed, 3)}))
+    print(
+        "OSFRAME::" + json.dumps({"frame": frame, "seconds": round(elapsed, 3)}),
+        flush=True,
+    )
 """
 
 
@@ -150,6 +164,12 @@ class BurstProgress:
     price_per_hour: float = 0.0
     offer_id: int = 0
     shot: str = ""
+    ok: bool = False
+    bytes_done: int = 0
+    bytes_total: int = 0
+    files_total: int = 0
+    blender_logs: tuple[str, ...] = ()
+    run_id: str = ""
 
 
 @dataclass
@@ -211,7 +231,6 @@ class RenderBurstRunner:
         image: str = DEFAULT_IMAGE,
         disk_gb: int = DEFAULT_DISK_GB,
         max_price_per_hour: float = 0.0,
-        stage_shared: bool = True,
         task_type: str = "render",
         preferred_region: str = "prefer_us",
         min_inet_down_mbps: float = 0.0,
@@ -231,7 +250,6 @@ class RenderBurstRunner:
         self.image = image
         self.disk_gb = int(disk_gb)
         self.max_price_per_hour = float(max_price_per_hour)
-        self.stage_shared = bool(stage_shared)
         self.task_type = str(task_type or "render")
         self.preferred_region = str(preferred_region or "prefer_us")
         self.min_inet_down_mbps = float(min_inet_down_mbps or 0.0)
@@ -275,7 +293,7 @@ class RenderBurstRunner:
 
         initial_assignments = [
             assignment
-            for assignment in self._assign(shots, max(1, plan.required_nodes))
+            for assignment in self._assign(shots, max(1, plan.required_nodes), plan)
             if assignment
         ]
         if not initial_assignments:
@@ -312,7 +330,7 @@ class RenderBurstRunner:
         if len(offers) < len(initial_assignments):
             initial_assignments = [
                 assignment
-                for assignment in self._assign(shots, len(offers))
+                for assignment in self._assign(shots, len(offers), plan)
                 if assignment
             ]
             if not initial_assignments:
@@ -473,8 +491,14 @@ class RenderBurstRunner:
     # ------------------------------------------------------------------
     # Assignment
     # ------------------------------------------------------------------
-    def _assign(self, shots: Sequence[RenderShot], nodes: int) -> list[list[BurstTask]]:
-        entries: list[tuple[RenderShot, int]] = []
+    def _assign(
+        self,
+        shots: Sequence[RenderShot],
+        nodes: int,
+        plan: RenderPlan | None = None,
+    ) -> list[list[BurstTask]]:
+        nodes = max(1, int(nodes))
+        shot_frames: list[tuple[RenderShot, list[int], float]] = []
         for shot in shots:
             if not shot.is_ready:
                 continue
@@ -483,7 +507,10 @@ class RenderBurstRunner:
             state = RenderFrameStateStore(self.output_root / output_subdir)
             approved = state.approved_frames()
             step = max(1, shot.frame_step)
+            frames: list[int] = []
             for frame in range(shot.frame_start, shot.frame_end + 1, step):
+                if frame in approved:
+                    continue
                 if self.skip_existing:
                     extension = image_format(shot.quality.file_format).extension
                     path = (
@@ -491,33 +518,83 @@ class RenderBurstRunner:
                         / output_subdir
                         / f"frame_{frame:04d}.{extension}"
                     )
-                    if path.is_file() or frame in approved:
+                    if path.is_file():
                         continue
-                entries.append((shot, frame))
-        if not entries:
+                frames.append(frame)
+            if not frames:
+                continue
+            seconds = shot.measured_seconds
+            if not seconds or seconds <= 0:
+                seconds = default_seconds_per_frame(
+                    shot.quality, shot.geometry_node_objects
+                )
+            shot_frames.append(
+                (shot, frames, len(frames) * max(0.1, float(seconds)))
+            )
+        if not shot_frames:
             return []
+        if nodes == 1:
+            return [
+                self._tasks_from_pairs(
+                    (shot, frame)
+                    for shot, frames, _weight in shot_frames
+                    for frame in frames
+                )
+            ]
 
-        chunks: list[list[tuple[RenderShot, int]]] = [[] for _ in range(nodes)]
-        total = len(entries)
-        for index, entry in enumerate(entries):
-            node = min(nodes - 1, (index * nodes) // total)
-            chunks[node].append(entry)
+        total_weight = sum(weight for _shot, _frames, weight in shot_frames)
+        if plan is not None:
+            single_capacity = max(
+                60.0,
+                float(plan.target_seconds) - float(plan.setup_seconds),
+            ) * max(0.1, float(plan.utilization))
+        else:
+            single_capacity = total_weight / nodes
+        if any(weight > single_capacity for _shot, _frames, weight in shot_frames):
+            entries = [
+                (shot, frame)
+                for shot, frames, _weight in shot_frames
+                for frame in frames
+            ]
+            total = len(entries)
+            chunks: list[list[tuple[RenderShot, int]]] = [[] for _ in range(nodes)]
+            for index, entry in enumerate(entries):
+                node = min(nodes - 1, (index * nodes) // total)
+                chunks[node].append(entry)
+            return [self._tasks_from_pairs(chunk) for chunk in chunks]
 
-        assignments: list[list[BurstTask]] = []
-        for chunk in chunks:
-            tasks: list[BurstTask] = []
-            current_shot: RenderShot | None = None
-            current_frames: list[int] = []
-            for shot, frame in chunk:
-                if current_shot is not None and shot.relative_path != current_shot.relative_path:
-                    tasks.append(self._task(current_shot, current_frames))
-                    current_frames = []
-                current_shot = shot
-                current_frames.append(frame)
-            if current_shot is not None:
+        bins: list[list[tuple[RenderShot, list[int], float]]] = [
+            [] for _ in range(nodes)
+        ]
+        bin_weights = [0.0 for _ in range(nodes)]
+        for item in sorted(shot_frames, key=lambda entry: entry[2], reverse=True):
+            index = min(range(nodes), key=lambda candidate: bin_weights[candidate])
+            bins[index].append(item)
+            bin_weights[index] += item[2]
+        return [
+            self._tasks_from_pairs(
+                (shot, frame)
+                for shot, frames, _weight in items
+                for frame in frames
+            )
+            for items in bins
+        ]
+
+    def _tasks_from_pairs(
+        self, pairs: Iterable[tuple[RenderShot, int]]
+    ) -> list[BurstTask]:
+        tasks: list[BurstTask] = []
+        current_shot: RenderShot | None = None
+        current_frames: list[int] = []
+        for shot, frame in pairs:
+            if current_shot is not None and shot.relative_path != current_shot.relative_path:
                 tasks.append(self._task(current_shot, current_frames))
-            assignments.append([task for task in tasks if task.frames])
-        return assignments
+                current_frames = []
+            current_shot = shot
+            current_frames.append(frame)
+        if current_shot is not None:
+            tasks.append(self._task(current_shot, current_frames))
+        return [task for task in tasks if task.frames]
 
     def _task(self, shot: RenderShot, frames: Iterable[int]) -> BurstTask:
         sequence = shot.sequence or "shots"
@@ -706,7 +783,23 @@ class RenderBurstRunner:
                 self._capture_remote_artifacts(instance, index, remote_logs)
                 if result is not None:
                     result.diagnostics_log = self._node_diagnostics.get(index, "")
-                    self._write_node_summary(index, result)
+            if result is not None:
+                self._write_node_summary(index, result)
+                self._emit(
+                    progress,
+                    index,
+                    "finished" if result.ok else "failed",
+                    result.message,
+                    frames_done=result.frames_done,
+                    frames_total=result.frames_expected,
+                    instance_id=result.instance_id,
+                    gpu_name=result.gpu_name,
+                    region=result.region,
+                    price_per_hour=result.price_per_hour,
+                    ok=result.ok,
+                    blender_logs=result.blender_logs,
+                )
+            if instance is not None:
                 reason = "cancelled" if self._cancel.is_set() else "cleanup"
                 try:
                     self.provider.destroy_instance(instance.id)
@@ -854,19 +947,71 @@ class RenderBurstRunner:
     def _stage_project(
         self, instance: VastInstance, index: int, progress: ProgressCallback | None
     ) -> None:
-        self._emit(progress, index, "stage", "staging production files", instance_id=instance.id)
-        production = self.project_root / self.production_folder
-        remote_production = f"{self.work_root}/{self.production_folder}"
-        self._ssh(instance, f"mkdir -p '{remote_production}'")
-        self._rsync(instance, production, remote_production)
-        if self.stage_shared:
-            for folder in ("01_Brief_y_Refs", "04_datos_compartidos"):
-                local = self.project_root / folder
-                if local.is_dir():
-                    remote = f"{self.work_root}/{folder}"
-                    self._ssh(instance, f"mkdir -p '{remote}'")
-                    self._rsync(instance, local, remote)
-        self._emit(progress, index, "stage", "production files staged", instance_id=instance.id)
+        plan = scan_staging(
+            self.project_root,
+            self.production_folder,
+            work_root=self.work_root,
+        )
+        if not plan.exists:
+            raise BurstError(
+                f"Production folder not found: "
+                f"{self.project_root / self.production_folder}"
+            )
+        self._emit(
+            progress,
+            index,
+            "stage",
+            plan.summary,
+            instance_id=instance.id,
+            bytes_total=plan.bytes,
+            files_total=plan.files,
+        )
+        uploaded_before = 0
+        last_percent = -1
+        last_emit = 0.0
+        for entry in plan.entries:
+            self._ssh(instance, f"mkdir -p '{entry.remote_path}'")
+
+            def on_percent(percent: int, entry_bytes: int = entry.bytes) -> None:
+                nonlocal uploaded_before, last_percent, last_emit
+                done = uploaded_before + (entry_bytes * percent // 100)
+                now = time.monotonic()
+                if percent < 100 and percent == last_percent and now - last_emit < 5.0:
+                    return
+                if percent < 100 and percent - last_percent < 1 and now - last_emit < 5.0:
+                    return
+                last_percent = percent
+                last_emit = now
+                self._emit(
+                    progress,
+                    index,
+                    "stage",
+                    f"Uploading {percent}% · {format_bytes(done)} / "
+                    f"{format_bytes(plan.bytes)}",
+                    instance_id=instance.id,
+                    bytes_done=done,
+                    bytes_total=plan.bytes,
+                    files_total=plan.files,
+                    audit=False,
+                )
+
+            self._rsync(
+                instance,
+                entry.local_path,
+                entry.remote_path,
+                on_percent=on_percent,
+            )
+            uploaded_before += entry.bytes
+        self._emit(
+            progress,
+            index,
+            "stage",
+            f"Upload complete · {format_bytes(plan.bytes)}",
+            instance_id=instance.id,
+            bytes_done=plan.bytes,
+            bytes_total=plan.bytes,
+            files_total=plan.files,
+        )
 
     # ------------------------------------------------------------------
     # Render
@@ -1171,6 +1316,7 @@ class RenderBurstRunner:
         *,
         remote_source: bool = False,
         extra_excludes: Sequence[str] = (),
+        on_percent: Callable[[int], None] | None = None,
     ) -> None:
         ssh = (
             f"ssh -i {self.ssh_key_path} -p {instance.ssh_port} "
@@ -1182,30 +1328,88 @@ class RenderBurstRunner:
         else:
             source = str(local).rstrip("/") + "/"
             destination = f"root@{instance.ssh_host}:{str(remote).rstrip('/')}/"
-        command = [
-            "rsync",
-            "-az",
-            "--exclude",
-            ".svn",
-            "--exclude",
-            "*.blend1",
-            "--exclude",
-            "*.blend2",
-            "--exclude",
-            "*.crash.txt",
-            "--exclude",
-            "__pycache__",
-            *[item for pattern in extra_excludes for item in ("--exclude", pattern)],
-            "-e",
-            ssh,
-            source,
-            destination,
-        ]
-        result = subprocess.run(
-            command, capture_output=True, text=True, check=False, timeout=1800
+        command = ["rsync", "-az"]
+        if on_percent is not None and not remote_source:
+            command.extend(["--info=progress2", "--no-inc-recursive"])
+        for pattern in STAGING_EXCLUDES:
+            command.extend(["--exclude", pattern])
+        for pattern in extra_excludes:
+            command.extend(["--exclude", pattern])
+        command.extend(["-e", ssh, source, destination])
+
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            bufsize=0,
         )
-        if result.returncode != 0:
-            raise BurstError(f"rsync failed: {_tail(result.stderr or result.stdout)}")
+        stdout_parts: list[str] = []
+        stderr_parts: list[str] = []
+        last_percent = -1
+
+        def handle_stdout(line: str) -> None:
+            nonlocal last_percent
+            percent = _parse_rsync_progress(line)
+            if percent is None or percent <= last_percent:
+                return
+            last_percent = percent
+            if on_percent is not None:
+                try:
+                    on_percent(percent)
+                except Exception:  # noqa: BLE001 - progress must never break rsync
+                    pass
+
+        def drain(
+            stream,
+            sink: list[str],
+            on_line: Callable[[str], None] | None = None,
+        ) -> None:
+            buffer = ""
+            while True:
+                try:
+                    chunk = os.read(stream.fileno(), 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                text = chunk.decode("utf-8", "replace")
+                sink.append(text)
+                if on_line is None:
+                    continue
+                buffer += text
+                parts = re.split(r"[\r\n]", buffer)
+                buffer = parts.pop()
+                for part in parts:
+                    on_line(part)
+            if buffer and on_line is not None:
+                on_line(buffer)
+
+        threads = [
+            threading.Thread(
+                target=drain,
+                args=(process.stdout, stdout_parts, handle_stdout),
+                daemon=True,
+            ),
+            threading.Thread(
+                target=drain,
+                args=(process.stderr, stderr_parts),
+                daemon=True,
+            ),
+        ]
+        for thread in threads:
+            thread.start()
+        try:
+            returncode = process.wait(timeout=1800)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=30)
+            raise BurstError("rsync timed out.") from None
+        finally:
+            for thread in threads:
+                thread.join(timeout=5)
+        if returncode != 0:
+            stderr = "".join(stderr_parts) or "".join(stdout_parts)
+            raise BurstError(f"rsync failed: {_tail(stderr)}")
 
     # ------------------------------------------------------------------
     # Progress helper
@@ -1225,9 +1429,19 @@ class RenderBurstRunner:
         price_per_hour: float = 0.0,
         offer_id: int = 0,
         shot: str = "",
+        ok: bool = False,
+        bytes_done: int = 0,
+        bytes_total: int = 0,
+        files_total: int = 0,
+        blender_logs: tuple[str, ...] = (),
+        audit: bool = True,
     ) -> None:
         self._node_stage[node] = stage
-        if self.audit is not None and stage != "frame":
+        if (
+            audit
+            and self.audit is not None
+            and stage not in ("frame", "finished", "failed")
+        ):
             self._audit_node(
                 "node_progress",
                 node,
@@ -1236,6 +1450,8 @@ class RenderBurstRunner:
                 frames_done=frames_done,
                 frames_total=frames_total,
                 instance_id=instance_id,
+                bytes_done=bytes_done,
+                bytes_total=bytes_total,
             )
         if callback is None:
             return
@@ -1253,10 +1469,25 @@ class RenderBurstRunner:
                     price_per_hour=price_per_hour,
                     offer_id=offer_id,
                     shot=shot,
+                    ok=ok,
+                    bytes_done=bytes_done,
+                    bytes_total=bytes_total,
+                    files_total=files_total,
+                    blender_logs=tuple(blender_logs),
+                    run_id=self._run_id,
                 )
             )
         except Exception:  # noqa: BLE001 - progress must never abort a render
             pass
+
+
+def _parse_rsync_progress(line: str) -> int | None:
+    """Return the percentage from an ``rsync --info=progress2`` line."""
+    match = re.search(r"(\d{1,3})%", line or "")
+    if match is None:
+        return None
+    percent = int(match.group(1))
+    return percent if 0 <= percent <= 100 else None
 
 
 def _tail(text: str, lines: int = 8) -> str:
