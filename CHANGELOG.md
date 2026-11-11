@@ -20,6 +20,18 @@ releases may include larger UI or workflow changes.
 - Benchmarking shows its own node card and a confirmation dialog that names the
   exact `.blend`, the frames measured from the shot's scene range, the node and
   its price, and the production folder size before anything is rented.
+- **Benchmark all selected** measures every selected shot on a single Vast.ai
+  node with one upload. The per-shot median is recorded separately, and frames
+  keep the existing output rule: pending frames go to the shot's render folder
+  and fully approved shots are measured in `.benchmarks/` only.
+- The shot list is driven by Kitsu shot tasks: only `.blend` files with an
+  assigned task are shown, and each card displays its task type so variants of
+  the same shot are easy to tell apart. If Kitsu is unavailable the list stays
+  empty and the panel warns instead of showing every `.blend`.
+- Render scans are cached in the project's `vfs_local` folder
+  (`render_scan_cache.json`). The panel shows the cached shots immediately and
+  refreshes in the background; **Re-scan** re-runs Blender for every file, and
+  unchanged files are never probed twice.
 - Final renders store their per-shot median as a render reference. Remote and
   local references are kept separately, and an existing benchmark asks for
   confirmation before being replaced.
@@ -167,6 +179,9 @@ releases may include larger UI or workflow changes.
 
 ### Changed
 
+- The Preview section only keeps **Preview all selected** and **Benchmark all
+  selected**; per-shot preview, benchmark and sequence playback stay on the shot
+  cards and the preview poster.
 - `Benchmark selected` and every shot card's benchmark button share one
   confirmation flow, so both inspect the same shot, `.blend` file and frames.
 - Benchmark frame selection is shared by the dialog and the worker, and always

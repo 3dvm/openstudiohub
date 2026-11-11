@@ -15,6 +15,15 @@ progress, preview and review video.
 The project selector at the top chooses the production. The left side lists
 every shot as a collapsible card; the right side shows the selected shot.
 
+- **Task-driven list:** only `.blend` files with a Kitsu shot task are listed;
+  variants of the same shot (layout, comp, seeds versions) are separate tasks
+  and each card shows its task type in the header. If Kitsu is unavailable the
+  list stays empty and the panel warns instead of guessing.
+- **Scan cache:** the scan is stored in the project's `vfs_local` folder as
+  `render_scan_cache.json`. Opening the panel shows those shots immediately and
+  refreshes in the background; unchanged files are not probed again. **Re-scan**
+  (`⟳ Scan`) re-runs Blender for every file, while **Recalculate plan** only
+  rebuilds the plan from the current settings.
 - **Shot cards:** each card shows the rendered and approved frame counts
   (`R 120/140 · A 80/140`), frame range, quality, measured time and warning
   summary. The header status is one of:
@@ -202,17 +211,19 @@ changed in the panel.
   and writes the same path. This is useful for simple shots or when there is
   enough time. The plan shows an estimated local slowdown factor
   (`local_speed_factor`, default 8× the RTX 3090 reference).
-- **Benchmarks and references:** **Benchmark** measures up to three
-  representative frames of the shot's *scene* range (read from the `.blend` by
-  the probe). The confirmation dialog names the exact `.blend` file, the frames
-  that will be measured, the scene range, the node and its price, and the
-  production folders with their size before anything is rented; a benchmark run
-  also shows its own node card. Final-quality frames are saved in the shot's
-  render folder; approved frames are never touched, and a fully approved shot is
-  measured in `.benchmarks/` only. Each final render also stores its per-shot
-  median as a reference. Remote and local references are kept separately
-  (`rtx_*` and `local` keys). When a benchmark already exists, the panel asks
-  before replacing it.
+- **Benchmarks and references:** **Benchmark** (per shot card) measures up to
+  three representative frames of the shot's *scene* range (read from the
+  `.blend` by the probe). **Benchmark all selected** measures every selected
+  task-driven file on **one** Vast.ai node with a single upload and records a
+  median per shot. The confirmation dialog names the exact `.blend` files, the
+  frames that will be measured, the scene ranges, the node and its price, and
+  the production folder size before anything is rented; the batch also shows its
+  own node card. Final-quality frames are saved in the shot's render folder;
+  approved frames are never touched, and a fully approved shot is measured in
+  `.benchmarks/` only — this output rule is unchanged. Each final render also
+  stores its per-shot median as a reference. Remote and local references are
+  kept separately (`rtx_*` and `local` keys). When a benchmark already exists,
+  the panel asks before replacing it.
 
 The default price cap is **$0.13/h**, with a preference for Americas offers
 (US/Canada/Mexico/Brazil) and a minimum bandwidth (100 Mbps down / 50 Mbps up by

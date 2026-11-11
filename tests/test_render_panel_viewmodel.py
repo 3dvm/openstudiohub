@@ -789,3 +789,52 @@ def test_benchmark_creates_a_node_card_and_clears_it_on_finish(
     assert viewmodel._benchmark_run_id == ""
     assert cards[0].final is True
     assert cards[0].status == "completed"
+
+
+def test_benchmark_shots_runs_one_batch_card(qapp, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    shot = _shot()
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(
+        selected_shots=(shot.relative_path,), render_backend="vast"
+    )
+    viewmodel.offer = SimpleNamespace(price_per_hour=0.2, gpu_name="RTX 3080")
+    estimate = SimpleNamespace(
+        shots=((shot, SimpleNamespace(frames=(101, 148, 196))),),
+        frames=3,
+        staging=SimpleNamespace(bytes=1_000, files=10, entries=()),
+        plan=SimpleNamespace(estimated_cost=0.05),
+    )
+    monkeypatch.setattr(
+        viewmodel, "benchmark_batch_estimate", lambda shots=None: estimate
+    )
+    monkeypatch.setattr(viewmodel, "scan", lambda *args, **kwargs: None)
+    started = []
+    monkeypatch.setattr(
+        viewmodel.workers,
+        "start",
+        lambda key, worker, **kwargs: started.append(key) or True,
+    )
+    finished = []
+    viewmodel.benchmarks_finished.connect(
+        lambda results, message: finished.append((results, message))
+    )
+
+    assert viewmodel.benchmark_shots([shot])
+
+    assert started == ["render_benchmark"]
+    cards = [card for card in viewmodel.node_cards if card.run_label == "benchmark"]
+    assert len(cards) == 1
+    assert cards[0].frames_expected == 3
+
+    viewmodel._on_benchmarks_finished(
+        [("sh010", 40.0)], "Benchmarked 1/1 shot(s)."
+    )
+
+    assert viewmodel._benchmark_run_id == ""
+    assert cards[0].final is True
+    assert cards[0].status == "completed"
+    assert finished and finished[0][1] == "Benchmarked 1/1 shot(s)."

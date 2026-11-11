@@ -61,7 +61,9 @@ For each node:
    (about two to four minutes).
 5. Report how many files and bytes will be uploaded, then stage only the
    production folder (`topography.vfs_svn`) over `rsync`, showing live upload
-   progress on the node card. Briefs and the shared folder are not uploaded.
+   progress on the node card. Briefs and the shared folder are not uploaded. A
+   **Benchmark all selected** run reuses one node and one upload for every
+   selected shot.
 6. Render a contiguous frame chunk with Cycles on GPU (CUDA; OptiX is also
    available). EEVEE is wrapped in `xvfb-run`.
 7. Sync the frames to

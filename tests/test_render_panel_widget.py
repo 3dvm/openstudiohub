@@ -251,8 +251,11 @@ def test_preview_dialog_uses_the_preview_backend(qapp, monkeypatch):
     )
     widget._shots = [shot]
     widget._selected_shot = shot
+    widget.vm.shots = [shot]
     widget.vm.settings = RenderSettings(
-        render_backend="vast", preview_backend="vast"
+        render_backend="vast",
+        preview_backend="vast",
+        selected_shots=(shot.relative_path,),
     )
     _set_backend(widget.combo_preview_backend, "local")
     texts = []
@@ -268,7 +271,7 @@ def test_preview_dialog_uses_the_preview_backend(qapp, monkeypatch):
         lambda shots: previews.append(shots) or True,
     )
 
-    widget._preview_selected()
+    widget._preview_all()
 
     assert widget.vm.settings.preview_backend == "local"
     assert widget.vm.settings.render_backend == "vast"
@@ -300,8 +303,11 @@ def test_preview_dialog_reports_vast_for_the_vast_preview_backend(qapp, monkeypa
     )
     widget._shots = [shot]
     widget._selected_shot = shot
+    widget.vm.shots = [shot]
     widget.vm.settings = RenderSettings(
-        render_backend="local", preview_backend="local"
+        render_backend="local",
+        preview_backend="local",
+        selected_shots=(shot.relative_path,),
     )
     _set_backend(widget.combo_preview_backend, "vast")
     texts = []
@@ -312,7 +318,7 @@ def test_preview_dialog_reports_vast_for_the_vast_preview_backend(qapp, monkeypa
     )
     monkeypatch.setattr(widget.vm, "preview_shots", lambda shots: True)
 
-    widget._preview_selected()
+    widget._preview_all()
 
     assert widget.vm.settings.preview_backend == "vast"
     assert widget.vm.settings.render_backend == "local"
@@ -449,4 +455,71 @@ def test_target_wall_time_uses_adaptive_duration(qapp):
 
     widget.spin_hours.setValue(30)
     assert widget.lbl_target_duration.text() == "1d 6h"
+    widget.deleteLater()
+
+
+def test_preview_section_only_keeps_the_all_buttons(qapp):
+    widget = _widget()
+
+    assert hasattr(widget, "btn_preview_all")
+    assert hasattr(widget, "btn_benchmark_all")
+    assert not hasattr(widget, "btn_preview_selected")
+    assert not hasattr(widget, "btn_benchmark")
+    assert not hasattr(widget, "btn_play_final")
+    widget.deleteLater()
+
+
+def test_benchmark_all_lists_the_frames_and_starts_one_batch(qapp, monkeypatch):
+    from pathlib import Path
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.domain.render.models import RenderQuality, RenderSettings, RenderShot
+
+    widget = _widget()
+    shot = RenderShot(
+        name="sh010",
+        blend_path=Path("/project/sh010.blend"),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(samples=128),
+        frame_start=101,
+        frame_end=196,
+        object_count=20,
+        mesh_count=10,
+        has_camera=True,
+        task_type="layout",
+    )
+    widget.vm.shots = [shot]
+    widget.vm.settings = RenderSettings(
+        selected_shots=(shot.relative_path,), render_backend="local"
+    )
+    estimate = SimpleNamespace(
+        shots=((shot, SimpleNamespace(frames=(101, 148, 196))),),
+        frames=3,
+        staging=SimpleNamespace(bytes=1_000, files=10, entries=()),
+        plan=SimpleNamespace(estimated_cost=0.05),
+    )
+    monkeypatch.setattr(
+        widget.vm, "benchmark_batch_estimate", lambda shots=None: estimate
+    )
+    started = []
+    monkeypatch.setattr(
+        widget.vm,
+        "benchmark_shots",
+        lambda shots, overwrite=False: started.append((shots, overwrite)) or True,
+    )
+    texts = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: texts.append(args[2]) or QMessageBox.Yes,
+    )
+
+    widget._benchmark_all()
+
+    assert texts
+    assert "sh010" in texts[0]
+    assert "101, 148, 196" in texts[0]
+    assert started and started[0][0] == [shot]
     widget.deleteLater()

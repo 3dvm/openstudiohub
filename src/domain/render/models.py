@@ -308,6 +308,8 @@ class RenderShot:
     library_count: int = 0
     geometry_node_objects: int = 0
     has_camera: bool = True
+    task_type: str = ""
+    task_id: str = ""
     blend_hash: str = ""
     measured_seconds: float | None = None
     local_measured_seconds: float | None = None

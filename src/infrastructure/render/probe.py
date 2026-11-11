@@ -167,6 +167,61 @@ class RenderProbeResult:
     file_format: str
     setup: RenderSetup
 
+    def to_dict(self) -> dict:
+        """Serialize the probe result so the scan cache can reuse it."""
+        setup = self.setup
+        return {
+            "engine": self.engine,
+            "resolution_x": self.resolution_x,
+            "resolution_y": self.resolution_y,
+            "resolution_percentage": self.resolution_percentage,
+            "samples": self.samples,
+            "denoise": self.denoise,
+            "frame_start": self.frame_start,
+            "frame_end": self.frame_end,
+            "frame_step": self.frame_step,
+            "object_count": self.object_count,
+            "mesh_count": self.mesh_count,
+            "library_count": self.library_count,
+            "geometry_node_objects": self.geometry_node_objects,
+            "has_camera": self.has_camera,
+            "libraries": list(self.libraries),
+            "images": list(self.images),
+            "output_path": self.output_path,
+            "file_format": self.file_format,
+            "use_nodes": setup.use_nodes,
+            "compositing_enabled": setup.compositing_enabled,
+            "compositor_name": setup.compositor_name,
+            "view_layers": [
+                {
+                    "name": layer.name,
+                    "enabled": layer.enabled,
+                    "render_layers_node": layer.render_layers_node,
+                    "connected_to_output": layer.connected_to_output,
+                    "samples": layer.samples,
+                }
+                for layer in setup.view_layers
+            ],
+            "file_outputs": [
+                {
+                    "name": output.name,
+                    "base_path": output.base_path,
+                    "file_format": output.file_format,
+                    "layer": output.layer,
+                }
+                for output in setup.file_outputs
+            ],
+            "color_mode": setup.color_mode,
+            "color_depth": setup.color_depth,
+            "view_transform": setup.view_transform,
+            "look": setup.look,
+            "camera": setup.camera,
+            "fps": setup.fps,
+            "film_transparent": setup.film_transparent,
+            "motion_blur": setup.motion_blur,
+            "use_sequencer": setup.use_sequencer,
+        }
+
     @classmethod
     def from_dict(cls, data: dict) -> "RenderProbeResult":
         view_layers = tuple(

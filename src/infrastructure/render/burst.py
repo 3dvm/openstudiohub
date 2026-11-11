@@ -17,6 +17,7 @@ persistent farm does not apply to an ephemeral per-job burst.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -164,6 +165,7 @@ class BurstProgress:
     price_per_hour: float = 0.0
     offer_id: int = 0
     shot: str = ""
+    shot_path: str = ""
     ok: bool = False
     bytes_done: int = 0
     bytes_total: int = 0
@@ -211,10 +213,19 @@ class BurstTask:
     shot: RenderShot
     frames: tuple[int, ...]
     output_subdir: str
+    output_root: Path | None = None
 
     @property
     def remote_blend(self) -> str:
         return self.shot.relative_path
+
+    @property
+    def remote_output_subdir(self) -> str:
+        """Unique remote folder so variants of one shot never share frames."""
+        token = hashlib.sha1(
+            self.shot.relative_path.encode("utf-8")
+        ).hexdigest()[:10]
+        return f"{token}/{self.output_subdir}"
 
 
 class RenderBurstRunner:
@@ -239,6 +250,7 @@ class RenderBurstRunner:
         audit: RenderRunAuditLogger | None = None,
         skip_existing: bool = False,
         run_id: str = "",
+        output_roots: dict[str, Path | str] | None = None,
     ) -> None:
         self.provider = provider
         self.project_root = Path(project_root)
@@ -257,6 +269,10 @@ class RenderBurstRunner:
         self.bake_particles = bool(bake_particles)
         self.audit = audit
         self.skip_existing = bool(skip_existing)
+        self._output_roots = {
+            str(relative_path): Path(root)
+            for relative_path, root in (output_roots or {}).items()
+        }
         self._instances: dict[int, VastInstance] = {}
         self._node_stage: dict[int, str] = {}
         self._node_diagnostics: dict[int, str] = {}
@@ -504,7 +520,10 @@ class RenderBurstRunner:
                 continue
             sequence = shot.sequence or "shots"
             output_subdir = f"shots/{sequence}/{shot.name}.{self.task_type}"
-            state = RenderFrameStateStore(self.output_root / output_subdir)
+            output_root = self._output_roots.get(
+                shot.relative_path, self.output_root
+            )
+            state = RenderFrameStateStore(output_root / output_subdir)
             approved = state.approved_frames()
             step = max(1, shot.frame_step)
             frames: list[int] = []
@@ -514,7 +533,7 @@ class RenderBurstRunner:
                 if self.skip_existing:
                     extension = image_format(shot.quality.file_format).extension
                     path = (
-                        self.output_root
+                        output_root
                         / output_subdir
                         / f"frame_{frame:04d}.{extension}"
                     )
@@ -602,6 +621,7 @@ class RenderBurstRunner:
             shot=shot,
             frames=tuple(sorted(frames)),
             output_subdir=f"shots/{sequence}/{shot.name}.{self.task_type}",
+            output_root=self._output_roots.get(shot.relative_path),
         )
 
     # ------------------------------------------------------------------
@@ -1029,7 +1049,7 @@ class RenderBurstRunner:
     ) -> tuple[int, str]:
         shot = task.shot
         quality = shot.quality
-        output_dir = f"{self.work_root}/out/{task.output_subdir}"
+        output_dir = f"{self.work_root}/out/{task.remote_output_subdir}"
         remote_blend = f"{self.work_root}/{self.production_folder}/{task.remote_blend}"
         fmt = image_format(quality.file_format)
         proxy_dir = (
@@ -1081,6 +1101,7 @@ class RenderBurstRunner:
             frames_total=expected,
             instance_id=instance.id,
             shot=shot.name,
+            shot_path=shot.relative_path,
         )
         blender_log = None
         blender_handle = None
@@ -1130,6 +1151,7 @@ class RenderBurstRunner:
                         frames_total=expected,
                         instance_id=instance.id,
                         shot=shot.name,
+                        shot_path=shot.relative_path,
                     )
                 elif "OSBAKE::" in line:
                     self._emit(
@@ -1139,6 +1161,7 @@ class RenderBurstRunner:
                         line.strip().split("OSBAKE::", 1)[1],
                         instance_id=instance.id,
                         shot=shot.name,
+                        shot_path=shot.relative_path,
                     )
                 elif "OSDEVICES::" in line:
                     self._emit(
@@ -1148,6 +1171,7 @@ class RenderBurstRunner:
                         line.strip().split("OSDEVICES::", 1)[1],
                         instance_id=instance.id,
                         shot=shot.name,
+                        shot_path=shot.relative_path,
                     )
             process.wait(timeout=30)
         finally:
@@ -1191,9 +1215,10 @@ class RenderBurstRunner:
             instance_id=instance.id,
             shot=task.shot.name,
         )
-        local = self.output_root / task.output_subdir
+        output_root = task.output_root or self.output_root
+        local = output_root / task.output_subdir
         local.mkdir(parents=True, exist_ok=True)
-        remote = f"{self.work_root}/out/{task.output_subdir}/"
+        remote = f"{self.work_root}/out/{task.remote_output_subdir}/"
         self._rsync(instance, remote, str(local), remote_source=True)
 
     def _sync_bake_cache(
@@ -1237,8 +1262,9 @@ class RenderBurstRunner:
 
     def _local_frame_path(self, task: BurstTask, frame: int) -> Path:
         extension = image_format(task.shot.quality.file_format).extension
+        output_root = task.output_root or self.output_root
         return (
-            self.output_root
+            output_root
             / task.output_subdir
             / f"frame_{frame:04d}.{extension}"
         )
@@ -1429,6 +1455,7 @@ class RenderBurstRunner:
         price_per_hour: float = 0.0,
         offer_id: int = 0,
         shot: str = "",
+        shot_path: str = "",
         ok: bool = False,
         bytes_done: int = 0,
         bytes_total: int = 0,
@@ -1469,6 +1496,7 @@ class RenderBurstRunner:
                     price_per_hour=price_per_hour,
                     offer_id=offer_id,
                     shot=shot,
+                    shot_path=shot_path,
                     ok=ok,
                     bytes_done=bytes_done,
                     bytes_total=bytes_total,

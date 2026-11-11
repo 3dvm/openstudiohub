@@ -40,6 +40,7 @@ from src.interfaces.qt.workers.render_workers import (
     KitsuStatusesWorker,
     KitsuUploadWorker,
     LocalRenderWorker,
+    RenderBenchmarkBatchWorker,
     RenderBenchmarkWorker,
     RenderBurstWorker,
     RenderCandidatesWorker,
@@ -127,6 +128,7 @@ class ShotReviewModel:
     measured_seconds: float | None
     warnings: tuple[str, ...]
     relative_path: str
+    task_type: str = ""
 
 
 SHOT_STATUS_TOOLTIPS = {
@@ -200,6 +202,7 @@ class RenderPanelViewModel(BaseViewModel):
 
     benchmark_progress = Signal(object)
     benchmark_finished = Signal(str, float)
+    benchmarks_finished = Signal(list, str)
     benchmark_error = Signal(str)
     benchmark_running = Signal(bool)
 
@@ -332,9 +335,41 @@ class RenderPanelViewModel(BaseViewModel):
             self.settings = RenderSettings()
         if not read_only:
             self._write_status(status="idle", message="Render panel loaded.")
+            self._load_cached_shots()
             self.scan()
         else:
             self.report_status("Render panel loaded in read-only mode.", "white")
+
+    def _load_cached_shots(self) -> list | None:
+        """Show the last scan immediately, before the background refresh."""
+        try:
+            shots = self.service.cached_shots(
+                self.project_root,
+                quality_override=self.settings.final_quality,
+                gpu_profile=self.settings.gpu_profile,
+            )
+        except Exception:  # noqa: BLE001 - the scan replaces a missing cache
+            shots = None
+        if not shots:
+            return None
+        self.shots = list(shots)
+        available = {shot.relative_path for shot in self.shots}
+        selected = tuple(
+            path for path in self.settings.selected_shots if path in available
+        )
+        if not selected:
+            selected = tuple(
+                shot.relative_path for shot in self.shots if shot.is_ready
+            )
+        if selected != self.settings.selected_shots:
+            self.settings = replace(self.settings, selected_shots=selected)
+            self._save_settings()
+        self.recalculate()
+        self._emit_shot_reviews()
+        self.report_status(
+            f"Loaded {len(self.shots)} shot(s) from the local scan cache.", "white"
+        )
+        return self.shots
 
     @property
     def selected_shots(self) -> list[RenderShot]:
@@ -450,20 +485,34 @@ class RenderPanelViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Scan / plan
     # ------------------------------------------------------------------
-    def scan(self) -> bool:
+    def scan(self, *, force: bool = False) -> bool:
         if self.project_root is None or self.read_only:
             return False
         if self.workers.is_running("render_scan"):
             return False
         worker = RenderPanelScanWorker(
-            self.service, self.project_root, self.settings
+            self.service,
+            self.project_root,
+            self.settings,
+            production_service=self.production_service,
+            project_id=self.project_id,
+            force=force,
         )
         worker.scan_progress.connect(self.scan_progress)
         worker.shots_ready.connect(self._on_shots_ready)
+        worker.scan_warning.connect(self._on_scan_warning)
         worker.error.connect(self.scan_error)
         self.set_busy(True)
-        self.report_status("Scanning shots and render setup...", "yellow")
+        self.report_status(
+            "Re-scanning every .blend with Blender..."
+            if force
+            else "Refreshing shots and render setup...",
+            "yellow",
+        )
         return self.workers.start("render_scan", worker)
+
+    def _on_scan_warning(self, message: str) -> None:
+        self.report_status(message, "yellow")
 
     def _on_shots_ready(
         self, shots: list, plan: RenderPlan, offer, balance: float, candidates: list
@@ -473,9 +522,16 @@ class RenderPanelViewModel(BaseViewModel):
         self.offer = offer
         self.balance = balance
         self.candidate_offers = list(candidates or ())
-        if not self.settings.selected_shots:
-            ready = [shot.relative_path for shot in self.shots if shot.is_ready]
-            self.settings = replace(self.settings, selected_shots=tuple(ready))
+        available = {shot.relative_path for shot in self.shots}
+        selected = tuple(
+            path for path in self.settings.selected_shots if path in available
+        )
+        if not selected:
+            selected = tuple(
+                shot.relative_path for shot in self.shots if shot.is_ready
+            )
+        if selected != self.settings.selected_shots:
+            self.settings = replace(self.settings, selected_shots=selected)
             self._save_settings()
         self.recalculate()
         current = self.plan or plan
@@ -556,6 +612,7 @@ class RenderPanelViewModel(BaseViewModel):
             measured_seconds=shot.measured_seconds,
             warnings=tuple(warnings),
             relative_path=shot.relative_path,
+            task_type=shot.task_type,
         )
 
     def _shot_status(
@@ -1100,6 +1157,109 @@ class RenderPanelViewModel(BaseViewModel):
         )
         return self.workers.start("render_benchmark", worker, critical=True)
 
+    def benchmark_batch_estimate(self, shots: list[RenderShot] | None = None):
+        """Estimate a multi-shot benchmark that rents a single node."""
+        targets = list(shots if shots is not None else self.selected_shots)
+        if self.project_root is None or not targets:
+            return None
+        price = float(getattr(self.offer, "price_per_hour", 0.0) or 0.0)
+        try:
+            return self.service.benchmark_batch_estimate(
+                self.project_root,
+                targets,
+                gpu_profile=self.settings.gpu_profile,
+                price_per_hour=price,
+                budget=self.settings.budget,
+            )
+        except Exception:  # noqa: BLE001 - the dialog falls back to a plain prompt
+            return None
+
+    def benchmark_shots(
+        self,
+        shots: list[RenderShot] | None = None,
+        *,
+        overwrite: bool = False,
+    ) -> bool:
+        if self.project_root is None or self.read_only or not self.shots:
+            self.benchmark_error.emit(
+                "Scan the project and select shots before benchmarking."
+            )
+            return False
+        targets = [
+            shot
+            for shot in (shots if shots is not None else self.selected_shots)
+            if not self.is_shot_locked(shot)
+        ]
+        if not targets:
+            self.benchmark_error.emit(
+                "The selected shots are locked or already rendering."
+            )
+            return False
+        if (
+            self.workers.is_running("render_benchmark")
+            or self.workers.is_running("render_preview")
+        ):
+            self.benchmark_error.emit("A benchmark or preview is already running.")
+            return False
+        if not overwrite and any(
+            self.measurement_for(shot) is not None for shot in targets
+        ):
+            self.benchmark_error.emit(
+                "A benchmark already exists for a selected shot; confirm the "
+                "overwrite."
+            )
+            return False
+        estimate = self.benchmark_batch_estimate(targets)
+        if estimate is None or not estimate.shots:
+            self.benchmark_error.emit(
+                "The selected shots have no frames in their scene ranges."
+            )
+            return False
+        run_id = uuid.uuid4().hex[:12]
+        self._benchmark_run_id = run_id
+        self._benchmark_cards = [
+            RenderNodeCardModel(
+                node=0,
+                status="queued",
+                message=f"Preparing {len(estimate.shots)} benchmark(s)",
+                run_id=run_id,
+                run_label="benchmark",
+                frames_expected=estimate.frames,
+            )
+        ]
+        self._sync_node_cards()
+        self.audit.log(
+            "run_start",
+            run_id=run_id,
+            backend="benchmark-vast",
+            project=self.project_name,
+            shots=[shot.name for shot, _selection in estimate.shots],
+            blends=[shot.relative_path for shot, _selection in estimate.shots],
+            frames=estimate.frames,
+            upload_bytes=estimate.staging.bytes,
+            upload_files=estimate.staging.files,
+            nodes=1,
+        )
+        worker = RenderBenchmarkBatchWorker(
+            self.service,
+            self.project_root,
+            [shot for shot, _selection in estimate.shots],
+            self.settings,
+            self.offer,
+            audit=self.audit,
+            run_id=run_id,
+        )
+        worker.benchmarks_progress.connect(self.benchmark_progress)
+        worker.benchmarks_progress.connect(self._on_burst_progress_status)
+        worker.benchmarks_finished.connect(self._on_benchmarks_finished)
+        worker.error.connect(self._on_benchmark_error)
+        self.benchmark_running.emit(True)
+        self.report_status(
+            f"Benchmarking {len(estimate.shots)} shot(s) on one Vast.ai node...",
+            "yellow",
+        )
+        return self.workers.start("render_benchmark", worker, critical=True)
+
     def selected_shot(self) -> RenderShot | None:
         if not self.shots:
             return None
@@ -1138,6 +1298,27 @@ class RenderPanelViewModel(BaseViewModel):
             card.final = True
             card.eta_seconds = 0.0
         self._sync_node_cards()
+
+    def _on_benchmarks_finished(
+        self, results: list, message: str
+    ) -> None:
+        run_id = self._benchmark_run_id
+        self._finish_benchmark_cards("completed", message)
+        self.audit.log(
+            "run_finished",
+            run_id=run_id,
+            ok=True,
+            message=message,
+            results=[
+                {"shot": name, "seconds": seconds}
+                for name, seconds in (results or ())
+            ],
+        )
+        self._benchmark_run_id = ""
+        self.benchmark_running.emit(False)
+        self.report_status(message, "green")
+        self.benchmarks_finished.emit(list(results or ()), message)
+        self.scan()
 
     # ------------------------------------------------------------------
     # Render

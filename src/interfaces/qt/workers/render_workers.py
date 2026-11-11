@@ -97,6 +97,7 @@ class RenderPanelScanWorker(ManagedWorker):
 
     shots_ready = Signal(list, object, object, float, list)  # shots, plan, offer, balance, candidates
     scan_progress = Signal(str, int, int)
+    scan_warning = Signal(str)
     error = Signal(str)
 
     def __init__(
@@ -104,19 +105,83 @@ class RenderPanelScanWorker(ManagedWorker):
         service: RenderService,
         project_root: Path,
         settings: RenderSettings,
+        *,
+        production_service=None,
+        project_id: str = "",
+        force: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
         self.project_root = Path(project_root)
         self.settings = settings
+        self.production_service = production_service
+        self.project_id = str(project_id or "")
+        self.force = bool(force)
+
+    def _task_files(self) -> tuple[dict[str, dict], bool]:
+        """Resolve every Kitsu shot task to its ``.blend`` file."""
+        if self.production_service is None or not self.project_id:
+            self.scan_warning.emit(
+                "Kitsu is not connected; there are no shot tasks to render."
+            )
+            return {}, False
+        try:
+            board = self.production_service.get_project_task_board(self.project_id)
+        except Exception as error:  # noqa: BLE001 - the panel stays empty
+            self.scan_warning.emit(f"Kitsu is unavailable: {error}")
+            return {}, False
+        if not board:
+            self.scan_warning.emit("No Kitsu shot tasks were found for this project.")
+            return {}, True
+        production_folder = self.service.production_folder_name(self.project_root)
+        resolver = TaskFileResolver()
+        by_path: dict[str, list[str]] = {}
+        ids: dict[str, str] = {}
+        for row in board:
+            entity_type = str(
+                row.get("entity_type_name") or row.get("entity_type") or ""
+            ).strip().lower()
+            if entity_type and entity_type != "shot":
+                continue
+            try:
+                resolved = resolver.resolve(
+                    self.project_root, row, production_folder
+                )
+            except Exception:  # noqa: BLE001 - one bad row must not stop the scan
+                resolved = None
+            if resolved is None:
+                continue
+            task_type = str(
+                row.get("task_type_name") or row.get("task_type") or ""
+            ).strip()
+            task_id = str(row.get("id") or "").strip()
+            types = by_path.setdefault(resolved.relative_path, [])
+            if task_type and task_type not in types:
+                types.append(task_type)
+            if task_id:
+                ids.setdefault(resolved.relative_path, task_id)
+        if not by_path:
+            self.scan_warning.emit("No Kitsu shot tasks were found for this project.")
+            return {}, True
+        return {
+            path: {
+                "task_type": " + ".join(types),
+                "task_id": ids.get(path, ""),
+            }
+            for path, types in by_path.items()
+        }, True
 
     def run(self) -> None:
         try:
+            task_files, tasks_ok = self._task_files()
             shots = self.service.scan_shots(
                 self.project_root,
                 quality_override=self.settings.final_quality,
                 gpu_profile=self.settings.gpu_profile,
                 progress=self.scan_progress.emit,
+                task_files=task_files,
+                force=self.force,
+                save_cache=tasks_ok,
             )
             selected = self.service.selected_shots(shots, self.settings)
             pending = self.service.pending_shots(
@@ -863,5 +928,141 @@ class RenderBenchmarkWorker(ManagedWorker):
                 gpu_label=self.offer.gpu_name if self.offer is not None else "",
             )
             self.benchmark_finished.emit(self.shot.name, median)
+        except Exception as error:  # noqa: BLE001
+            self.error.emit(str(error))
+
+
+class RenderBenchmarkBatchWorker(ManagedWorker):
+    """Measure several shots on one Vast node with a single staging pass."""
+
+    benchmarks_progress = Signal(object)
+    benchmarks_finished = Signal(list, str)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        service: RenderService,
+        project_root: Path,
+        shots: list[RenderShot],
+        settings: RenderSettings,
+        offer,
+        *,
+        audit=None,
+        run_id: str = "",
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.project_root = Path(project_root)
+        self.shots = list(shots)
+        self.settings = settings
+        self.offer = offer
+        self.audit = audit
+        self.run_id = str(run_id or "")
+        self.runner = None
+
+    def run(self) -> None:
+        try:
+            if self.offer is None:
+                self.offer = self.service.cheapest_offer(
+                    self.settings.gpu_profile,
+                    max_price_per_hour=self.settings.max_price_per_hour,
+                    preferred_region=self.settings.preferred_region,
+                    min_inet_down_mbps=self.settings.min_inet_down_mbps,
+                    min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                )
+            estimate = self.service.benchmark_batch_estimate(
+                self.project_root,
+                self.shots,
+                gpu_profile=self.settings.gpu_profile,
+                price_per_hour=(
+                    self.offer.price_per_hour if self.offer is not None else 0.0
+                ),
+                budget=self.settings.budget,
+            )
+            if not estimate.shots:
+                self.error.emit(
+                    "The selected shots have no frames in their scene ranges."
+                )
+                return
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            temp_root = (
+                self.project_root / "03_render" / ".benchmarks" / timestamp
+            )
+            output_roots = {
+                shot.relative_path: (
+                    self.service.render_root(self.project_root)
+                    if selection.save_to_render
+                    else temp_root
+                )
+                for shot, selection in estimate.shots
+            }
+            runner = self.service.build_burst_runner(
+                self.project_root,
+                estimate.plan,
+                max_price_per_hour=self.settings.max_price_per_hour,
+                output_root=temp_root,
+                output_roots=output_roots,
+                preferred_region=self.settings.preferred_region,
+                min_inet_down_mbps=self.settings.min_inet_down_mbps,
+                min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                audit=self.audit,
+                run_id=self.run_id,
+            )
+            self.runner = runner
+            timings: dict[str, list[float]] = {}
+
+            def on_progress(event) -> None:
+                self.benchmarks_progress.emit(event)
+                if getattr(event, "stage", "") != "frame":
+                    return
+                try:
+                    payload = json.loads(str(getattr(event, "message", "") or "{}"))
+                except ValueError:
+                    return
+                seconds = float(payload.get("seconds") or 0.0)
+                if seconds <= 0:
+                    return
+                key = str(
+                    getattr(event, "shot_path", "")
+                    or getattr(event, "shot", "")
+                )
+                if key:
+                    timings.setdefault(key, []).append(seconds)
+
+            report = runner.run(
+                estimate.plan.shots, estimate.plan, progress=on_progress
+            )
+            results: list[tuple[str, float]] = []
+            missing: list[str] = []
+            for shot, _selection in estimate.shots:
+                values = timings.get(shot.relative_path)
+                if not values and shot.name in timings:
+                    values = timings[shot.name]
+                if not values:
+                    missing.append(shot.name)
+                    continue
+                median = float(statistics.median(values))
+                self.service.record_measurement(
+                    self.project_root,
+                    shot,
+                    self.settings.gpu_profile,
+                    median,
+                    gpu_label=(
+                        self.offer.gpu_name if self.offer is not None else ""
+                    ),
+                )
+                results.append((shot.name, median))
+            if not results:
+                self.error.emit(
+                    "Benchmark failed: "
+                    f"{getattr(report, 'message', 'no timing data')}"
+                )
+                return
+            message = (
+                f"Benchmarked {len(results)}/{len(estimate.shots)} shot(s)."
+            )
+            if missing:
+                message += f" No timing for: {', '.join(missing)}."
+            self.benchmarks_finished.emit(results, message)
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))

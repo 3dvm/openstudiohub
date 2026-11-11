@@ -45,6 +45,11 @@ from src.infrastructure.render.probe import (
     iter_blend_files,
 )
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
+from src.infrastructure.render.scan_cache import (
+    CachedProbe,
+    RenderScanCache,
+    ScanCacheData,
+)
 from src.infrastructure.render.profiles import (
     PROFILES_FILENAME,
     RenderProfileStore,
@@ -79,6 +84,19 @@ class BenchmarkEstimate:
     selection: BenchmarkFrameSelection
     plan: RenderPlan
     staging: StagingPlan
+
+
+@dataclass(frozen=True)
+class BenchmarkBatchEstimate:
+    """One node that measures representative frames for several shots."""
+
+    shots: tuple[tuple[RenderShot, BenchmarkFrameSelection], ...]
+    plan: RenderPlan
+    staging: StagingPlan
+
+    @property
+    def frames(self) -> int:
+        return sum(len(selection.frames) for _shot, selection in self.shots)
 
 
 class RenderService:
@@ -218,6 +236,15 @@ class RenderService:
     # ------------------------------------------------------------------
     # Shot scanning
     # ------------------------------------------------------------------
+    def production_folder_name(self, project_root: Path | str) -> str:
+        root = Path(project_root)
+        return self._production_folder(root, self.load_blueprint(root))
+
+    def scan_cache(self, project_root: Path | str) -> RenderScanCache:
+        root = Path(project_root)
+        blueprint = self.load_blueprint(root)
+        return RenderScanCache.for_project(root, blueprint.topography.vfs_local)
+
     def scan_shots(
         self,
         project_root: Path | str,
@@ -225,6 +252,9 @@ class RenderService:
         quality_override: RenderQuality | None = None,
         gpu_profile: str = "rtx_3090",
         progress: ScanProgressCallback | None = None,
+        task_files: dict[str, dict] | None = None,
+        force: bool = False,
+        save_cache: bool = True,
     ) -> list[RenderShot]:
         root = Path(project_root)
         blueprint = self.load_blueprint(root)
@@ -237,94 +267,231 @@ class RenderService:
         blender = self.resolve_blender(root, blueprint)
         probe = BlenderProbe(blender)
         store = self.profile_store(root, blueprint)
-        files = list(iter_blend_files(shots_root))
-        shots: list[RenderShot] = []
-        for index, path in enumerate(files, start=1):
-            if progress is not None:
-                progress(path.name, index, len(files))
-            try:
-                result = probe.probe(path)
-            except RenderProbeError as error:
-                shots.append(
-                    RenderShot(
-                        name=path.parent.name,
-                        blend_path=path,
-                        relative_path=path.relative_to(production_root).as_posix(),
-                        sequence=path.parent.parent.name,
-                        quality=quality_override or RenderQuality(),
-                        frame_start=0,
-                        frame_end=0,
-                        warnings=(str(error),),
-                    )
-                )
+        cache = RenderScanCache.for_project(root, blueprint.topography.vfs_local)
+        cached = ScanCacheData() if force else cache.load()
+        reuse = (
+            not force
+            and cached.blender_version == blueprint.blender_version
+        )
+        candidates: list[tuple[Path, str]] = []
+        for path in iter_blend_files(shots_root):
+            relative = path.relative_to(production_root).as_posix()
+            if task_files is not None and relative not in task_files:
                 continue
-            quality = self._quality_for(result, quality_override)
-            blend_hash = _file_hash(path)
-            relative_path = path.relative_to(production_root).as_posix()
-            measured = store.get(
-                relative_path,
-                gpu_profile,
-                quality.key(),
-                blend_hash=blend_hash,
-            )
-            measurement_stale = False
-            measurement_scaled = False
-            measurement_source_gpu = ""
-            if measured is None:
-                measured = store.get(relative_path, gpu_profile, quality.key())
-                measurement_stale = measured is not None
-            if measured is None:
-                source_order = [
-                    key
-                    for key in (
-                        "rtx_3090",
-                        "rtx_4090",
-                        "rtx_a6000",
-                        "rtx_4070",
-                        "rtx_3080",
-                        "rtx_3070",
-                    )
-                    if key != gpu_profile
-                ]
-                for source_gpu in source_order:
-                    source_seconds = store.get(
-                        relative_path,
-                        source_gpu,
-                        quality.key(),
-                        blend_hash=blend_hash,
-                    )
-                    source_stale = False
-                    if source_seconds is None:
-                        source_seconds = store.get(
-                            relative_path, source_gpu, quality.key()
+            candidates.append((path, relative))
+
+        shots: list[RenderShot] = []
+        cache_entries: dict[str, CachedProbe] = {}
+        for index, (path, relative) in enumerate(candidates, start=1):
+            if progress is not None:
+                progress(path.name, index, len(candidates))
+            meta = (task_files or {}).get(relative) or {}
+            task_type = str(meta.get("task_type") or "")
+            task_id = str(meta.get("task_id") or "")
+            previous = cached.entries.get(relative) if reuse else None
+            try:
+                stat = path.stat()
+            except OSError:
+                stat = None
+            result: RenderProbeResult | None = None
+            blend_hash = ""
+            if (
+                previous is not None
+                and stat is not None
+                and previous.size == stat.st_size
+                and previous.mtime_ns == stat.st_mtime_ns
+            ):
+                try:
+                    result = RenderProbeResult.from_dict(previous.probe)
+                    blend_hash = previous.blend_hash
+                except (TypeError, ValueError):
+                    result = None
+            if result is None:
+                blend_hash = _file_hash(path)
+                if (
+                    previous is not None
+                    and previous.blend_hash
+                    and previous.blend_hash == blend_hash
+                ):
+                    try:
+                        result = RenderProbeResult.from_dict(previous.probe)
+                    except (TypeError, ValueError):
+                        result = None
+            if result is None:
+                try:
+                    result = probe.probe(path)
+                except RenderProbeError as error:
+                    shots.append(
+                        RenderShot(
+                            name=path.parent.name,
+                            blend_path=path,
+                            relative_path=relative,
+                            sequence=path.parent.parent.name,
+                            quality=quality_override or RenderQuality(),
+                            frame_start=0,
+                            frame_end=0,
+                            task_type=task_type,
+                            task_id=task_id,
+                            warnings=(str(error),),
                         )
-                        source_stale = source_seconds is not None
-                    if source_seconds is not None:
-                        measured = scale_seconds_for_gpu(
-                            source_seconds, source_gpu, gpu_profile
-                        )
-                        measurement_scaled = True
-                        measurement_source_gpu = source_gpu
-                        measurement_stale = source_stale
-                        break
+                    )
+                    if previous is not None:
+                        cache_entries[relative] = previous
+                    continue
+            if stat is not None:
+                cache_entries[relative] = CachedProbe(
+                    size=stat.st_size,
+                    mtime_ns=stat.st_mtime_ns,
+                    blend_hash=blend_hash,
+                    probe=result.to_dict(),
+                    task_type=task_type,
+                    task_id=task_id,
+                )
             shots.append(
-                self._shot_from_probe(
+                self._shot_with_measurements(
                     root,
                     production_root,
                     path,
                     result,
-                    quality,
-                    blend_hash,
-                    measured,
-                    measurement_stale=measurement_stale,
-                    measurement_scaled=measurement_scaled,
-                    measurement_source_gpu=measurement_source_gpu,
-                    local_measured_seconds=store.get(
-                        relative_path, "local", quality.key(), blend_hash=blend_hash
-                    ),
+                    quality_override,
+                    gpu_profile,
+                    store,
+                    blend_hash=blend_hash,
+                    task_type=task_type,
+                    task_id=task_id,
                 )
             )
+        if save_cache:
+            cache.save(cache_entries, blender_version=blueprint.blender_version)
         return shots
+
+    def cached_shots(
+        self,
+        project_root: Path | str,
+        *,
+        quality_override: RenderQuality | None = None,
+        gpu_profile: str = "rtx_3090",
+    ) -> list[RenderShot] | None:
+        """Rebuild the shot list from the local cache without running Blender."""
+        root = Path(project_root)
+        try:
+            blueprint = self.load_blueprint(root)
+        except RenderServiceError:
+            return None
+        production_root = root / self._production_folder(root, blueprint)
+        cache = RenderScanCache.for_project(root, blueprint.topography.vfs_local)
+        cached = cache.load()
+        if not cached.entries or cached.blender_version != blueprint.blender_version:
+            return None
+        store = self.profile_store(root, blueprint)
+        shots: list[RenderShot] = []
+        for relative, entry in sorted(cached.entries.items()):
+            path = production_root / relative
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if entry.size != stat.st_size or entry.mtime_ns != stat.st_mtime_ns:
+                continue
+            try:
+                result = RenderProbeResult.from_dict(entry.probe)
+            except (TypeError, ValueError):
+                continue
+            shots.append(
+                self._shot_with_measurements(
+                    root,
+                    production_root,
+                    path,
+                    result,
+                    quality_override,
+                    gpu_profile,
+                    store,
+                    blend_hash=entry.blend_hash,
+                    task_type=entry.task_type,
+                    task_id=entry.task_id,
+                )
+            )
+        return shots or None
+
+    def _shot_with_measurements(
+        self,
+        project_root: Path,
+        production_root: Path,
+        path: Path,
+        result: RenderProbeResult,
+        quality_override: RenderQuality | None,
+        gpu_profile: str,
+        store: RenderProfileStore,
+        *,
+        blend_hash: str,
+        task_type: str = "",
+        task_id: str = "",
+    ) -> RenderShot:
+        quality = self._quality_for(result, quality_override)
+        relative_path = path.relative_to(production_root).as_posix()
+        measured = store.get(
+            relative_path,
+            gpu_profile,
+            quality.key(),
+            blend_hash=blend_hash,
+        )
+        measurement_stale = False
+        measurement_scaled = False
+        measurement_source_gpu = ""
+        if measured is None:
+            measured = store.get(relative_path, gpu_profile, quality.key())
+            measurement_stale = measured is not None
+        if measured is None:
+            source_order = [
+                key
+                for key in (
+                    "rtx_3090",
+                    "rtx_4090",
+                    "rtx_a6000",
+                    "rtx_4070",
+                    "rtx_3080",
+                    "rtx_3070",
+                )
+                if key != gpu_profile
+            ]
+            for source_gpu in source_order:
+                source_seconds = store.get(
+                    relative_path,
+                    source_gpu,
+                    quality.key(),
+                    blend_hash=blend_hash,
+                )
+                source_stale = False
+                if source_seconds is None:
+                    source_seconds = store.get(
+                        relative_path, source_gpu, quality.key()
+                    )
+                    source_stale = source_seconds is not None
+                if source_seconds is not None:
+                    measured = scale_seconds_for_gpu(
+                        source_seconds, source_gpu, gpu_profile
+                    )
+                    measurement_scaled = True
+                    measurement_source_gpu = source_gpu
+                    measurement_stale = source_stale
+                    break
+        return self._shot_from_probe(
+            project_root,
+            production_root,
+            path,
+            result,
+            quality,
+            blend_hash,
+            measured,
+            measurement_stale=measurement_stale,
+            measurement_scaled=measurement_scaled,
+            measurement_source_gpu=measurement_source_gpu,
+            local_measured_seconds=store.get(
+                relative_path, "local", quality.key(), blend_hash=blend_hash
+            ),
+            task_type=task_type,
+            task_id=task_id,
+        )
 
     def _quality_for(
         self,
@@ -356,6 +523,8 @@ class RenderService:
         measurement_scaled: bool = False,
         measurement_source_gpu: str = "",
         local_measured_seconds: float | None = None,
+        task_type: str = "",
+        task_id: str = "",
     ) -> RenderShot:
         relative = path.relative_to(production_root).as_posix()
         warnings: list[str] = []
@@ -427,6 +596,8 @@ class RenderService:
             measurement_scaled=measurement_scaled,
             measurement_source_gpu=measurement_source_gpu,
             setup=result.setup,
+            task_type=task_type,
+            task_id=task_id,
             warnings=tuple(warnings),
         )
 
@@ -1115,6 +1286,53 @@ class RenderService:
             staging=self.staging_estimate(root),
         )
 
+    def benchmark_batch_estimate(
+        self,
+        project_root: Path | str,
+        shots: Sequence[RenderShot],
+        *,
+        gpu_profile: str = "rtx_3090",
+        price_per_hour: float = 0.0,
+        budget: float = 0.0,
+    ) -> BenchmarkBatchEstimate:
+        """Plan several benchmarks on one node with a single staging pass."""
+        root = Path(project_root)
+        selections: list[tuple[RenderShot, BenchmarkFrameSelection]] = []
+        bench_shots: list[RenderShot] = []
+        for shot in shots:
+            approved = self.frame_state_store(
+                root, shot, "render"
+            ).approved_frames()
+            selection = benchmark_frames(shot, approved)
+            if not selection.frames:
+                continue
+            selections.append((shot, selection))
+            bench_shots.extend(
+                replace(
+                    shot,
+                    frame_start=frame,
+                    frame_end=frame,
+                    frame_step=1,
+                    measured_seconds=None,
+                    measurement_stale=False,
+                )
+                for frame in selection.frames
+            )
+        plan = self.plan(
+            root,
+            target_hours=1.0,
+            gpu_profile=gpu_profile,
+            price_per_hour=price_per_hour,
+            max_nodes=1,
+            budget=budget,
+            shots=bench_shots,
+        )
+        return BenchmarkBatchEstimate(
+            shots=tuple(selections),
+            plan=plan,
+            staging=self.staging_estimate(root),
+        )
+
     def build_burst_runner(
         self,
         project_root: Path | str,
@@ -1129,6 +1347,7 @@ class RenderService:
         audit: RenderRunAuditLogger | None = None,
         run_id: str = "",
         skip_existing: bool = False,
+        output_roots: dict[str, Path | str] | None = None,
     ) -> RenderBurstRunner:
         root = Path(project_root)
         blueprint = self.load_blueprint(root)
@@ -1149,6 +1368,7 @@ class RenderService:
             audit=audit,
             run_id=run_id,
             skip_existing=skip_existing,
+            output_roots=output_roots,
         )
 
     def start_burst(

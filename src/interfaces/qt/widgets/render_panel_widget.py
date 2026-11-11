@@ -112,9 +112,12 @@ class RenderPanelWidget(QFrame):
         self.lbl_balance = QLabel(self.tr("Vast.ai balance: -"))
         self.lbl_balance.setObjectName("InfoLabel")
         header.addWidget(self.lbl_balance)
-        self.btn_refresh = QPushButton(self.tr("⟳ Scan"))
+        self.btn_refresh = QPushButton(self.tr("⟳ Re-scan"))
         self.btn_refresh.setObjectName("SecondaryButton")
         self.btn_refresh.setFixedSize(100, 34)
+        self.btn_refresh.setToolTip(
+            self.tr("Re-run Blender for every .blend and refresh Kitsu tasks")
+        )
         self.btn_refresh.clicked.connect(self._scan)
         header.addWidget(self.btn_refresh)
         layout.addLayout(header)
@@ -209,22 +212,14 @@ class RenderPanelWidget(QFrame):
         preview_frame_row.addStretch()
         preview_frame.add_layout(preview_frame_row)
         preview_buttons = QHBoxLayout()
-        self.btn_preview_selected = QPushButton(self.tr("Preview selected"))
-        self.btn_preview_selected.setObjectName("SecondaryButton")
-        self.btn_preview_selected.clicked.connect(self._preview_selected)
         self.btn_preview_all = QPushButton(self.tr("Preview all selected"))
         self.btn_preview_all.setObjectName("SecondaryButton")
         self.btn_preview_all.clicked.connect(self._preview_all)
-        self.btn_benchmark = QPushButton(self.tr("Benchmark selected"))
-        self.btn_benchmark.setObjectName("SecondaryButton")
-        self.btn_benchmark.clicked.connect(self._benchmark_selected)
-        self.btn_play_final = QPushButton(self.tr("Play final sequence"))
-        self.btn_play_final.setObjectName("SecondaryButton")
-        self.btn_play_final.clicked.connect(self._play_final_sequence)
-        preview_buttons.addWidget(self.btn_preview_selected)
+        self.btn_benchmark_all = QPushButton(self.tr("Benchmark all selected"))
+        self.btn_benchmark_all.setObjectName("SecondaryButton")
+        self.btn_benchmark_all.clicked.connect(self._benchmark_all)
         preview_buttons.addWidget(self.btn_preview_all)
-        preview_buttons.addWidget(self.btn_play_final)
-        preview_buttons.addWidget(self.btn_benchmark)
+        preview_buttons.addWidget(self.btn_benchmark_all)
         preview_buttons.addStretch()
         preview_frame.add_layout(preview_buttons)
         right_layout.addWidget(preview_frame)
@@ -254,10 +249,8 @@ class RenderPanelWidget(QFrame):
         if self.read_only:
             for widget in (
                 self.btn_refresh,
-                self.btn_preview_selected,
                 self.btn_preview_all,
-                self.btn_benchmark,
-                self.btn_play_final,
+                self.btn_benchmark_all,
                 self.btn_start,
                 self.btn_cancel,
                 self.btn_stop_all,
@@ -426,7 +419,7 @@ class RenderPanelWidget(QFrame):
 
         self.btn_recalculate = QPushButton(self.tr("Recalculate plan"))
         self.btn_recalculate.setObjectName("SecondaryButton")
-        self.btn_recalculate.clicked.connect(self._scan)
+        self.btn_recalculate.clicked.connect(self._recalculate)
         self.settings_frame.add_widget(self.btn_recalculate)
 
         layout.addWidget(self.settings_frame)
@@ -572,6 +565,7 @@ class RenderPanelWidget(QFrame):
         self.vm.preview_finished.connect(self._on_preview_finished)
         self.vm.benchmark_progress.connect(self._on_burst_progress)
         self.vm.benchmark_finished.connect(self._on_benchmark_finished)
+        self.vm.benchmarks_finished.connect(self._on_benchmarks_finished)
         self.vm.benchmark_error.connect(self._on_error)
         self.vm.burst_progress.connect(self._on_burst_progress)
         self.vm.local_render_progress.connect(self._on_local_progress)
@@ -823,7 +817,12 @@ class RenderPanelWidget(QFrame):
     def _scan(self) -> None:
         settings = self._settings_from_ui()
         self.vm.update_settings(settings)
-        self.vm.scan()
+        self.vm.scan(force=True)
+
+    def _recalculate(self) -> None:
+        settings = self._settings_from_ui()
+        self.vm.update_settings(settings)
+        self.vm.recalculate()
 
     # ------------------------------------------------------------------
     # Shots
@@ -1217,14 +1216,6 @@ class RenderPanelWidget(QFrame):
             return
         self.vm.set_preview_frame(self._selected_shot, int(frame))
 
-    def _preview_selected(self) -> None:
-        if self._selected_shot is None:
-            return
-        self._apply_preview_settings()
-        if self._confirm_preview([self._selected_shot]):
-            self._set_preview_page(self.poster)
-            self.vm.preview_shots([self._selected_shot])
-
     def _preview_all(self) -> None:
         targets = self.vm.selected_shots
         self._apply_preview_settings()
@@ -1361,11 +1352,78 @@ class RenderPanelWidget(QFrame):
             return
         self.player.set_approved_frames(self.vm.approved_frames(shot))
 
-    def _benchmark_selected(self) -> None:
-        if self._selected_shot is None:
-            QMessageBox.warning(self, self.tr("Benchmark"), self.tr("Select a shot first."))
+    def _benchmark_all(self) -> None:
+        shots = self.vm.selected_shots
+        if not shots:
+            QMessageBox.warning(
+                self, self.tr("Benchmark"), self.tr("Select at least one shot.")
+            )
             return
-        self._run_benchmark(self._selected_shot)
+        estimate = self.vm.benchmark_batch_estimate(shots)
+        proceed, overwrite = self._confirm_benchmark_batch(shots, estimate)
+        if proceed:
+            self.vm.benchmark_shots(shots, overwrite=overwrite)
+
+    def _confirm_benchmark_batch(self, shots: list, estimate) -> tuple[bool, bool]:
+        existing = [shot for shot in shots if self.vm.measurement_for(shot) is not None]
+        overwrite = bool(existing)
+        if estimate is None or not getattr(estimate, "shots", ()):
+            text = self.tr(
+                "Rent one Vast.ai node and benchmark {0} shot(s)?\n\n"
+                "The median time of each shot updates its measured profile."
+            ).format(len(shots))
+        else:
+            lines = []
+            for shot, selection in estimate.shots[:10]:
+                frames = ", ".join(str(frame) for frame in selection.frames)
+                task = shot.task_type or self.tr("no task")
+                lines.append(f"  - {shot.name} ({task}): frames {frames}")
+            if len(estimate.shots) > 10:
+                lines.append(
+                    self.tr("  - … and {0} more").format(len(estimate.shots) - 10)
+                )
+            offer = getattr(self.vm, "offer", None)
+            gpu = str(getattr(offer, "gpu_name", "") or "").strip()
+            price = float(getattr(offer, "price_per_hour", 0.0) or 0.0)
+            if price > 0:
+                node = self.tr("1 node ({0}, {1}) at ${2:.2f}/h").format(
+                    gpu or self.vm.settings.gpu_profile,
+                    self.vm.settings.gpu_profile,
+                    price,
+                )
+            else:
+                node = self.tr("1 node ({0}), cheapest available").format(
+                    gpu or self.vm.settings.gpu_profile
+                )
+            text = self.tr(
+                "Benchmark {0} shot(s) on one Vast.ai node\n\n"
+                "{1}\n\n"
+                "Node: {2}\n"
+                "Upload: {3} · {4:,} file(s)\n\n"
+                "Estimated cost: ~${5:.2f}\n"
+                "Frames are written to each shot's render folder; fully approved "
+                "shots are measured in .benchmarks/ only."
+            ).format(
+                len(estimate.shots),
+                "\n".join(lines),
+                node,
+                format_bytes(estimate.staging.bytes),
+                estimate.staging.files,
+                float(getattr(estimate.plan, "estimated_cost", 0.0) or 0.0),
+            )
+        if overwrite:
+            text = self.tr(
+                "{0} selected shot(s) already have a benchmark. Overwrite them?"
+            ).format(len(existing)) + "\n\n" + text
+        title = (
+            self.tr("Overwrite benchmarks")
+            if overwrite
+            else self.tr("Benchmark shots")
+        )
+        answer = QMessageBox.question(
+            self, title, text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        return answer == QMessageBox.Yes, overwrite
 
     def _on_benchmark_finished(self, shot_name: str, median: float) -> None:
         self._append_log(f"Benchmark {shot_name}: {format_rate(median)}/frame")
@@ -1375,6 +1433,18 @@ class RenderPanelWidget(QFrame):
             self.tr("{0}: {1}/frame. The plan will be recalculated.").format(
                 shot_name, format_rate(median)
             ),
+        )
+
+    def _on_benchmarks_finished(self, results: list, message: str) -> None:
+        self._append_log(message)
+        lines = "\n".join(
+            f"{name}: {format_rate(seconds)}/frame"
+            for name, seconds in (results or ())
+        )
+        QMessageBox.information(
+            self,
+            self.tr("Benchmarks finished"),
+            f"{message}\n\n{lines}".strip(),
         )
 
     def _on_preview_ready(self, shot_name: str, image_path: str) -> None:
@@ -1695,8 +1765,6 @@ class RenderPanelWidget(QFrame):
         self._refresh_action_buttons()
 
     def _refresh_action_buttons(self) -> None:
-        shot = self._selected_shot
-        locked = bool(shot is not None and self.vm.is_shot_locked(shot))
         self.combo_projects.setEnabled(
             not (
                 self._preview_active
@@ -1704,14 +1772,18 @@ class RenderPanelWidget(QFrame):
                 or bool(self.vm.has_active_runs())
             )
         )
-        self.btn_preview_selected.setEnabled(
-            shot is not None and not locked and not self._preview_active
-        )
-        self.btn_benchmark.setEnabled(
-            shot is not None
-            and not locked
+        targets = self.vm.selected_shots
+        self.btn_preview_all.setEnabled(
+            bool(targets)
             and not self._preview_active
             and not self._benchmark_active
+            and not bool(self.vm.has_active_runs())
+        )
+        self.btn_benchmark_all.setEnabled(
+            bool(targets)
+            and not self._preview_active
+            and not self._benchmark_active
+            and not bool(self.vm.has_active_runs())
         )
 
     def _on_measurement_conflicts(self, conflicts: list) -> None:
@@ -1761,10 +1833,8 @@ class RenderPanelWidget(QFrame):
             self.combo_projects,
             self.btn_refresh,
             self.btn_recalculate,
-            self.btn_preview_selected,
             self.btn_preview_all,
-            self.btn_benchmark,
-            self.btn_play_final,
+            self.btn_benchmark_all,
             self.btn_preview_video,
             self.btn_video,
             self.btn_open_logs,

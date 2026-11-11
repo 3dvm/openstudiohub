@@ -66,10 +66,15 @@ The 256-sample benchmark was **38.9 / 37.4 / 38.9 s** for frames 101, 148 and
 The values live in `<vfs_pipeline>/render_profiles.json` (for `p0005`:
 `05_config_estudio/render_profiles.json`). A profile is keyed by blend hash, GPU
 profile and quality. If the `.blend` changes, the old value is marked **stale**
-and shown as a previous benchmark; the panel's **Benchmark selected** button
-re-measures three representative frames of the shot's scene range (the dialog
-lists the exact `.blend`, the frames, the node and the upload size before
-renting).
+and shown as a previous benchmark; the panel's per-shot **Benchmark** button
+re-measures three representative frames of the shot's scene range, and
+**Benchmark all selected** does the same for every selected shot on a single
+node. The dialog lists the exact `.blend`, the frames, the node and the upload
+size before renting.
+
+The shot list only contains `.blend` files with a Kitsu shot task, and the scan
+result is cached in the project's `vfs_local` folder so the panel opens without
+waiting for Blender. Use **Re-scan** when files or task assignments changed.
 
 ## Worked example: p0005
 

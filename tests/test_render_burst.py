@@ -342,3 +342,42 @@ def test_parse_rsync_progress_reads_the_percentage():
     assert _parse_rsync_progress(" 1,234,567 100%   1.00GB/s    0:00:36") == 100
     assert _parse_rsync_progress("sent 123 bytes  received 45 bytes") is None
     assert _parse_rsync_progress("") is None
+
+
+def test_tasks_can_use_a_per_shot_output_root(tmp_path):
+    shot = _shot("sh010")
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=Path("/project"),
+        output_root=Path("/project/03_render"),
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+        output_roots={shot.relative_path: tmp_path / "benchmarks"},
+    )
+
+    task = runner._task(shot, [101])
+
+    assert task.output_root == tmp_path / "benchmarks"
+
+
+def test_variants_of_one_shot_get_distinct_remote_outputs():
+    first = replace(
+        _shot("sh040"),
+        relative_path="pro/shots/sq010/sh040/sh040-layout.blend",
+        blend_path=Path("/project/pro/shots/sq010/sh040/sh040-layout.blend"),
+    )
+    second = replace(
+        _shot("sh040"),
+        relative_path="pro/shots/sq010/sh040/sh040-layout_seeds-v7.blend",
+        blend_path=Path(
+            "/project/pro/shots/sq010/sh040/sh040-layout_seeds-v7.blend"
+        ),
+    )
+    runner = _runner()
+
+    first_task = runner._task(first, [101])
+    second_task = runner._task(second, [101])
+
+    assert first_task.output_subdir == second_task.output_subdir
+    assert first_task.remote_output_subdir != second_task.remote_output_subdir

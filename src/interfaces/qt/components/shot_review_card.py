@@ -167,7 +167,11 @@ class ShotReviewCard(QFrame):
         self.check.setChecked(bool(model.selected))
         self.check.setEnabled(not model.locked)
         self.check.blockSignals(False)
-        self.toggle.setText(f"{model.name} · {model.sequence}")
+        task = str(getattr(model, "task_type", "") or "").strip()
+        header_text = f"{model.name} · {model.sequence}"
+        if task:
+            header_text += f" · {task}"
+        self.toggle.setText(header_text)
         self.lbl_status.setText(model.status_label)
         self.lbl_status.setToolTip(model.status_tooltip)
         self.lbl_status.setStyleSheet(
