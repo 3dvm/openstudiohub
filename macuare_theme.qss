@@ -1211,6 +1211,12 @@ QLabel#InfoLabel {
     font-weight: bold;
 }
 
+QFrame#InfoPanel {
+    background-color: #1F2531;
+    border: 1px solid #334155;
+    border-radius: 6px;
+}
+
 QFrame#SettingsTabBar {
     background-color: #1F2531;
     border-bottom: 1px solid #141820;

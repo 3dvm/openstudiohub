@@ -108,6 +108,7 @@ class RenderPanelScanWorker(ManagedWorker):
     shots_ready = Signal(list, object, object, float, list)  # shots, plan, offer, balance, candidates
     scan_progress = Signal(str, int, int)
     scan_warning = Signal(str)
+    offer_blocked = Signal(object)
     error = Signal(str)
 
     def __init__(
@@ -202,6 +203,7 @@ class RenderPanelScanWorker(ManagedWorker):
             balance = 0.0
             price = 0.0
             offer_warning = ""
+            offer_diagnostics = None
             needs_vast_offer = (
                 self.settings.render_backend == "vast"
                 or self.settings.preview_backend == "vast"
@@ -220,6 +222,7 @@ class RenderPanelScanWorker(ManagedWorker):
                         price = offer.price_per_hour
                 except VastOfferError as error:
                     offer_warning = str(error)
+                    offer_diagnostics = getattr(error, "diagnostics", None)
                 try:
                     balance = self.service.vast_balance()
                 except Exception:  # noqa: BLE001
@@ -251,6 +254,9 @@ class RenderPanelScanWorker(ManagedWorker):
                     )
                 except VastOfferError as error:
                     offer_warning = offer_warning or str(error)
+                    offer_diagnostics = (
+                        offer_diagnostics or getattr(error, "diagnostics", None)
+                    )
                 if candidates and len(candidates) < plan.required_nodes:
                     from dataclasses import replace as _replace
 
@@ -266,6 +272,8 @@ class RenderPanelScanWorker(ManagedWorker):
                 from dataclasses import replace as _replace
 
                 plan = _replace(plan, warnings=tuple(plan.warnings) + (offer_warning,))
+            if offer_diagnostics is not None:
+                self.offer_blocked.emit(offer_diagnostics)
             self.shots_ready.emit(shots, plan, offer, balance, candidates)
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))
@@ -273,6 +281,7 @@ class RenderPanelScanWorker(ManagedWorker):
 
 class RenderCandidatesWorker(ManagedWorker):
     candidates_ready = Signal(list)
+    offer_blocked = Signal(object)
     error = Signal(str)
 
     def __init__(
@@ -301,6 +310,11 @@ class RenderCandidatesWorker(ManagedWorker):
                 min_cpu_ram_gb=self.min_cpu_ram_gb,
             )
             self.candidates_ready.emit(offers)
+        except VastOfferError as error:
+            if error.diagnostics is not None:
+                self.offer_blocked.emit(error.diagnostics)
+            else:
+                self.error.emit(str(error))
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))
 
@@ -309,6 +323,7 @@ class RenderOfferWorker(ManagedWorker):
     """Fetch Vast.ai offers and the balance for a backend switch."""
 
     offers_ready = Signal(list, float)
+    offer_blocked = Signal(object)
     error = Signal(str)
 
     def __init__(
@@ -341,6 +356,45 @@ class RenderOfferWorker(ManagedWorker):
             except Exception:  # noqa: BLE001
                 balance = 0.0
             self.offers_ready.emit(offers, balance)
+        except VastOfferError as error:
+            if error.diagnostics is not None:
+                self.offer_blocked.emit(error.diagnostics)
+            else:
+                self.error.emit(str(error))
+        except Exception as error:  # noqa: BLE001
+            self.error.emit(str(error))
+
+
+class RenderAlternativeOffersWorker(ManagedWorker):
+    """Search every other GPU profile for a valid offer."""
+
+    alternatives_ready = Signal(list)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        service: RenderService,
+        settings: RenderSettings,
+        *,
+        min_cpu_ram_gb: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.settings = settings
+        self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
+
+    def run(self) -> None:
+        try:
+            alternatives = self.service.alternate_offers(
+                self.settings.gpu_profile,
+                count=6,
+                max_price_per_hour=self.settings.max_price_per_hour,
+                preferred_region=self.settings.preferred_region,
+                min_inet_down_mbps=self.settings.min_inet_down_mbps,
+                min_inet_up_mbps=self.settings.min_inet_up_mbps,
+                min_cpu_ram_gb=self.min_cpu_ram_gb,
+            )
+            self.alternatives_ready.emit(list(alternatives or ()))
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))
 

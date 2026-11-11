@@ -41,6 +41,9 @@ from src.domain.render.image_formats import IMAGE_FORMATS, image_format
 from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
 from src.interfaces.qt.components.collapsible_section import CollapsibleSection
 from src.interfaces.qt.components.frame_sequence_player import FrameSequencePlayer
+from src.interfaces.qt.components.offer_diagnostics_dialog import (
+    OfferDiagnosticsDialog,
+)
 from src.interfaces.qt.components.preview_poster import PreviewPoster
 from src.interfaces.qt.components.render_node_card import RenderNodeCard
 from src.interfaces.qt.components.shot_review_card import ShotReviewCard
@@ -453,7 +456,7 @@ class RenderPanelWidget(QFrame):
         self._sync_backend_sections()
 
     def _build_summary_frame(self) -> QFrame:
-        frame = CollapsibleSection(self.tr("Plan"))
+        frame = CollapsibleSection(self.tr("Nodes / instances"))
         header = QHBoxLayout()
         self.lbl_summary = QLabel(self.tr("Scan a project to calculate the plan."))
         self.lbl_summary.setObjectName("InfoLabel")
@@ -464,6 +467,28 @@ class RenderPanelWidget(QFrame):
         self.btn_refresh_candidates.clicked.connect(self._refresh_candidates)
         header.addWidget(self.btn_refresh_candidates)
         frame.add_layout(header)
+
+        self.offer_issue_frame = QFrame()
+        self.offer_issue_frame.setObjectName("InfoPanel")
+        issue_layout = QVBoxLayout(self.offer_issue_frame)
+        issue_layout.setContentsMargins(10, 8, 10, 8)
+        issue_layout.setSpacing(6)
+        self.lbl_offer_issue_title = QLabel("")
+        self.lbl_offer_issue_title.setWordWrap(True)
+        self.lbl_offer_issue_title.setStyleSheet("font-weight: bold;")
+        issue_layout.addWidget(self.lbl_offer_issue_title)
+        self.lbl_offer_issue_details = QLabel("")
+        self.lbl_offer_issue_details.setObjectName("MutedLabel")
+        self.lbl_offer_issue_details.setWordWrap(True)
+        issue_layout.addWidget(self.lbl_offer_issue_details)
+        self.offer_issue_rows = QVBoxLayout()
+        self.offer_issue_rows.setSpacing(2)
+        issue_layout.addLayout(self.offer_issue_rows)
+        self.offer_issue_actions = QHBoxLayout()
+        self.offer_issue_actions.setSpacing(6)
+        issue_layout.addLayout(self.offer_issue_actions)
+        self.offer_issue_frame.hide()
+        frame.add_widget(self.offer_issue_frame)
 
         self.node_grid_widget = QWidget()
         self.node_grid_widget.setObjectName("TransparentGridContainer")
@@ -607,6 +632,8 @@ class RenderPanelWidget(QFrame):
         self.vm.kitsu_upload_finished.connect(self._on_kitsu_upload_finished)
         self.vm.busy_changed.connect(self._on_busy_changed)
         self.vm.render_runs_changed.connect(self._on_render_runs_changed)
+        self.vm.offer_diagnostics_ready.connect(self._on_offer_diagnostics)
+        self.vm.offer_alternatives_ready.connect(self._on_offer_alternatives)
         self.vm.measurement_conflicts.connect(self._on_measurement_conflicts)
         self.vm.preview_running.connect(self._on_preview_running)
         self.vm.benchmark_running.connect(self._on_benchmark_running)
@@ -891,7 +918,7 @@ class RenderPanelWidget(QFrame):
             else self.tr("Render backend: local")
         )
         self._sync_shot_cards()
-        self.lbl_summary.setText(self._summary_html(plan, offer))
+        self._refresh_summary_labels()
         self.lbl_warnings.setText("\n".join(plan.warnings))
         self.btn_start.setEnabled(
             plan.total_frames > 0
@@ -906,6 +933,147 @@ class RenderPanelWidget(QFrame):
             f"Plan: {plan.total_frames} frame(s), {plan.required_nodes} node(s), "
             f"ETA {format_duration(plan.estimated_wall_seconds)}, ${plan.estimated_cost:.2f}."
         )
+
+    def _refresh_summary_labels(self) -> None:
+        plan = self.vm.plan or self._plan
+        if plan is not None:
+            self.lbl_summary.setText(self._summary_html(plan, self.vm.offer))
+        self._render_offer_issue()
+
+    def _on_offer_diagnostics(self, _diagnostics) -> None:
+        self._refresh_summary_labels()
+
+    def _on_offer_alternatives(self, _alternatives) -> None:
+        self._refresh_summary_labels()
+
+    def _clear_layout(self, layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+            child = item.layout()
+            if child is not None:
+                self._clear_layout(child)
+
+    def _render_offer_issue(self) -> None:
+        diagnostics = self.vm.offer_diagnostics
+        visible = bool(
+            diagnostics is not None
+            and self.vm.settings.render_backend == "vast"
+            and self.vm.offer is None
+        )
+        self.offer_issue_frame.setVisible(visible)
+        if not visible:
+            return
+        limits = getattr(diagnostics, "limits", None)
+        self.lbl_offer_issue_title.setText(
+            str(getattr(diagnostics, "message", "") or "No matching offer.")
+        )
+        if limits is not None:
+            self.lbl_offer_issue_details.setText(
+                self.tr(
+                    "Current limits: max ${0:.3f}/h · host RAM >= {1:.0f} GB · "
+                    "network >= {2:.0f}/{3:.0f} Mbps · reliability >= {4:.2f}"
+                ).format(
+                    float(getattr(limits, "max_price_per_hour", 0.0)),
+                    float(getattr(limits, "min_cpu_ram_gb", 0.0)),
+                    float(getattr(limits, "min_inet_down_mbps", 0.0)),
+                    float(getattr(limits, "min_inet_up_mbps", 0.0)),
+                    float(getattr(limits, "min_reliability", 0.0)),
+                )
+            )
+        else:
+            self.lbl_offer_issue_details.setText("")
+
+        self._clear_layout(self.offer_issue_rows)
+        near_offers = list(getattr(diagnostics, "near_offers", ()) or ())
+        if not near_offers:
+            label = QLabel(
+                self.tr(
+                    "No rentable offer matched the GPU model, disk or CUDA "
+                    "pre-conditions. Try another GPU profile."
+                )
+            )
+            label.setWordWrap(True)
+            self.offer_issue_rows.addWidget(label)
+        else:
+            heading = QLabel(self.tr("Nearest offers:"))
+            heading.setStyleSheet("font-weight: bold;")
+            self.offer_issue_rows.addWidget(heading)
+            for report in near_offers[:3]:
+                offer = report.offer
+                label = QLabel(
+                    self.tr(
+                        "Offer {0} · {1} · ${2:.3f}/h · {3:.1f} GB RAM · "
+                        "{4:.0f}/{5:.0f} Mbps — {6}"
+                    ).format(
+                        offer.offer_id,
+                        offer.gpu_name,
+                        offer.price_per_hour,
+                        offer.cpu_ram_gb,
+                        offer.inet_down_mbps,
+                        offer.inet_up_mbps,
+                        report.failure_text,
+                    )
+                )
+                label.setObjectName("MutedLabel")
+                label.setWordWrap(True)
+                self.offer_issue_rows.addWidget(label)
+
+        self._clear_layout(self.offer_issue_actions)
+        for suggestion in list(getattr(diagnostics, "suggestions", ()) or ()):
+            button = QPushButton(str(suggestion.label))
+            button.setObjectName("SecondaryButton")
+            button.setToolTip(str(getattr(suggestion, "reason", "") or ""))
+            button.clicked.connect(
+                lambda _checked=False, field=suggestion.field, value=suggestion.value: (
+                    self.vm.apply_offer_fix(field, value)
+                )
+            )
+            self.offer_issue_actions.addWidget(button)
+        for alternative in list(getattr(self.vm, "alternate_offers", ()) or ()):
+            offer = alternative.offer
+            button = QPushButton(
+                self.tr("Use {0} at ${1:.2f}/h").format(
+                    alternative.gpu_label, offer.price_per_hour
+                )
+            )
+            button.setObjectName("SecondaryButton")
+            button.clicked.connect(
+                lambda _checked=False, key=alternative.gpu_profile: (
+                    self.vm.apply_offer_fix("gpu_profile", key)
+                )
+            )
+            self.offer_issue_actions.addWidget(button)
+        search_button = QPushButton(self.tr("Search again"))
+        search_button.setObjectName("SecondaryButton")
+        search_button.clicked.connect(self.vm.refresh_offer)
+        self.offer_issue_actions.addWidget(search_button)
+        alternates_button = QPushButton(self.tr("Search other GPU profiles"))
+        alternates_button.setObjectName("SecondaryButton")
+        alternates_button.clicked.connect(self.vm.search_alternate_profiles)
+        self.offer_issue_actions.addWidget(alternates_button)
+        view_button = QPushButton(self.tr("View all offers"))
+        view_button.setObjectName("SecondaryButton")
+        view_button.clicked.connect(self._show_offer_diagnostics)
+        self.offer_issue_actions.addWidget(view_button)
+        local_button = QPushButton(self.tr("Use local render"))
+        local_button.setObjectName("SecondaryButton")
+        local_button.clicked.connect(self.vm.use_local_backend)
+        self.offer_issue_actions.addWidget(local_button)
+
+    def _show_offer_diagnostics(self) -> None:
+        diagnostics = self.vm.offer_diagnostics
+        if diagnostics is None:
+            return
+        dialog = OfferDiagnosticsDialog(
+            self,
+            diagnostics,
+            self.vm.alternate_offers,
+            on_use_profile=lambda key: self.vm.apply_offer_fix("gpu_profile", key),
+        )
+        dialog.exec()
 
     def _refresh_candidates(self) -> None:
         if not self.vm.refresh_candidates():
@@ -940,6 +1108,7 @@ class RenderPanelWidget(QFrame):
         )
         if card is not None:
             widget.update_model(card)
+        self._refresh_summary_labels()
 
     def _relaunch_node(self, key: str) -> None:
         card = self.vm.node_card(str(key))
@@ -1867,6 +2036,7 @@ class RenderPanelWidget(QFrame):
                 )
             )
         )
+        self._refresh_summary_labels()
         self._refresh_action_buttons()
 
     def _on_preview_running(self, running: bool) -> None:
@@ -2055,6 +2225,47 @@ class RenderPanelWidget(QFrame):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _summary_html(self, plan: RenderPlan, offer) -> str:
+        activity = self.vm.activity_summary()
+        if activity.has_active:
+            shots = ", ".join(activity.shot_names[:3]) or "—"
+            if len(activity.shot_names) > 3:
+                shots += f" +{len(activity.shot_names) - 3}"
+            percent = (
+                activity.frames_done * 100.0 / activity.frames_expected
+                if activity.frames_expected
+                else 0.0
+            )
+            html = self.tr(
+                "<b>{0}</b> active run(s) · <b>{1}</b> node(s) · "
+                "<b>{2}/{3}</b> frames ({4:.0f}%) · "
+                "<b>{5:.2f}</b> GPU-h · <b>${6:.2f}</b> live · "
+                "ETA <b>{7}</b><br>Shots: {8}"
+            ).format(
+                activity.active_runs,
+                activity.nodes,
+                activity.frames_done,
+                activity.frames_expected,
+                percent,
+                activity.gpu_hours,
+                activity.cost,
+                format_duration(activity.eta_seconds),
+                shots,
+            )
+            if plan is not None and plan.total_frames > 0:
+                html += self.tr(
+                    "<br>Queued next: <b>{0}</b> frames · <b>{1}</b> node(s) · "
+                    "ETA <b>{2}</b> · cost <b>${3:.2f}</b>"
+                ).format(
+                    plan.total_frames,
+                    plan.required_nodes,
+                    format_duration(plan.estimated_wall_seconds),
+                    plan.estimated_cost,
+                )
+            else:
+                html += self.tr(
+                    "<br>All selected shots are rendering; nothing else is queued."
+                )
+            return html
         if offer is not None:
             offer_text = (
                 f"{offer.gpu_name} ${offer.price_per_hour:.3f}/h · "

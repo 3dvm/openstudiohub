@@ -104,10 +104,12 @@ Nevada at $0.082/h with 381/245 Mbps. For a studio in South America, US
 East/Miami is often a good default, but a fast host elsewhere can beat a slow US
 host.
 
-If no offer fits, the panel reports the cheapest offer seen and the plan shows a
-warning. Raise the max price or switch to the local backend explicitly: the Hub
-does not silently rent a more expensive node. The GPU selector offers RTX 3070,
-3080, 4070, 3090, 4090 and A6000.
+If no offer fits, the panel reports the exact failed limits, the nearest offers
+and the smallest limit change that would match (for example **Lower Min RAM to
+31 GB** or **Raise max price to $0.34/h**). It can also search the other GPU
+profiles. Every fix is explicit: the Hub does not silently relax a limit or rent
+a more expensive node. The GPU selector offers RTX 3070, 3080, 4070, 3090, 4090
+and A6000.
 
 The instance that was used for the post-reboot test was an RTX 3090 at
 $0.208/h in China (468/243 Mbps). It was used only to finish the benchmark and
@@ -158,7 +160,7 @@ from the application layer.
 | Symptom | Cause | Action |
 |---|---|---|
 | `The vastai CLI is not installed` | CLI missing from `PATH` | Install it and authenticate. |
-| `No ... offer satisfies the price/reliability/bandwidth limits` | Filters too strict | The warning shows the cheapest seen; raise the cap or lower the bandwidth. |
+| `No ... offer meets all the current limits` | Filters too strict | The panel lists the exact failing limits, the nearest offers and one-click fixes; raise the cap, lower the RAM/network floor, search other GPU profiles or use local. |
 | `Balance ... below the estimated cost` | Not enough credit for the plan | Top up or lower the node count/budget. |
 | SSH never becomes ready | Key not registered, encrypted, or sshd still starting | Register the `.pub`, use an unencrypted key, wait 15–30 s and retry. |
 | Blender exits immediately | Missing runtime library or wrong disk size | Check the node log; the burst installs the standard library set and uses 40 GB. |

@@ -73,19 +73,27 @@ every shot as a collapsible card; the right side shows the selected shot.
   the quickest way to catch a missing view layer or a broken compositor before
   the full render. Each shot has its own **Preview frame** field; without an
   override the panel uses the configured mode (middle by default).
-- **Plan and node cards:** approved frames are excluded from the plan; frames
-  that are not approved yet count as pending work. The panel shows pending
-  frames, GPU-hours, nodes, ETA, cost, confidence and warnings. Before any
-  instance is rented, the panel lists the
-  candidate offers for the required nodes in a four-column card grid
-  (**Refresh candidates** re-queries Vast.ai). Each card then follows its own
-  lifecycle: candidate, creating, booting, SSH, installing, staging, rendering,
-  syncing, completed, failed or destroyed. Each active card shows its current
-  shot, a progress bar, rendered/expected frames, measured seconds per frame and
-  an ETA calculated from the real frame times. At the end, the card exposes
-  buttons that open its Hub log, summary and raw Blender log directly. ETAs,
-  wall-time estimates, setup time and per-frame rates use adaptive units
-  (seconds, minutes, hours, days, weeks, months and years).
+- **Nodes / instances:** approved frames are excluded from the plan; frames
+  that are not approved yet count as pending work. While runs are active, the
+  section leads with the live state: runs, nodes, rendered/expected frames,
+  GPU-hours, live cost and ETA, followed by the **Queued next** plan. A plan
+  with zero pending frames means every selected shot is already rendering; the
+  panel says so explicitly instead of showing `0 frames`. Before any instance
+  is rented, the panel lists the candidate offers for the required nodes in a
+  four-column card grid (**Refresh candidates** re-queries Vast.ai). Each card
+  then follows its own lifecycle: candidate, creating, booting, SSH, installing,
+  staging, rendering, syncing, completed, failed or destroyed. Each active card
+  shows its current shot, a progress bar, rendered/expected frames, measured
+  seconds per frame and an ETA calculated from the real frame times. At the end,
+  the card exposes buttons that open its Hub log, summary and raw Blender log
+  directly. ETAs, wall-time estimates, setup time and per-frame rates use
+  adaptive units (seconds, minutes, hours, days, weeks, months and years).
+- **Offer diagnostics:** when no offer matches, the panel lists the exact
+  failed requirements for the nearest offers and offers one-click fixes:
+  raise the price cap, lower the host RAM floor, relax the network floor, allow
+  any region, search again, search the other GPU profiles, or switch to local.
+  **View all offers** opens the full table with every candidate and its
+  per-constraint result. No limit is relaxed automatically.
 - **Scheduling:** the plan uses one instance when the measured work fits the
   target, and packs whole shots per node. A shot is only split across nodes when
   it cannot fit one instance. Each run locks only the shots it renders; other
@@ -244,9 +252,11 @@ changed in the panel.
 The default price cap is **$0.13/h**, with a preference for Americas offers
 (US/Canada/Mexico/Brazil) and a minimum bandwidth (100 Mbps down / 50 Mbps up by
 default). The panel shows the offer's location and bandwidth. If no offer fits,
-it reports the cheapest seen so the TD can raise the cap explicitly. Budget
-profiles (3070/3080/4070) use a benchmark scaled from the 3090 reference until
-they are benchmarked directly.
+it names the failing limits, the nearest offers, the smallest limit change that
+would match, and can search the other GPU profiles. The TD decides which limit
+to relax; nothing is changed automatically. Budget profiles (3070/3080/4070)
+use a benchmark scaled from the 3090 reference until they are benchmarked
+directly.
 
 ## Scene requirements
 

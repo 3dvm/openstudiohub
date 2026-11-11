@@ -1061,3 +1061,100 @@ def test_min_ram_auto_for_node_bakes(qapp):
 
     viewmodel.settings = RenderSettings(min_cpu_ram_gb=32.0)
     assert viewmodel.min_cpu_ram_gb_effective([stale]) == 32.0
+
+
+def test_activity_summary_uses_active_runs_when_the_pending_plan_is_empty(
+    qapp, tmp_path
+):
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
+        RenderNodeCardModel,
+        RenderRunState,
+    )
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    shot = _shot()
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(
+        selected_shots=(shot.relative_path,), render_backend="vast"
+    )
+    plan = viewmodel._plan_for_shots([shot])
+    run = RenderRunState(
+        run_id="run-1",
+        backend="vast",
+        plan=plan,
+        gpu_profile="rtx_4070",
+        locked_shots={shot.relative_path},
+        cards={
+            0: RenderNodeCardModel(
+                node=0,
+                status="rendering",
+                price_per_hour=0.2,
+                frames_done=1,
+                frames_expected=35,
+                eta_seconds=120,
+            ),
+            1: RenderNodeCardModel(
+                node=1,
+                status="rendering",
+                price_per_hour=0.2,
+                frames_done=1,
+                frames_expected=35,
+                eta_seconds=300,
+            ),
+        },
+        started_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    viewmodel._runs = {run.run_id: run}
+    viewmodel._locked_shots = {shot.relative_path}
+
+    viewmodel.recalculate()
+    summary = viewmodel.activity_summary()
+
+    assert viewmodel.plan is not None and viewmodel.plan.total_frames == 0
+    assert summary.active_runs == 1
+    assert summary.nodes == 2
+    assert summary.frames_done == 2
+    assert summary.frames_expected == 70
+    assert summary.gpu_hours > 1.9
+    assert summary.cost > 0.3
+    assert summary.eta_seconds == 300
+    assert summary.shot_names == (shot.name,)
+    assert summary.pending_plan is not None
+    assert summary.pending_plan.total_frames == 0
+
+
+def test_apply_offer_fix_updates_settings_and_retries(qapp, tmp_path, monkeypatch):
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.settings = RenderSettings(min_cpu_ram_gb=32.0)
+    refreshed = []
+    monkeypatch.setattr(viewmodel, "_save_settings", lambda: None)
+    monkeypatch.setattr(viewmodel, "recalculate", lambda: None)
+    monkeypatch.setattr(
+        viewmodel, "_refresh_vast_offer", lambda: refreshed.append(True) or True
+    )
+
+    assert viewmodel.apply_offer_fix("min_cpu_ram_gb", 31.0) is True
+
+    assert viewmodel.settings.min_cpu_ram_gb == 31.0
+    assert refreshed == [True]
+
+
+def test_offer_blocked_keeps_structured_diagnostics(qapp, tmp_path):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    captured = []
+    viewmodel.offer_diagnostics_ready.connect(captured.append)
+    diagnostics = SimpleNamespace(message="No RTX 4070 offer meets all limits.")
+
+    viewmodel._on_offer_blocked(diagnostics)
+
+    assert viewmodel.offer is None
+    assert viewmodel.offer_diagnostics is diagnostics
+    assert captured == [diagnostics]

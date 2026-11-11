@@ -22,6 +22,14 @@ from pathlib import Path
 from typing import Callable, Sequence
 
 from src.domain.render.capacity import GPU_PROFILES
+from src.domain.render.offers import (
+    OfferAlternative,
+    OfferDiagnostics,
+    OfferLimits,
+    OfferSnapshot,
+    build_diagnostics,
+    is_us_geolocation,
+)
 
 Runner = Callable[[Sequence[str], float], subprocess.CompletedProcess]
 
@@ -45,6 +53,15 @@ class VastCommandError(VastError):
 class VastOfferError(VastError):
     """No offer satisfies the requested constraints."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        diagnostics: OfferDiagnostics | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostics = diagnostics
+
 
 @dataclass(frozen=True)
 class VastOffer:
@@ -60,6 +77,21 @@ class VastOffer:
     inet_up_mbps: float
     geolocation: str
     raw: dict
+
+    def snapshot(self) -> OfferSnapshot:
+        return OfferSnapshot(
+            offer_id=self.id,
+            gpu_name=self.gpu_name,
+            gpu_ram_gb=self.gpu_ram_gb,
+            cpu_ram_gb=self.cpu_ram_gb,
+            disk_space_gb=self.disk_space_gb,
+            cuda_version=self.cuda_version,
+            reliability=self.reliability,
+            price_per_hour=self.price_per_hour,
+            inet_down_mbps=self.inet_down_mbps,
+            inet_up_mbps=self.inet_up_mbps,
+            geolocation=self.geolocation,
+        )
 
     @classmethod
     def from_dict(cls, data: dict) -> "VastOffer":
@@ -214,6 +246,78 @@ class VastProvider:
         profile = GPU_PROFILES.get(gpu_profile)
         if profile is None:
             raise VastOfferError(f"Unknown GPU profile: {gpu_profile}")
+        offers, diagnostics = self._evaluate_profile(
+            profile,
+            max_price_per_hour=max_price_per_hour,
+            min_disk_gb=min_disk_gb,
+            min_reliability=min_reliability,
+            min_cuda=min_cuda,
+            preferred_region=preferred_region,
+            min_inet_down_mbps=min_inet_down_mbps,
+            min_inet_up_mbps=min_inet_up_mbps,
+            min_cpu_ram_gb=min_cpu_ram_gb,
+        )
+        if not offers:
+            raise VastOfferError(
+                _diagnostics_message(diagnostics),
+                diagnostics=diagnostics,
+            )
+        return offers[: max(1, int(count))]
+
+    def search_other_profiles(
+        self,
+        gpu_profile: str,
+        *,
+        count: int = 1,
+        max_price_per_hour: float = 0.0,
+        min_disk_gb: int = DEFAULT_DISK_GB,
+        min_reliability: float = 0.95,
+        min_cuda: str = "12.8",
+        preferred_region: str = "prefer_americas",
+        min_inet_down_mbps: float = 0.0,
+        min_inet_up_mbps: float = 0.0,
+        min_cpu_ram_gb: float = 0.0,
+    ) -> list[OfferAlternative]:
+        """Find valid offers in every GPU profile except ``gpu_profile``."""
+        alternatives: list[OfferAlternative] = []
+        for key, profile in GPU_PROFILES.items():
+            if key == gpu_profile:
+                continue
+            offers, _diagnostics = self._evaluate_profile(
+                profile,
+                max_price_per_hour=max_price_per_hour,
+                min_disk_gb=min_disk_gb,
+                min_reliability=min_reliability,
+                min_cuda=min_cuda,
+                preferred_region=preferred_region,
+                min_inet_down_mbps=min_inet_down_mbps,
+                min_inet_up_mbps=min_inet_up_mbps,
+                min_cpu_ram_gb=min_cpu_ram_gb,
+            )
+            if offers:
+                alternatives.append(
+                    OfferAlternative(
+                        gpu_profile=key,
+                        gpu_label=profile.label,
+                        offer=offers[0].snapshot(),
+                    )
+                )
+        alternatives.sort(key=lambda item: item.offer.price_per_hour)
+        return alternatives[: max(1, int(count))]
+
+    def _evaluate_profile(
+        self,
+        profile,
+        *,
+        max_price_per_hour: float,
+        min_disk_gb: int,
+        min_reliability: float,
+        min_cuda: str,
+        preferred_region: str,
+        min_inet_down_mbps: float,
+        min_inet_up_mbps: float,
+        min_cpu_ram_gb: float,
+    ) -> tuple[list[VastOffer], OfferDiagnostics]:
         query = (
             "num_gpus=1 rentable=true "
             f"gpu_name in [{profile.vast_gpu_name}] "
@@ -230,39 +334,39 @@ class VastProvider:
             "prefer_americas",
             "prefer-americas",
         )
-        filtered = [
-            offer
-            for offer in candidates
-            if offer.id
-            and offer.gpu_ram_gb >= profile.vram_gb
-            and offer.reliability >= min_reliability
-            and (max_price_per_hour <= 0 or offer.price_per_hour <= max_price_per_hour)
-            and (min_inet_down_mbps <= 0 or offer.inet_down_mbps >= min_inet_down_mbps)
-            and (min_inet_up_mbps <= 0 or offer.inet_up_mbps >= min_inet_up_mbps)
-            and (min_cpu_ram_gb <= 0 or offer.cpu_ram_gb >= min_cpu_ram_gb)
-            and (not us_only or _is_us(offer.geolocation))
-        ]
+        limits = OfferLimits(
+            gpu_profile=profile.key,
+            gpu_label=profile.label,
+            min_gpu_ram_gb=float(profile.vram_gb),
+            max_price_per_hour=float(max_price_per_hour or 0.0),
+            min_reliability=float(min_reliability),
+            min_cpu_ram_gb=float(min_cpu_ram_gb or 0.0),
+            min_inet_down_mbps=float(min_inet_down_mbps or 0.0),
+            min_inet_up_mbps=float(min_inet_up_mbps or 0.0),
+            preferred_region=str(preferred_region or ""),
+            us_only=us_only,
+            min_disk_gb=int(min_disk_gb),
+            min_cuda=str(min_cuda),
+        )
+        diagnostics = build_diagnostics(
+            [offer.snapshot() for offer in candidates if offer.id],
+            limits,
+            query=query,
+        )
+        passing_ids = {
+            report.offer.offer_id
+            for report in diagnostics.candidates
+            if report.passing
+        }
+        filtered = [offer for offer in candidates if offer.id in passing_ids]
         filtered.sort(
             key=lambda offer: (
-                0 if (prefer_us and _is_us(offer.geolocation)) else 1,
+                0 if (prefer_us and is_us_geolocation(offer.geolocation)) else 1,
                 offer.price_per_hour,
                 -offer.reliability,
             )
         )
-        if not filtered:
-            cheapest = min(candidates, key=lambda offer: offer.price_per_hour, default=None)
-            detail = ""
-            if cheapest is not None:
-                detail = (
-                    f" Cheapest seen: ${cheapest.price_per_hour:.3f}/h in "
-                    f"{cheapest.geolocation or '?'} "
-                    f"({cheapest.inet_down_mbps:.0f}/{cheapest.inet_up_mbps:.0f} Mbps)."
-                )
-            raise VastOfferError(
-                f"No {profile.label} offer satisfies the price/reliability/RAM/"
-                f"bandwidth limits.{detail}"
-            )
-        return filtered[: max(1, int(count))]
+        return filtered, diagnostics
 
     # ------------------------------------------------------------------
     # Instances
@@ -346,19 +450,11 @@ class VastProvider:
         return destroyed
 
 
-def _is_us(geolocation: str) -> bool:
-    text = (geolocation or "").upper()
-    markers = (
-        "US",
-        "UNITED STATES",
-        "AMERICA",
-        "CANADA",
-        "MEXICO",
-        "BRAZIL",
-        "ARGENTINA",
-        "CHILE",
-        "COLOMBIA",
-        "PERU",
-        "CA",
+def _diagnostics_message(diagnostics: OfferDiagnostics) -> str:
+    near = diagnostics.near_offers[0] if diagnostics.near_offers else None
+    if near is None:
+        return diagnostics.message
+    return (
+        f"{diagnostics.message} Nearest: offer {near.offer.offer_id} at "
+        f"${near.offer.price_per_hour:.3f}/h — {near.failure_text}."
     )
-    return any(marker in text for marker in markers)

@@ -187,3 +187,94 @@ def test_choose_offers_filters_system_ram(tmp_path):
 
     assert [offer.id for offer in selected] == [2]
     assert selected[0].cpu_ram_gb == 64.0
+
+
+def test_choose_offers_raises_with_exact_diagnostics(tmp_path):
+    offers = [
+        {
+            "id": 1,
+            "gpu_name": "RTX 4070",
+            "gpu_total_ram": 12288,
+            "cpu_ram": 32000,
+            "disk_space": 200,
+            "cuda_max_good": "13.0",
+            "reliability2": 0.99,
+            "dph_total": 0.135,
+            "inet_down": 940,
+            "inet_up": 115,
+        },
+        {
+            "id": 2,
+            "gpu_name": "RTX 4070",
+            "gpu_total_ram": 12288,
+            "cpu_ram": 64000,
+            "disk_space": 200,
+            "cuda_max_good": "13.0",
+            "reliability2": 0.99,
+            "dph_total": 0.335,
+            "inet_down": 700,
+            "inet_up": 280,
+        },
+    ]
+    runner = FakeRunner([(lambda cmd: "search" in cmd and "offers" in cmd, offers, 0)])
+    provider = VastProvider(_cli(tmp_path), runner=runner)
+
+    import pytest
+
+    from src.infrastructure.render.vast import VastOfferError
+
+    with pytest.raises(VastOfferError) as raised:
+        provider.choose_offers(
+            "rtx_4070",
+            count=1,
+            max_price_per_hour=0.18,
+            min_cpu_ram_gb=32,
+            min_inet_down_mbps=100,
+            min_inet_up_mbps=50,
+        )
+
+    diagnostics = raised.value.diagnostics
+    assert diagnostics is not None
+    assert diagnostics.near_offers[0].offer.offer_id == 1
+    assert "Host RAM: 31.2 GB (< 32 GB)" in diagnostics.near_offers[0].failure_text
+    labels = {suggestion.label for suggestion in diagnostics.suggestions}
+    assert "Lower Min RAM to 31 GB" in labels
+    assert "Raise max price to $0.34/h" in labels
+
+
+def test_search_other_profiles_returns_valid_alternatives(tmp_path):
+    offer = {
+        "id": 9,
+        "gpu_name": "RTX 3090",
+        "gpu_total_ram": 24576,
+        "cpu_ram": 64000,
+        "disk_space": 200,
+        "cuda_max_good": "13.0",
+        "reliability2": 0.99,
+        "dph_total": 0.15,
+        "inet_down": 500,
+        "inet_up": 200,
+        "geolocation": "United States, US",
+    }
+    runner = FakeRunner(
+        [
+            (
+                lambda cmd: "RTX_3090" in " ".join(cmd),
+                [offer],
+                0,
+            ),
+            (lambda cmd: "search" in cmd and "offers" in cmd, [], 0),
+        ]
+    )
+    provider = VastProvider(_cli(tmp_path), runner=runner)
+
+    alternatives = provider.search_other_profiles(
+        "rtx_4070",
+        max_price_per_hour=0.18,
+        min_cpu_ram_gb=32,
+        min_inet_down_mbps=100,
+        min_inet_up_mbps=50,
+    )
+
+    assert [item.gpu_profile for item in alternatives] == ["rtx_3090"]
+    assert alternatives[0].offer.offer_id == 9

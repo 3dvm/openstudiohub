@@ -43,6 +43,7 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
 )
 from src.interfaces.qt.workers.render_workers import (
     KitsuStatusesWorker,
+    RenderAlternativeOffersWorker,
     KitsuUploadWorker,
     LocalRenderWorker,
     RenderBenchmarkBatchWorker,
@@ -129,6 +130,25 @@ class RenderRunState:
     relaunch_key: str = ""
     settings: RenderSettings = field(default_factory=RenderSettings)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class RenderActivitySummary:
+    """Live view of the runs and the work still queued behind them."""
+
+    active_runs: int = 0
+    nodes: int = 0
+    frames_done: int = 0
+    frames_expected: int = 0
+    gpu_hours: float = 0.0
+    cost: float = 0.0
+    eta_seconds: float = 0.0
+    shot_names: tuple[str, ...] = ()
+    pending_plan: RenderPlan | None = None
+
+    @property
+    def has_active(self) -> bool:
+        return self.active_runs > 0
 
 
 @dataclass(frozen=True)
@@ -223,6 +243,8 @@ _STAGE_TO_STATUS = {
 
 class RenderPanelViewModel(BaseViewModel):
     shots_ready = Signal(list, object, object, float, list)
+    offer_diagnostics_ready = Signal(object)
+    offer_alternatives_ready = Signal(list)
     shot_reviews_ready = Signal(list)
     node_cards_ready = Signal(list)
     node_card_updated = Signal(str)
@@ -309,6 +331,8 @@ class RenderPanelViewModel(BaseViewModel):
         self.preview_video_paths: dict[str, Path] = {}
         self.node_cards: list[RenderNodeCardModel] = []
         self.candidate_offers: list = []
+        self.offer_diagnostics = None
+        self.alternate_offers: list = []
         self._runs: dict[str, RenderRunState] = {}
         self._plan_cards: list[RenderNodeCardModel] = []
         self._finished_cards: list[RenderNodeCardModel] = []
@@ -353,6 +377,8 @@ class RenderPanelViewModel(BaseViewModel):
         self._load_preview_paths()
         self.node_cards = []
         self.candidate_offers = []
+        self.offer_diagnostics = None
+        self.alternate_offers = []
         self._runs = {}
         self._plan_cards = []
         self._finished_cards = []
@@ -469,6 +495,10 @@ class RenderPanelViewModel(BaseViewModel):
         if value == "vast":
             self._refresh_vast_offer()
 
+    def refresh_offer(self) -> bool:
+        """Public wrapper used by the offer panel actions."""
+        return self._refresh_vast_offer()
+
     def _refresh_vast_offer(self) -> bool:
         if self.project_root is None or self.read_only:
             return False
@@ -484,6 +514,7 @@ class RenderPanelViewModel(BaseViewModel):
             ),
         )
         worker.offers_ready.connect(self._on_offers_ready)
+        worker.offer_blocked.connect(self._on_offer_blocked)
         worker.error.connect(self._on_offer_error)
         self.report_status("Searching for a Vast.ai offer...", "yellow")
         return self.workers.start("render_offer", worker)
@@ -492,6 +523,8 @@ class RenderPanelViewModel(BaseViewModel):
         self.candidate_offers = list(offers or ())
         self.offer = self.candidate_offers[0] if self.candidate_offers else None
         self.balance = float(balance or 0.0)
+        self.offer_diagnostics = None
+        self.alternate_offers = []
         self.recalculate()
         if self.offer is None:
             self.report_status(
@@ -507,8 +540,80 @@ class RenderPanelViewModel(BaseViewModel):
     def _on_offer_error(self, message: str) -> None:
         self.offer = None
         self.candidate_offers = []
+        self.offer_diagnostics = None
+        self.alternate_offers = []
         self.recalculate()
         self.report_status(message, "red")
+
+    def _on_offer_blocked(self, diagnostics) -> None:
+        self.offer = None
+        self.candidate_offers = []
+        self.offer_diagnostics = diagnostics
+        self.alternate_offers = []
+        message = getattr(diagnostics, "message", "") or (
+            "No Vast.ai offer matched the current limits."
+        )
+        self.report_status(message, "red")
+        self.offer_diagnostics_ready.emit(diagnostics)
+        self.recalculate()
+
+    def apply_offer_fix(self, field: str, value) -> bool:
+        """Apply one explicit limit change and search again."""
+        allowed = {
+            "max_price_per_hour",
+            "min_cpu_ram_gb",
+            "min_inet_down_mbps",
+            "min_inet_up_mbps",
+            "preferred_region",
+            "gpu_profile",
+        }
+        if field not in allowed or self.project_root is None or self.read_only:
+            return False
+        updates = {field: value}
+        self.settings = replace(self.settings, **updates)
+        self._save_settings()
+        self.offer_diagnostics = None
+        self.alternate_offers = []
+        self.recalculate()
+        self._refresh_vast_offer()
+        self.report_status(f"Applied offer fix: {field} = {value}.", "green")
+        return True
+
+    def use_local_backend(self) -> None:
+        self.offer_diagnostics = None
+        self.alternate_offers = []
+        self.set_render_backend("local")
+
+    def search_alternate_profiles(self) -> bool:
+        if self.project_root is None or self.read_only:
+            return False
+        if self.workers.is_running("render_alternates"):
+            return False
+        worker = RenderAlternativeOffersWorker(
+            self.service,
+            self.settings,
+            min_cpu_ram_gb=self.min_cpu_ram_gb_effective(
+                list(self.plan.shots) if self.plan is not None else None
+            ),
+        )
+        worker.alternatives_ready.connect(self._on_alternatives_ready)
+        worker.error.connect(self._on_offer_error)
+        self.report_status("Searching the other GPU profiles...", "yellow")
+        return self.workers.start("render_alternates", worker)
+
+    def _on_alternatives_ready(self, alternatives: list) -> None:
+        self.alternate_offers = list(alternatives or ())
+        self.offer_alternatives_ready.emit(self.alternate_offers)
+        if self.alternate_offers:
+            self.report_status(
+                f"{len(self.alternate_offers)} other GPU profile(s) have a "
+                "valid offer.",
+                "green",
+            )
+        else:
+            self.report_status(
+                "No other GPU profile matches the current limits.", "red"
+            )
 
     def preview_frame_for(self, shot: RenderShot) -> int:
         return self.service.preview_frame(shot, self.settings)
@@ -559,6 +664,7 @@ class RenderPanelViewModel(BaseViewModel):
         worker.scan_progress.connect(self.scan_progress)
         worker.shots_ready.connect(self._on_shots_ready)
         worker.scan_warning.connect(self._on_scan_warning)
+        worker.offer_blocked.connect(self._on_offer_blocked)
         worker.error.connect(self.scan_error)
         self.set_busy(True)
         self.report_status(
@@ -580,6 +686,12 @@ class RenderPanelViewModel(BaseViewModel):
         self.offer = offer
         self.balance = balance
         self.candidate_offers = list(candidates or ())
+        if offer is not None or not (
+            self.settings.render_backend == "vast"
+            or self.settings.preview_backend == "vast"
+        ):
+            self.offer_diagnostics = None
+            self.alternate_offers = []
         available = {shot.relative_path for shot in self.shots}
         selected = tuple(
             path for path in self.settings.selected_shots if path in available
@@ -864,12 +976,15 @@ class RenderPanelViewModel(BaseViewModel):
             min_cpu_ram_gb=self.min_cpu_ram_gb_effective(list(self.plan.shots)),
         )
         worker.candidates_ready.connect(self._on_candidates_ready)
+        worker.offer_blocked.connect(self._on_offer_blocked)
         worker.error.connect(self.scan_error)
         self.report_status("Refreshing Vast.ai candidate offers...", "yellow")
         return self.workers.start("render_candidates", worker)
 
     def _on_candidates_ready(self, candidates: list) -> None:
         self.candidate_offers = list(candidates or [])
+        self.offer_diagnostics = None
+        self.alternate_offers = []
         if self.plan is not None:
             self._build_node_cards(self.plan)
         self.report_status("Candidate offers refreshed.", "green")
@@ -1049,6 +1164,62 @@ class RenderPanelViewModel(BaseViewModel):
         self._build_node_cards(self.plan)
         self.shots_ready.emit(
             self.shots, self.plan, self.offer, self.balance, self.candidate_offers
+        )
+
+    def activity_summary(self) -> RenderActivitySummary:
+        """Aggregate live runs and the pending plan for the Nodes panel."""
+        now = datetime.now(timezone.utc)
+        nodes = 0
+        frames_done = 0
+        frames_expected = 0
+        gpu_hours = 0.0
+        cost = 0.0
+        eta_seconds = 0.0
+        shot_names: list[str] = []
+        for run in sorted(self._runs.values(), key=lambda item: item.started_at):
+            elapsed = max(0.0, (now - run.started_at).total_seconds())
+            run_nodes = len(run.cards) or int(run.plan.required_nodes or 0)
+            nodes += run_nodes
+            run_done = sum(run.progress_by_node.values())
+            if not run_done:
+                run_done = sum(card.frames_done for card in run.cards.values())
+            frames_done += run_done
+            frames_expected += sum(
+                card.frames_expected
+                for card in run.cards.values()
+                if card.frames_expected
+            ) or int(run.plan.total_frames or 0)
+            shot_names.extend(shot.name for shot in run.plan.shots)
+            if run.cards:
+                for card in run.cards.values():
+                    price = float(card.price_per_hour or run.plan.price_per_hour or 0.0)
+                    gpu_hours += elapsed / 3600.0
+                    cost += price * elapsed / 3600.0
+                    if not card.final and card.eta_seconds > 0:
+                        eta_seconds = max(eta_seconds, float(card.eta_seconds))
+            else:
+                gpu_hours += elapsed * run_nodes / 3600.0
+                cost += (
+                    float(run.plan.price_per_hour or 0.0)
+                    * elapsed
+                    * run_nodes
+                    / 3600.0
+                )
+            if not eta_seconds:
+                eta_seconds = max(
+                    0.0,
+                    float(run.plan.estimated_wall_seconds or 0.0) - elapsed,
+                )
+        return RenderActivitySummary(
+            active_runs=len(self._runs),
+            nodes=nodes,
+            frames_done=frames_done,
+            frames_expected=frames_expected,
+            gpu_hours=gpu_hours,
+            cost=cost,
+            eta_seconds=eta_seconds,
+            shot_names=tuple(dict.fromkeys(shot_names)),
+            pending_plan=self.plan,
         )
 
     # ------------------------------------------------------------------
@@ -2488,6 +2659,8 @@ class RenderPanelViewModel(BaseViewModel):
         cost = 0.0
         for run in sorted(self._runs.values(), key=lambda item: item.started_at):
             run_done = sum(run.progress_by_node.values())
+            if not run_done:
+                run_done = sum(card.frames_done for card in run.cards.values())
             run_expected = sum(
                 card.frames_expected
                 for card in run.cards.values()
@@ -2511,15 +2684,16 @@ class RenderPanelViewModel(BaseViewModel):
                 }
             )
         backends = {run.backend for run in self._runs.values()}
+        live = self.activity_summary()
         data.update(
             {
                 "status": "rendering",
                 "backend": next(iter(backends)) if len(backends) == 1 else "mixed",
                 "message": message or f"{len(runs)} render run(s) active.",
-                "frames_done": done,
-                "frames_expected": expected,
-                "nodes": nodes,
-                "cost": cost,
+                "frames_done": live.frames_done or done,
+                "frames_expected": live.frames_expected or expected,
+                "nodes": live.nodes or nodes,
+                "cost": live.cost or cost,
                 "runs": runs,
                 "started_at": min(
                     run.started_at for run in self._runs.values()

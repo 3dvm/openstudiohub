@@ -571,3 +571,122 @@ def test_min_ram_spin_round_trips(qapp):
     widget.spin_min_ram.setValue(32.0)
     assert widget._settings_from_ui().min_cpu_ram_gb == 32.0
     widget.deleteLater()
+
+
+def test_nodes_section_uses_the_new_title(qapp):
+    widget = _widget()
+    titles = [
+        section.button.text()
+        for section in widget.findChildren(CollapsibleSection)
+    ]
+    assert "Nodes / instances" in titles
+    widget.deleteLater()
+
+
+def test_active_run_summary_does_not_show_an_empty_plan(qapp):
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
+        RenderActivitySummary,
+    )
+
+    widget = _widget()
+    widget.vm.activity_summary = lambda: RenderActivitySummary(
+        active_runs=1,
+        nodes=2,
+        frames_done=2,
+        frames_expected=70,
+        gpu_hours=0.4,
+        cost=0.1,
+        eta_seconds=300,
+        shot_names=("sh040", "sh060"),
+    )
+    plan = SimpleNamespace(
+        total_frames=0,
+        required_nodes=0,
+        estimated_wall_seconds=0.0,
+        estimated_cost=0.0,
+    )
+
+    html = widget._summary_html(plan, None)
+
+    assert "2/70" in html
+    assert "sh040" in html
+    assert "All selected shots are rendering" in html
+    assert "0 frames" not in html
+    widget.deleteLater()
+
+
+def test_offer_issue_panel_shows_near_offers_and_actions(qapp):
+    from src.domain.render.offers import (
+        OfferCandidateReport,
+        OfferDiagnostics,
+        OfferLimits,
+        OfferMiss,
+        OfferSnapshot,
+        OfferSuggestion,
+    )
+
+    widget = _widget()
+    offer = OfferSnapshot(
+        offer_id=57993278,
+        gpu_name="RTX 4070",
+        gpu_ram_gb=12.0,
+        cpu_ram_gb=31.3,
+        disk_space_gb=700.0,
+        cuda_version="13.2",
+        reliability=0.99,
+        price_per_hour=0.135,
+        inet_down_mbps=940,
+        inet_up_mbps=115,
+        geolocation="Washington, US",
+    )
+    report = OfferCandidateReport(
+        offer=offer,
+        misses=(
+            OfferMiss(
+                field="min_cpu_ram_gb",
+                label="Host RAM",
+                actual_text="31.3 GB",
+                required_text="32 GB",
+                relation="<",
+            ),
+        ),
+    )
+    diagnostics = OfferDiagnostics(
+        limits=OfferLimits(
+            gpu_profile="rtx_4070",
+            gpu_label="RTX 4070 12 GB",
+            min_gpu_ram_gb=12.0,
+            max_price_per_hour=0.18,
+            min_cpu_ram_gb=32.0,
+        ),
+        candidates=(report,),
+        near_offers=(report,),
+        suggestions=(
+            OfferSuggestion(
+                field="min_cpu_ram_gb",
+                value=31.0,
+                label="Lower Min RAM to 31 GB",
+                reason="One offer would match.",
+                offer_ids=(57993278,),
+            ),
+        ),
+    )
+    widget.vm.offer = None
+    widget.vm.offer_diagnostics = diagnostics
+
+    widget._render_offer_issue()
+
+    assert widget.offer_issue_frame.isHidden() is False
+    assert "31.3 GB" in widget.lbl_offer_issue_details.text() or any(
+        "31.3 GB" in label.text()
+        for label in widget.offer_issue_frame.findChildren(type(widget.lbl_summary))
+    )
+    labels = [
+        button.text()
+        for button in widget.offer_issue_frame.findChildren(
+            type(widget.btn_refresh_candidates)
+        )
+    ]
+    assert "Lower Min RAM to 31 GB" in labels
+    assert "Search other GPU profiles" in labels
+    widget.deleteLater()

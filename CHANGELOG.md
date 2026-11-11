@@ -9,6 +9,14 @@ releases may include larger UI or workflow changes.
 
 ### Added
 
+- The render **Plan** section is now **Nodes / instances** and leads with live
+  run data (nodes, rendered/expected frames, GPU-hours, cost and ETA) while a
+  render is active. An empty pending plan no longer hides the active run behind
+  `0 frames · 0.00 GPU-h`.
+- Vast.ai offer failures now list the exact failed limits, the nearest offers
+  and the smallest limit changes that would match. The panel can apply those
+  fixes, search the other GPU profiles or switch to local without leaving the
+  render panel.
 - Each shot can define its own **Preview frame**; without an override the
   configured mode (middle by default) is used.
 - **Benchmark** renders representative pending frames at final quality and

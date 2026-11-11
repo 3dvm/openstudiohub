@@ -727,6 +727,30 @@ class RenderService:
             min_cpu_ram_gb=min_cpu_ram_gb,
         )
 
+    def alternate_offers(
+        self,
+        gpu_profile: str,
+        *,
+        count: int = 1,
+        max_price_per_hour: float = 0.0,
+        min_disk_gb: int = 40,
+        preferred_region: str = "prefer_us",
+        min_inet_down_mbps: float = 0.0,
+        min_inet_up_mbps: float = 0.0,
+        min_cpu_ram_gb: float = 0.0,
+    ):
+        """Return valid offers from the other GPU profiles."""
+        return self.vast_provider().search_other_profiles(
+            gpu_profile,
+            count=max(1, int(count or 1)),
+            max_price_per_hour=max_price_per_hour,
+            min_disk_gb=min_disk_gb,
+            preferred_region=preferred_region,
+            min_inet_down_mbps=min_inet_down_mbps,
+            min_inet_up_mbps=min_inet_up_mbps,
+            min_cpu_ram_gb=min_cpu_ram_gb,
+        )
+
     def cheapest_offer(
         self,
         gpu_profile: str,
