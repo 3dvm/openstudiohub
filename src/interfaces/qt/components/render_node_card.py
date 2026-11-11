@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QFrame,
@@ -43,6 +43,8 @@ _STATUS_COLORS = {
 
 
 class RenderNodeCard(QFrame):
+    relaunch_requested = Signal(str)
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("NodeCard")
@@ -83,13 +85,23 @@ class RenderNodeCard(QFrame):
         self.lbl_eta.setStyleSheet("color: #94A3B8; font-size: 11px;")
         layout.addWidget(self.lbl_eta)
 
+        self.btn_relaunch = QPushButton(self.tr("Relaunch node"))
+        self.btn_relaunch.setObjectName("SecondaryButton")
+        self.btn_relaunch.hide()
+        self.btn_relaunch.clicked.connect(
+            lambda _checked=False: self.relaunch_requested.emit(self._card_key)
+        )
+        layout.addWidget(self.btn_relaunch)
+
         self.logs_layout = QHBoxLayout()
         self.logs_layout.setSpacing(4)
         layout.addLayout(self.logs_layout)
         layout.addStretch()
         self._log_signature = ()
+        self._card_key = ""
 
     def update_model(self, card) -> None:
+        self._card_key = str(getattr(card, "key", "") or "")
         is_local = str(getattr(card, "gpu_name", "")).lower().startswith("local")
         title = (
             self.tr("Local workstation")
@@ -139,6 +151,13 @@ class RenderNodeCard(QFrame):
         self.lbl_message.setText(str(getattr(card, "message", "") or ""))
         self.progress.setValue(max(0, min(100, int(percent))))
         eta = float(getattr(card, "eta_seconds", 0.0) or 0.0)
+        has_assignment = bool(getattr(card, "assignment", ()) or ())
+        self.btn_relaunch.setVisible(
+            status == "failed" and has_assignment and not is_local
+        )
+        self.btn_relaunch.setEnabled(
+            status == "failed" and has_assignment and not is_local
+        )
         if getattr(card, "final", False):
             self.lbl_eta.setText("")
         elif eta > 0:

@@ -191,11 +191,15 @@ class ShotReviewCard(QFrame):
             if model.measured_seconds is not None
             else "unmeasured"
         )
-        self.lbl_details.setText(
+        details = (
             f"Frames {model.frame_range} · {model.engine} "
             f"{model.resolution} @ {model.samples} spp · "
             f"{model.image_format} · {measured}"
         )
+        particle_state = str(getattr(model, "particle_state", "") or "")
+        if particle_state:
+            details += f" · {particle_state}"
+        self.lbl_details.setText(details)
         self.lbl_warnings.setText(" · ".join(model.warnings) if model.warnings else "")
         self.lbl_warnings.setVisible(bool(model.warnings))
 

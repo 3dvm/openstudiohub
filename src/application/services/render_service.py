@@ -55,7 +55,11 @@ from src.infrastructure.render.profiles import (
     RenderProfileStore,
 )
 from src.infrastructure.render.settings import SETTINGS_FILENAME, RenderSettingsStore
-from src.infrastructure.render.staging import StagingPlan, scan_staging
+from src.infrastructure.render.staging import (
+    StagingPlan,
+    bake_cache_names,
+    scan_staging,
+)
 from src.infrastructure.render.comments import RenderCommentStore
 from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.local import LocalRenderReport, LocalRenderRunner
@@ -571,6 +575,14 @@ class RenderService:
             )
         if not setup.writes_per_layer_files:
             warnings.append("Only the composite is written; no per-layer File Output nodes.")
+        missing_particles = [
+            cache for cache in result.particle_caches if not cache.baked
+        ]
+        if missing_particles:
+            warnings.append(
+                f"{len(missing_particles)} particle system cache(s) missing; "
+                "the node will not bake them (geometry-node bakes only)."
+            )
         for image in result.images:
             resolved = _resolve_path(path.parent, image)
             if resolved is not None and not _is_inside(resolved, project_root):
@@ -598,6 +610,8 @@ class RenderService:
             setup=result.setup,
             task_type=task_type,
             task_id=task_id,
+            geometry_bakes=tuple(result.geometry_bakes),
+            particle_caches=tuple(result.particle_caches),
             warnings=tuple(warnings),
         )
 
@@ -819,6 +833,7 @@ class RenderService:
         progress=None,
         audit=None,
         run_id: str = "",
+        bake_geometry_nodes: bool = False,
     ) -> tuple[list[tuple[RenderShot, Path]], object]:
         """Render one preview frame per shot on a short-lived Vast node."""
         root = Path(project_root)
@@ -868,6 +883,7 @@ class RenderService:
             min_inet_up_mbps=settings.min_inet_up_mbps,
             audit=audit,
             run_id=run_id,
+            bake_geometry_nodes=bake_geometry_nodes,
         )
         report = runner.run(plan.shots, plan, progress=progress)
         results: list[tuple[RenderShot, Path]] = []
@@ -1239,11 +1255,20 @@ class RenderService:
             warnings=warnings,
         )
 
-    def staging_estimate(self, project_root: Path | str) -> StagingPlan:
+    def staging_estimate(
+        self,
+        project_root: Path | str,
+        *,
+        exclude_names=(),
+    ) -> StagingPlan:
         """Measure the production folder a Vast node will receive."""
         root = Path(project_root)
         blueprint = self.load_blueprint(root)
-        return scan_staging(root, self._production_folder(root, blueprint))
+        return scan_staging(
+            root,
+            self._production_folder(root, blueprint),
+            exclude_names=exclude_names,
+        )
 
     def benchmark_estimate(
         self,
@@ -1253,6 +1278,7 @@ class RenderService:
         gpu_profile: str = "rtx_3090",
         price_per_hour: float = 0.0,
         budget: float = 0.0,
+        bake_geometry_nodes: bool = False,
     ) -> BenchmarkEstimate:
         """Plan the benchmark frames and the upload they need."""
         root = Path(project_root)
@@ -1279,11 +1305,14 @@ class RenderService:
             budget=budget,
             shots=bench_shots,
         )
+        exclude_names = (
+            bake_cache_names((shot,)) if bake_geometry_nodes else ()
+        )
         return BenchmarkEstimate(
             shot=shot,
             selection=selection,
             plan=plan,
-            staging=self.staging_estimate(root),
+            staging=self.staging_estimate(root, exclude_names=exclude_names),
         )
 
     def benchmark_batch_estimate(
@@ -1294,6 +1323,7 @@ class RenderService:
         gpu_profile: str = "rtx_3090",
         price_per_hour: float = 0.0,
         budget: float = 0.0,
+        bake_geometry_nodes: bool = False,
     ) -> BenchmarkBatchEstimate:
         """Plan several benchmarks on one node with a single staging pass."""
         root = Path(project_root)
@@ -1327,10 +1357,15 @@ class RenderService:
             budget=budget,
             shots=bench_shots,
         )
+        exclude_names = (
+            bake_cache_names(tuple(shot for shot, _selection in selections))
+            if bake_geometry_nodes
+            else ()
+        )
         return BenchmarkBatchEstimate(
             shots=tuple(selections),
             plan=plan,
-            staging=self.staging_estimate(root),
+            staging=self.staging_estimate(root, exclude_names=exclude_names),
         )
 
     def build_burst_runner(
@@ -1344,6 +1379,7 @@ class RenderService:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
+        bake_geometry_nodes: bool = False,
         audit: RenderRunAuditLogger | None = None,
         run_id: str = "",
         skip_existing: bool = False,
@@ -1365,6 +1401,7 @@ class RenderService:
             min_inet_down_mbps=min_inet_down_mbps,
             min_inet_up_mbps=min_inet_up_mbps,
             bake_particles=bake_particles,
+            bake_geometry_nodes=bake_geometry_nodes,
             audit=audit,
             run_id=run_id,
             skip_existing=skip_existing,
@@ -1383,6 +1420,7 @@ class RenderService:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
+        bake_geometry_nodes: bool = False,
     ) -> BurstReport:
         runner = self.build_burst_runner(
             project_root,
@@ -1393,6 +1431,7 @@ class RenderService:
             min_inet_down_mbps=min_inet_down_mbps,
             min_inet_up_mbps=min_inet_up_mbps,
             bake_particles=bake_particles,
+            bake_geometry_nodes=bake_geometry_nodes,
         )
         return runner.run(plan.shots, plan, progress=progress)
 

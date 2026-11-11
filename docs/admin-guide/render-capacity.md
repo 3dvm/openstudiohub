@@ -76,6 +76,13 @@ The shot list only contains `.blend` files with a Kitsu shot task, and the scan
 result is cached in the project's `vfs_local` folder so the panel opens without
 waiting for Blender. Use **Re-scan** when files or task assignments changed.
 
+Geometry-node bakes can be generated on the render nodes instead of uploading
+them. The **Bake geometry nodes on the node** checkbox defaults to on when a
+selected cache is missing or older than its `.blend`. The plan warns about
+missing particle caches; particle systems are not baked remotely. A failed
+node card offers **Relaunch node**, which finds a new offer with the same
+planned configuration and retries its frames.
+
 ## Worked example: p0005
 
 The project currently has seven shot files:

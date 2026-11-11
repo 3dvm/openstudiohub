@@ -51,6 +51,8 @@ class RenderBurstWorker(ManagedWorker):
         audit=None,
         run_id: str = "",
         skip_existing: bool = False,
+        bake_geometry_nodes: bool = False,
+        node_indices: list[int] | None = None,
     ) -> None:
         super().__init__()
         self.service = service
@@ -63,6 +65,8 @@ class RenderBurstWorker(ManagedWorker):
         self.audit = audit
         self.run_id = str(run_id or "")
         self.skip_existing = bool(skip_existing)
+        self.bake_geometry_nodes = bool(bake_geometry_nodes)
+        self.node_indices = list(node_indices) if node_indices is not None else None
         self.runner = None
 
     def run(self) -> None:
@@ -77,11 +81,13 @@ class RenderBurstWorker(ManagedWorker):
                 audit=self.audit,
                 run_id=self.run_id,
                 skip_existing=self.skip_existing,
+                bake_geometry_nodes=self.bake_geometry_nodes,
             )
             report = self.runner.run(
                 self.plan.shots,
                 self.plan,
                 progress=self.burst_progress.emit,
+                node_indices=self.node_indices,
             )
             self.report_ready.emit(report)
         except Exception as error:  # noqa: BLE001
@@ -332,6 +338,7 @@ class RenderPreviewWorker(ManagedWorker):
         offer=None,
         audit=None,
         run_id: str = "",
+        bake_geometry_nodes: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
@@ -341,6 +348,7 @@ class RenderPreviewWorker(ManagedWorker):
         self.offer = offer
         self.audit = audit
         self.run_id = str(run_id or "")
+        self.bake_geometry_nodes = bool(bake_geometry_nodes)
         self._cancelled = False
 
     def run(self) -> None:
@@ -357,6 +365,7 @@ class RenderPreviewWorker(ManagedWorker):
                     progress=self.burst_progress.emit,
                     audit=self.audit,
                     run_id=self.run_id,
+                    bake_geometry_nodes=self.bake_geometry_nodes,
                 )
                 successful = set()
                 for shot, image in results:
@@ -845,6 +854,7 @@ class RenderBenchmarkWorker(ManagedWorker):
         *,
         audit=None,
         run_id: str = "",
+        bake_geometry_nodes: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
@@ -854,6 +864,7 @@ class RenderBenchmarkWorker(ManagedWorker):
         self.offer = offer
         self.audit = audit
         self.run_id = str(run_id or "")
+        self.bake_geometry_nodes = bool(bake_geometry_nodes)
         self.runner = None
 
     def run(self) -> None:
@@ -874,6 +885,7 @@ class RenderBenchmarkWorker(ManagedWorker):
                     self.offer.price_per_hour if self.offer is not None else 0.0
                 ),
                 budget=self.settings.budget,
+                bake_geometry_nodes=self.bake_geometry_nodes,
             )
             if not estimate.selection.frames:
                 self.error.emit(
@@ -897,6 +909,7 @@ class RenderBenchmarkWorker(ManagedWorker):
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
                 audit=self.audit,
                 run_id=self.run_id,
+                bake_geometry_nodes=self.bake_geometry_nodes,
             )
             self.runner = runner
             timings: list[float] = []
@@ -949,6 +962,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
         *,
         audit=None,
         run_id: str = "",
+        bake_geometry_nodes: bool = False,
     ) -> None:
         super().__init__()
         self.service = service
@@ -958,6 +972,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
         self.offer = offer
         self.audit = audit
         self.run_id = str(run_id or "")
+        self.bake_geometry_nodes = bool(bake_geometry_nodes)
         self.runner = None
 
     def run(self) -> None:
@@ -978,6 +993,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
                     self.offer.price_per_hour if self.offer is not None else 0.0
                 ),
                 budget=self.settings.budget,
+                bake_geometry_nodes=self.bake_geometry_nodes,
             )
             if not estimate.shots:
                 self.error.emit(
@@ -1007,6 +1023,7 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
                 audit=self.audit,
                 run_id=self.run_id,
+                bake_geometry_nodes=self.bake_geometry_nodes,
             )
             self.runner = runner
             timings: dict[str, list[float]] = {}

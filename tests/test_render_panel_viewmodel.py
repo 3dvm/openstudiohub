@@ -838,3 +838,202 @@ def test_benchmark_shots_runs_one_batch_card(qapp, tmp_path, monkeypatch):
     assert cards[0].final is True
     assert cards[0].status == "completed"
     assert finished and finished[0][1] == "Benchmarked 1/1 shot(s)."
+
+
+def test_bake_geometry_defaults_follow_the_local_cache_state(qapp):
+    from dataclasses import replace
+
+    from src.domain.render.models import GeometryBakeInfo
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.settings = RenderSettings()
+    fresh = replace(
+        _shot(),
+        geometry_bakes=(
+            GeometryBakeInfo(local_cache=True, cache_stale=False),
+        ),
+    )
+    stale = replace(
+        _shot(),
+        geometry_bakes=(
+            GeometryBakeInfo(local_cache=True, cache_stale=True),
+        ),
+    )
+    missing = replace(
+        _shot(), geometry_bakes=(GeometryBakeInfo(local_cache=False),)
+    )
+
+    assert viewmodel.bake_geometry_nodes_effective([fresh]) is False
+    assert viewmodel.bake_geometry_nodes_effective([stale]) is True
+    assert viewmodel.bake_geometry_nodes_effective([missing]) is True
+
+    viewmodel.settings = RenderSettings(bake_geometry_nodes=False)
+    assert viewmodel.bake_geometry_nodes_effective([missing]) is False
+
+
+def test_particle_cache_state_is_visible_per_shot(qapp):
+    from dataclasses import replace
+
+    from src.domain.render.models import ParticleCacheInfo
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    missing = replace(
+        _shot(),
+        particle_caches=(ParticleCacheInfo(baked=False),),
+    )
+    present = replace(
+        _shot(),
+        particle_caches=(ParticleCacheInfo(baked=True),),
+    )
+
+    assert viewmodel._particle_state(missing) == "Particle cache missing"
+    assert viewmodel._particle_state(present) == "Particle cache present"
+    assert viewmodel._particle_state(_shot()) == ""
+
+
+def test_offer_progress_captures_the_node_assignment(qapp):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel._ensure_node_card("", 0)
+
+    viewmodel._on_burst_progress_status(
+        SimpleNamespace(
+            node=0,
+            stage="offer",
+            message="renting",
+            assignment=(("pro/shots/sq010/sh010/sh010-layout.blend", (101, 102)),),
+        )
+    )
+
+    card = viewmodel.node_cards[0]
+    assert card.assignment == (
+        ("pro/shots/sq010/sh010/sh010-layout.blend", (101, 102)),
+    )
+
+
+def test_relaunch_plan_reuses_the_failed_frames_on_one_node(qapp, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
+        NodeLaunchConfig,
+        RenderNodeCardModel,
+    )
+
+    shot = _shot()
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(render_backend="vast")
+    card = RenderNodeCardModel(
+        node=5,
+        status="failed",
+        run_id="original",
+        assignment=((shot.relative_path, (101, 102, 105)),),
+        launch=NodeLaunchConfig(
+            gpu_profile="rtx_3080",
+            max_price_per_hour=0.18,
+            bake_geometry_nodes=False,
+        ),
+        price_per_hour=0.15,
+    )
+    plan = SimpleNamespace(
+        shots=(shot,),
+        total_frames=3,
+        required_nodes=1,
+        estimated_cost=0.2,
+        warnings=(),
+    )
+    monkeypatch.setattr(viewmodel.service, "plan", lambda *a, **k: plan)
+    monkeypatch.setattr(
+        viewmodel.service,
+        "staging_estimate",
+        lambda *a, **k: SimpleNamespace(bytes=1_000, files=10),
+    )
+
+    relaunch = viewmodel.relaunch_plan(card)
+
+    assert relaunch is not None
+    assert [item.frame_start for item in relaunch.shots] == [101, 105]
+    assert [item.frame_end for item in relaunch.shots] == [102, 105]
+    assert relaunch.plan.required_nodes == 1
+    assert relaunch.launch.gpu_profile == "rtx_3080"
+
+
+def test_relaunch_node_starts_one_node_with_the_original_index(
+    qapp, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import src.interfaces.qt.viewmodels.render_panel_viewmodel as vm_module
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
+        NodeLaunchConfig,
+        RenderNodeCardModel,
+    )
+
+    shot = _shot()
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(render_backend="vast")
+    card = RenderNodeCardModel(
+        node=5,
+        status="failed",
+        run_id="original",
+        assignment=((shot.relative_path, (101, 102)),),
+        launch=NodeLaunchConfig(
+            gpu_profile="rtx_3080",
+            max_price_per_hour=0.18,
+            bake_geometry_nodes=False,
+        ),
+        price_per_hour=0.15,
+    )
+    plan = SimpleNamespace(
+        shots=(shot,),
+        total_frames=2,
+        required_nodes=1,
+        estimated_cost=0.2,
+        warnings=(),
+    )
+    monkeypatch.setattr(viewmodel.service, "plan", lambda *a, **k: plan)
+    monkeypatch.setattr(
+        viewmodel.service,
+        "staging_estimate",
+        lambda *a, **k: SimpleNamespace(bytes=1_000, files=10),
+    )
+    monkeypatch.setattr(
+        viewmodel,
+        "_register_run",
+        lambda run, clear_finished=True: viewmodel._runs.__setitem__(
+            run.run_id, run
+        ),
+    )
+    started = []
+    monkeypatch.setattr(
+        viewmodel.workers,
+        "start",
+        lambda key, worker, **kwargs: started.append((key, worker)) or True,
+    )
+
+    class _Signal:
+        def connect(self, *_args, **_kwargs):
+            return None
+
+    class _Worker:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+            self.burst_progress = _Signal()
+            self.report_ready = _Signal()
+            self.error = _Signal()
+
+    monkeypatch.setattr(vm_module, "RenderBurstWorker", _Worker)
+
+    assert viewmodel.relaunch_node(card)
+
+    run = next(iter(viewmodel._runs.values()))
+    assert run.node_indices == (5,)
+    assert run.label == "relaunch"
+    assert run.cards[5].assignment == card.assignment
+    worker = started[0][1]
+    assert worker.kwargs["node_indices"] == [5]
+    assert worker.kwargs["skip_existing"] is True

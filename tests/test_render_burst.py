@@ -275,7 +275,7 @@ def test_render_script_flushes_progress_markers():
     lines = _RENDER_SCRIPT.splitlines()
     for index, line in enumerate(lines):
         if "OSFRAME::" in line or "OSDEVICES::" in line or "OSBAKE::" in line:
-            window = "\n".join(lines[index : index + 3])
+            window = "\n".join(lines[index : index + 12])
             assert "flush=True" in window, line
 
 
@@ -381,3 +381,35 @@ def test_variants_of_one_shot_get_distinct_remote_outputs():
 
     assert first_task.output_subdir == second_task.output_subdir
     assert first_task.remote_output_subdir != second_task.remote_output_subdir
+
+
+def test_rsync_timeout_scales_with_the_upload_size():
+    from src.infrastructure.render.burst import _rsync_timeout
+
+    assert _rsync_timeout(0) == 1800.0
+    assert _rsync_timeout(400_000_000) == 1800.0
+    assert _rsync_timeout(9_400_000_000) == 9400.0
+
+
+def test_render_script_contains_the_geometry_bake_step():
+    from src.infrastructure.render.burst import _RENDER_SCRIPT
+
+    assert "simulation_nodes_cache_bake" in _RENDER_SCRIPT
+    assert "bake_geometry_nodes" in _RENDER_SCRIPT
+    assert "OSBAKE::gn:start" in _RENDER_SCRIPT
+
+
+def test_bake_cache_names_only_returns_blendcache_directories():
+    from src.domain.render.models import GeometryBakeInfo
+    from src.infrastructure.render.staging import bake_cache_names
+
+    shot = replace(
+        _shot("sh040"),
+        geometry_bakes=(
+            GeometryBakeInfo(object_name="seeds", directory="//blendcache_sh040_seeds"),
+            GeometryBakeInfo(object_name="textures", directory="//textures"),
+            GeometryBakeInfo(object_name="missing", directory=""),
+        ),
+    )
+
+    assert bake_cache_names((shot,)) == ("blendcache_sh040_seeds",)

@@ -22,13 +22,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
-from src.domain.render.models import FileOutputInfo, RenderSetup, ViewLayerInfo
+from src.domain.render.models import (
+    FileOutputInfo,
+    GeometryBakeInfo,
+    ParticleCacheInfo,
+    RenderSetup,
+    ViewLayerInfo,
+)
 
 _PROBE_MARKER = "OSJSON::"
 
 _PROBE_SCRIPT = r"""
 import bpy
 import json
+import os
 
 scene = bpy.context.scene
 render = scene.render
@@ -99,6 +106,76 @@ for node in nodes:
         "layer": "",
     })
 
+blend_mtime = 0.0
+try:
+    if bpy.data.filepath:
+        blend_mtime = os.path.getmtime(bpy.data.filepath)
+except OSError:
+    blend_mtime = 0.0
+
+def directory_mtime(path):
+    newest = 0.0
+    if not path or not os.path.isdir(path):
+        return newest
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            try:
+                newest = max(newest, os.path.getmtime(os.path.join(root, name)))
+            except OSError:
+                continue
+    return newest
+
+geometry_bakes = []
+for obj in bpy.data.objects:
+    for modifier in getattr(obj, "modifiers", ()):
+        if getattr(modifier, "type", "") != "NODES":
+            continue
+        bakes = list(getattr(modifier, "bakes", ()) or ())
+        if not bakes:
+            continue
+        for bake in bakes:
+            directory_raw = str(
+                getattr(bake, "directory", "")
+                or getattr(modifier, "bake_directory", "")
+                or ""
+            )
+            directory = bpy.path.abspath(directory_raw) if directory_raw else ""
+            cache_mtime = directory_mtime(directory)
+            geometry_bakes.append({
+                "object_name": obj.name,
+                "modifier_name": modifier.name,
+                "bake_mode": str(getattr(bake, "bake_mode", "") or ""),
+                "bake_target": str(
+                    getattr(bake, "bake_target", "")
+                    or getattr(modifier, "bake_target", "")
+                    or ""
+                ),
+                "directory": directory_raw,
+                "frame_start": int(getattr(bake, "frame_start", 0) or 0),
+                "frame_end": int(getattr(bake, "frame_end", 0) or 0),
+                "use_custom_range": bool(
+                    getattr(bake, "use_custom_simulation_frame_range", False)
+                ),
+                "hide_render": bool(getattr(obj, "hide_render", False)),
+                "local_cache": cache_mtime > 0.0,
+                "cache_stale": bool(
+                    cache_mtime > 0.0 and blend_mtime > 0.0 and cache_mtime < blend_mtime
+                ),
+                "local_cache_mtime": cache_mtime,
+            })
+
+particle_caches = []
+for obj in bpy.data.objects:
+    for psys in getattr(obj, "particle_systems", ()):
+        point_cache = getattr(psys, "point_cache", None)
+        particle_caches.append({
+            "object_name": obj.name,
+            "system_name": str(getattr(psys, "name", "") or ""),
+            "baked": bool(getattr(point_cache, "is_baked", False)),
+            "use_disk_cache": bool(getattr(point_cache, "use_disk_cache", False)),
+            "use_library_path": bool(getattr(point_cache, "use_library_path", False)),
+        })
+
 data = {
     "engine": engine,
     "resolution_x": int(render.resolution_x),
@@ -136,6 +213,8 @@ data = {
     "film_transparent": bool(render.film_transparent),
     "motion_blur": bool(render.use_motion_blur),
     "use_sequencer": bool(render.use_sequencer),
+    "geometry_bakes": geometry_bakes,
+    "particle_caches": particle_caches,
 }
 print("OSJSON::" + json.dumps(data))
 """
@@ -166,6 +245,8 @@ class RenderProbeResult:
     output_path: str
     file_format: str
     setup: RenderSetup
+    geometry_bakes: tuple = ()
+    particle_caches: tuple = ()
 
     def to_dict(self) -> dict:
         """Serialize the probe result so the scan cache can reuse it."""
@@ -220,6 +301,33 @@ class RenderProbeResult:
             "film_transparent": setup.film_transparent,
             "motion_blur": setup.motion_blur,
             "use_sequencer": setup.use_sequencer,
+            "geometry_bakes": [
+                {
+                    "object_name": bake.object_name,
+                    "modifier_name": bake.modifier_name,
+                    "bake_mode": bake.bake_mode,
+                    "bake_target": bake.bake_target,
+                    "directory": bake.directory,
+                    "frame_start": bake.frame_start,
+                    "frame_end": bake.frame_end,
+                    "use_custom_range": bake.use_custom_range,
+                    "hide_render": bake.hide_render,
+                    "local_cache": bake.local_cache,
+                    "cache_stale": bake.cache_stale,
+                    "local_cache_mtime": bake.local_cache_mtime,
+                }
+                for bake in self.geometry_bakes
+            ],
+            "particle_caches": [
+                {
+                    "object_name": cache.object_name,
+                    "system_name": cache.system_name,
+                    "baked": cache.baked,
+                    "use_disk_cache": cache.use_disk_cache,
+                    "use_library_path": cache.use_library_path,
+                }
+                for cache in self.particle_caches
+            ],
         }
 
     @classmethod
@@ -283,6 +391,35 @@ class RenderProbeResult:
             output_path=str(data.get("output_path") or ""),
             file_format=str(data.get("file_format") or ""),
             setup=setup,
+            geometry_bakes=tuple(
+                GeometryBakeInfo(
+                    object_name=str(item.get("object_name") or ""),
+                    modifier_name=str(item.get("modifier_name") or ""),
+                    bake_mode=str(item.get("bake_mode") or ""),
+                    bake_target=str(item.get("bake_target") or ""),
+                    directory=str(item.get("directory") or ""),
+                    frame_start=int(item.get("frame_start") or 0),
+                    frame_end=int(item.get("frame_end") or 0),
+                    use_custom_range=bool(item.get("use_custom_range")),
+                    hide_render=bool(item.get("hide_render")),
+                    local_cache=bool(item.get("local_cache")),
+                    cache_stale=bool(item.get("cache_stale")),
+                    local_cache_mtime=float(item.get("local_cache_mtime") or 0.0),
+                )
+                for item in data.get("geometry_bakes") or ()
+                if isinstance(item, dict)
+            ),
+            particle_caches=tuple(
+                ParticleCacheInfo(
+                    object_name=str(item.get("object_name") or ""),
+                    system_name=str(item.get("system_name") or ""),
+                    baked=bool(item.get("baked")),
+                    use_disk_cache=bool(item.get("use_disk_cache")),
+                    use_library_path=bool(item.get("use_library_path")),
+                )
+                for item in data.get("particle_caches") or ()
+                if isinstance(item, dict)
+            ),
         )
 
 

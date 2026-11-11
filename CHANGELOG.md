@@ -20,6 +20,19 @@ releases may include larger UI or workflow changes.
 - Benchmarking shows its own node card and a confirmation dialog that names the
   exact `.blend`, the frames measured from the shot's scene range, the node and
   its price, and the production folder size before anything is rented.
+- **Bake geometry nodes on the node** (Vast.ai plan checkbox): geometry-node
+  bake caches are excluded from the upload and generated on each node with
+  `simulation_nodes_cache_bake` before rendering. It applies to final renders,
+  previews and benchmarks, and defaults to on when a selected shot has no local
+  bake newer than its `.blend`.
+- Failed node cards have a **Relaunch node** button. It searches a fresh Vast.ai
+  offer, keeps the planned GPU profile, offer limits and frame assignment, and
+  re-renders only the frames that node had not finished.
+- Shot cards report the particle cache state (present or missing). Particle
+  caches are still uploaded; only geometry-node bakes can be generated on the
+  node.
+- `rsync` transfers now use `--partial`, retry once, and scale their timeout to
+  the upload size, so a slow upload no longer aborts a render at 30 minutes.
 - **Benchmark all selected** measures every selected shot on a single Vast.ai
   node with one upload. The per-shot median is recorded separately, and frames
   keep the existing output rule: pending frames go to the shot's render folder
@@ -182,6 +195,8 @@ releases may include larger UI or workflow changes.
 - The Preview section only keeps **Preview all selected** and **Benchmark all
   selected**; per-shot preview, benchmark and sequence playback stay on the shot
   cards and the preview poster.
+- Vast staging only excludes the geometry-node bake directories used by the
+  planned shots; particle caches and other production files are still uploaded.
 - `Benchmark selected` and every shot card's benchmark button share one
   confirmation flow, so both inspect the same shot, `.blend` file and frames.
 - Benchmark frame selection is shared by the dialog and the worker, and always

@@ -122,3 +122,44 @@ def test_scan_cache_for_project_uses_the_local_folder(tmp_path):
     cache = RenderScanCache.for_project(tmp_path, "06_conf_LOCAL")
 
     assert cache.path == tmp_path / "06_conf_LOCAL" / "render_scan_cache.json"
+
+
+def test_probe_round_trips_geometry_and_particle_cache_metadata():
+    from src.domain.render.models import GeometryBakeInfo, ParticleCacheInfo
+
+    result = _probe_result()
+    result = result.__class__(
+        **{
+            **result.__dict__,
+            "geometry_bakes": (
+                GeometryBakeInfo(
+                    object_name="seeds_host",
+                    modifier_name="Seeds Sim",
+                    bake_mode="ANIMATION",
+                    bake_target="DISK",
+                    directory="//blendcache_sh040_seeds_v7",
+                    frame_start=1,
+                    frame_end=732,
+                    use_custom_range=True,
+                    local_cache=True,
+                    cache_stale=True,
+                    local_cache_mtime=123.0,
+                ),
+            ),
+            "particle_caches": (
+                ParticleCacheInfo(
+                    object_name="Circle",
+                    system_name="ParticleSystem",
+                    baked=True,
+                    use_disk_cache=True,
+                    use_library_path=False,
+                ),
+            ),
+        }
+    )
+
+    restored = RenderProbeResult.from_dict(result.to_dict())
+
+    assert restored == result
+    assert restored.geometry_bakes[0].cache_dir_name == "blendcache_sh040_seeds_v7"
+    assert restored.particle_caches[0].baked is True

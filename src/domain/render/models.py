@@ -140,6 +140,40 @@ class RenderSetup:
 
 
 @dataclass(frozen=True)
+class GeometryBakeInfo:
+    """One simulation bake defined by a geometry-nodes modifier."""
+
+    object_name: str = ""
+    modifier_name: str = ""
+    bake_mode: str = ""
+    bake_target: str = ""
+    directory: str = ""
+    frame_start: int = 0
+    frame_end: int = 0
+    use_custom_range: bool = False
+    hide_render: bool = False
+    local_cache: bool = False
+    cache_stale: bool = False
+    local_cache_mtime: float = 0.0
+
+    @property
+    def cache_dir_name(self) -> str:
+        name = Path(self.directory.replace("\\", "/")).name
+        return name if name.startswith("blendcache_") else ""
+
+
+@dataclass(frozen=True)
+class ParticleCacheInfo:
+    """State of one particle system point cache."""
+
+    object_name: str = ""
+    system_name: str = ""
+    baked: bool = False
+    use_disk_cache: bool = False
+    use_library_path: bool = False
+
+
+@dataclass(frozen=True)
 class RenderSettings:
     """Per-project render panel settings (shared in the pipeline folder)."""
 
@@ -171,6 +205,7 @@ class RenderSettings:
     preview_frame: int = 0
     preview_frames: tuple[tuple[str, int], ...] = ()
     local_speed_factor: float = 8.0
+    bake_geometry_nodes: bool | None = None
     preferred_region: str = "prefer_americas"
     min_inet_down_mbps: float = 100.0
     min_inet_up_mbps: float = 50.0
@@ -204,6 +239,7 @@ class RenderSettings:
                 str(path): int(frame) for path, frame in self.preview_frames
             },
             "local_speed_factor": self.local_speed_factor,
+            "bake_geometry_nodes": self.bake_geometry_nodes,
             "preferred_region": self.preferred_region,
             "min_inet_down_mbps": self.min_inet_down_mbps,
             "min_inet_up_mbps": self.min_inet_up_mbps,
@@ -238,6 +274,11 @@ class RenderSettings:
             preview_frame=int(data.get("preview_frame") or 0),
             preview_frames=_preview_frames_from_dict(data.get("preview_frames")),
             local_speed_factor=float(data.get("local_speed_factor") or 8.0),
+            bake_geometry_nodes=(
+                bool(data["bake_geometry_nodes"])
+                if data.get("bake_geometry_nodes") is not None
+                else None
+            ),
             preferred_region=str(data.get("preferred_region") or "prefer_americas"),
             min_inet_down_mbps=float(data.get("min_inet_down_mbps") or 100.0),
             min_inet_up_mbps=float(data.get("min_inet_up_mbps") or 50.0),
@@ -317,6 +358,8 @@ class RenderShot:
     measurement_scaled: bool = False
     measurement_source_gpu: str = ""
     setup: RenderSetup | None = None
+    geometry_bakes: tuple[GeometryBakeInfo, ...] = ()
+    particle_caches: tuple[ParticleCacheInfo, ...] = ()
     warnings: tuple[str, ...] = field(default_factory=tuple)
 
     @property

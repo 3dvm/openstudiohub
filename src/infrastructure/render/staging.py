@@ -57,11 +57,24 @@ class StagingPlan:
         )
 
 
-def _is_excluded(name: str, patterns=STAGING_EXCLUDES) -> bool:
+def bake_cache_names(shots) -> tuple[str, ...]:
+    """Return the cache directory names produced by geometry-node bakes."""
+    names: set[str] = set()
+    for shot in shots or ():
+        for bake in getattr(shot, "geometry_bakes", ()) or ():
+            name = getattr(bake, "cache_dir_name", "")
+            if name:
+                names.add(str(name))
+    return tuple(sorted(names))
+
+
+def _is_excluded(name: str, patterns=STAGING_EXCLUDES, exclude_names=()) -> bool:
+    if name in exclude_names:
+        return True
     return any(fnmatch.fnmatch(name, pattern) for pattern in patterns)
 
 
-def _scan_folder(root: Path) -> tuple[int, int]:
+def _scan_folder(root: Path, exclude_names=()) -> tuple[int, int]:
     files = 0
     total = 0
     stack = [root]
@@ -70,7 +83,7 @@ def _scan_folder(root: Path) -> tuple[int, int]:
         try:
             with os.scandir(current) as entries:
                 for entry in entries:
-                    if _is_excluded(entry.name):
+                    if _is_excluded(entry.name, exclude_names=exclude_names):
                         continue
                     try:
                         if entry.is_dir(follow_symlinks=False):
@@ -90,6 +103,7 @@ def scan_staging(
     production_folder: str,
     *,
     work_root: str = "/root/openstudio",
+    exclude_names=(),
 ) -> StagingPlan:
     """Scan the production folder with the same rules as the rsync upload."""
     production_folder = str(production_folder or "").strip()
@@ -98,7 +112,8 @@ def scan_staging(
     local = Path(project_root) / production_folder
     if not local.is_dir():
         return StagingPlan()
-    files, size = _scan_folder(local)
+    exclude_names = tuple(str(name) for name in exclude_names or () if name)
+    files, size = _scan_folder(local, exclude_names=exclude_names)
     entry = StagingEntry(
         label=production_folder,
         local_path=local,

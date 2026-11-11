@@ -132,3 +132,20 @@ def test_preview_frames_round_trip_per_shot(tmp_path):
     assert loaded.preview_frame_for("pro/shots/sq010/070/070-layout.blend") == 150
     assert loaded.preview_frame_for("pro/shots/sq010/sh020/sh020-layout.blend") == 222
     assert loaded.preview_frame_for("missing") is None
+
+
+def test_bake_geometry_nodes_defaults_to_auto_and_round_trips(tmp_path):
+    store = RenderSettingsStore(tmp_path / "render_settings.json")
+
+    auto = RenderSettings()
+    assert auto.bake_geometry_nodes is None
+    store.save(auto)
+    assert RenderSettingsStore(store.path).load().bake_geometry_nodes is None
+
+    enabled = RenderSettings(bake_geometry_nodes=True)
+    store.save(enabled)
+    assert RenderSettingsStore(store.path).load().bake_geometry_nodes is True
+
+    disabled = RenderSettings(bake_geometry_nodes=False)
+    store.save(disabled)
+    assert RenderSettingsStore(store.path).load().bake_geometry_nodes is False

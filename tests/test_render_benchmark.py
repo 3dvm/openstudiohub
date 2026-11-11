@@ -60,7 +60,14 @@ class FakeService:
         )
 
     def benchmark_estimate(
-        self, _root, shot, *, gpu_profile="rtx_3090", price_per_hour=0.0, budget=0.0
+        self,
+        _root,
+        shot,
+        *,
+        gpu_profile="rtx_3090",
+        price_per_hour=0.0,
+        budget=0.0,
+        bake_geometry_nodes=False,
     ):
         from src.domain.render.frames import benchmark_frames
 
@@ -96,6 +103,7 @@ class FakeService:
         gpu_profile="rtx_3090",
         price_per_hour=0.0,
         budget=0.0,
+        bake_geometry_nodes=False,
     ):
         from src.domain.render.frames import benchmark_frames
 

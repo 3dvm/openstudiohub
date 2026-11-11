@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCAN_CACHE_FILENAME = "render_scan_cache.json"
-SCAN_CACHE_SCHEMA = 1
+SCAN_CACHE_SCHEMA = 2
 
 
 @dataclass(frozen=True)

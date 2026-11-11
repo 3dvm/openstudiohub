@@ -523,3 +523,38 @@ def test_benchmark_all_lists_the_frames_and_starts_one_batch(qapp, monkeypatch):
     assert "101, 148, 196" in texts[0]
     assert started and started[0][0] == [shot]
     widget.deleteLater()
+
+
+def test_bake_checkbox_sets_an_explicit_setting(qapp):
+    from src.domain.render.models import RenderSettings
+
+    widget = _widget()
+    widget.vm.settings = RenderSettings()
+
+    widget.chk_bake_geometry_nodes.setChecked(True)
+
+    assert widget.vm.settings.bake_geometry_nodes is True
+    assert widget._bake_touched is True
+    widget.deleteLater()
+
+
+def test_node_card_shows_relaunch_only_for_assigned_failures(qapp):
+    from src.interfaces.qt.components.render_node_card import RenderNodeCard
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
+        RenderNodeCardModel,
+    )
+
+    card = RenderNodeCard()
+    failed = RenderNodeCardModel(
+        node=5,
+        status="failed",
+        run_id="run",
+        assignment=(("pro/shots/sq010/sh010/sh010-layout.blend", (101, 102)),),
+    )
+    card.update_model(failed)
+    assert card.btn_relaunch.isHidden() is False
+
+    no_assignment = RenderNodeCardModel(node=5, status="failed", run_id="run2")
+    card.update_model(no_assignment)
+    assert card.btn_relaunch.isHidden() is True
+    card.deleteLater()

@@ -70,6 +70,7 @@ class RenderPanelWidget(QFrame):
         self._syncing_preview_frame = False
         self._preview_active = False
         self._benchmark_active = False
+        self._bake_touched = False
         self._node_card_widgets: dict[str, RenderNodeCard] = {}
         self._shot_cards: dict[str, ShotReviewCard] = {}
         self._shot_progress_timer = QTimer(self)
@@ -411,6 +412,19 @@ class RenderPanelWidget(QFrame):
         network_row.addWidget(self.spin_min_up)
         network_row.addStretch()
         vast_form.addRow(self.tr("Network"), network_row)
+        self.chk_bake_geometry_nodes = QCheckBox(
+            self.tr("Bake geometry nodes on the node (skip cache upload)")
+        )
+        self.chk_bake_geometry_nodes.setToolTip(
+            self.tr(
+                "Exclude geometry-node bake caches from the upload and run "
+                "the simulation bake on each Vast node before rendering."
+            )
+        )
+        self.chk_bake_geometry_nodes.stateChanged.connect(
+            self._on_bake_geometry_toggled
+        )
+        vast_form.addRow(self.chk_bake_geometry_nodes)
         self.vast_section.add_widget(vast_widget)
 
         self.settings_frame.add_widget(self.final_settings_section)
@@ -627,6 +641,7 @@ class RenderPanelWidget(QFrame):
         self._shots = []
         self._plan = None
         self._selected_shot = None
+        self._bake_touched = False
         self._clear_shot_cards()
         self.lbl_setup.setText(self.tr("Render setup: scanning..."))
         self.lbl_summary.setText("")
@@ -793,6 +808,16 @@ class RenderPanelWidget(QFrame):
             self.spin_min_down.setValue(float(settings.min_inet_down_mbps))
             self.spin_min_up.setValue(float(settings.min_inet_up_mbps))
             self.chk_video.setChecked(bool(settings.video_enabled))
+            self.chk_bake_geometry_nodes.blockSignals(True)
+            if settings.bake_geometry_nodes is None:
+                self.chk_bake_geometry_nodes.setChecked(
+                    self.vm.bake_geometry_nodes_effective()
+                )
+            else:
+                self.chk_bake_geometry_nodes.setChecked(
+                    bool(settings.bake_geometry_nodes)
+                )
+            self.chk_bake_geometry_nodes.blockSignals(False)
             self.edit_video_task.setText(settings.video_task_type or "render")
             self.edit_video_version.setText(settings.video_version or "")
         finally:
@@ -823,6 +848,17 @@ class RenderPanelWidget(QFrame):
         settings = self._settings_from_ui()
         self.vm.update_settings(settings)
         self.vm.recalculate()
+
+    def _on_bake_geometry_toggled(self, _state: int) -> None:
+        self._bake_touched = True
+        self.vm.update_settings(
+            replace(
+                self.vm.settings,
+                bake_geometry_nodes=bool(
+                    self.chk_bake_geometry_nodes.isChecked()
+                ),
+            )
+        )
 
     # ------------------------------------------------------------------
     # Shots
@@ -869,6 +905,7 @@ class RenderPanelWidget(QFrame):
         self._node_card_widgets = {}
         for index, card in enumerate(cards or []):
             widget = RenderNodeCard()
+            widget.relaunch_requested.connect(self._relaunch_node)
             widget.update_model(card)
             row, column = divmod(index, 4)
             self.node_grid.addWidget(widget, row, column)
@@ -888,6 +925,59 @@ class RenderPanelWidget(QFrame):
         )
         if card is not None:
             widget.update_model(card)
+
+    def _relaunch_node(self, key: str) -> None:
+        card = self.vm.node_card(str(key))
+        if card is None:
+            return
+        relaunch = self.vm.relaunch_plan(card)
+        if relaunch is None:
+            QMessageBox.warning(
+                self,
+                self.tr("Relaunch node"),
+                self.tr("This node has no failed frames to relaunch."),
+            )
+            return
+        launch = relaunch.launch
+        frames = int(relaunch.plan.total_frames)
+        shots = ", ".join(
+            f"{shot.name} {shot.frame_start}-{shot.frame_end}"
+            for shot in relaunch.shots[:6]
+        )
+        if len(relaunch.shots) > 6:
+            shots += self.tr(" … +{0}").format(len(relaunch.shots) - 6)
+        bake = (
+            self.tr("bake geometry nodes on the node")
+            if relaunch.bake_geometry_nodes
+            else self.tr("upload the current caches")
+        )
+        answer = QMessageBox.question(
+            self,
+            self.tr("Relaunch failed node"),
+            self.tr(
+                "Relaunch Node {0} with a new Vast.ai offer?\n\n"
+                "Frames: {1}\nShots: {2}\n"
+                "GPU profile: {3} (max ${4:.2f}/h)\n"
+                "Region: {5}\n"
+                "Upload: {6} · {7:,} file(s) ({8})\n\n"
+                "Estimated cost: ~${9:.2f}"
+            ).format(
+                card.node + 1,
+                frames,
+                shots,
+                launch.gpu_profile,
+                launch.max_price_per_hour,
+                launch.preferred_region,
+                format_bytes(int(getattr(relaunch.staging, "bytes", 0) or 0)),
+                int(getattr(relaunch.staging, "files", 0) or 0),
+                bake,
+                float(relaunch.plan.estimated_cost or 0.0),
+            ),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if answer == QMessageBox.Yes:
+            self.vm.relaunch_node(card, relaunch)
 
     def _sync_shot_cards(self) -> None:
         reviews = {model.relative_path: model for model in self.vm.shot_reviews()}
@@ -1544,13 +1634,21 @@ class RenderPanelWidget(QFrame):
             self.tr("Start render"),
             self.tr(
                 "Render {0} frame(s) on {1} node(s)?\n\n"
-                "Backend: {2}\nEstimated wall time: {3}\nEstimated cost: ${4:.2f}"
+                "Backend: {2}\nEstimated wall time: {3}\nEstimated cost: ${4:.2f}{5}"
             ).format(
                 self._plan.total_frames,
                 self._plan.required_nodes,
                 self.vm.settings.render_backend,
                 format_duration(self._plan.estimated_wall_seconds),
                 self._plan.estimated_cost,
+                (
+                    "\n\nGeometry-node bakes will run on each node before "
+                    "the first frame."
+                    if self.vm.bake_geometry_nodes_effective(
+                        list(self._plan.shots)
+                    )
+                    else ""
+                ),
             ),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,

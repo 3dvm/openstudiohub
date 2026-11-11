@@ -40,8 +40,10 @@ panel.
 3. Choose the final quality, target duration, GPU, price cap, node cap, budget,
    backend (Vast or local), preview backend and video options.
 4. Click **Recalculate plan**.
-5. Optionally click **Preview selected** to render one composite frame at the
-   chosen preview quality (local by default; Vast is available).
+5. Optionally click **Preview all selected** (or the per-shot **Preview** action)
+   to render one composite frame at the chosen preview quality (local by
+   default; Vast is available). Enable **Bake geometry nodes on the node** to
+   generate GN caches on the node instead of uploading them.
 6. Click **Start render**. The panel asks for confirmation and shows the plan.
 7. When the render finishes, the panel creates the Kitsu review video and the
    render-review copy. Use **Upload video & set status** to publish it to the
@@ -64,11 +66,19 @@ For each node:
    progress on the node card. Briefs and the shared folder are not uploaded. A
    **Benchmark all selected** run reuses one node and one upload for every
    selected shot.
+   With **Bake geometry nodes on the node** enabled, the geometry-node bake
+   caches of the planned shots are excluded and the node bakes them before the
+   first frame. The upload drops from the cache size to the production assets.
+   The transfer uses `--partial`, retries once and scales its timeout with the
+   upload size.
 6. Render a contiguous frame chunk with Cycles on GPU (CUDA; OptiX is also
    available). EEVEE is wrapped in `xvfb-run`.
 7. Sync the frames to
    `03_render/shots/<sequence>/<shot>.render/`.
 8. Destroy the instance, whether the job succeeded, failed or was cancelled.
+9. If a node fails, **Relaunch node** on its card searches a fresh offer, keeps
+   the planned GPU profile, limits and frame assignment, and renders the frames
+   that are still missing.
 
 The measured two-frame node life was 686 s: the setup dominates a small test.
 Budget for about ten minutes of node life before the first frame.

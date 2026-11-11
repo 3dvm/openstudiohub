@@ -28,6 +28,7 @@ from src.application.services.render_service import RenderService
 from src.application.services.task_file_sync_service import TaskFileSyncService
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
+from src.infrastructure.render.staging import bake_cache_names
 from src.infrastructure.render.status import RenderStatusStore
 from src.interfaces.qt.ui_format import format_rate
 from src.interfaces.qt.viewmodels.base_viewmodel import BaseViewModel, StatusSink
@@ -52,6 +53,19 @@ from src.interfaces.qt.workers.render_workers import (
     RenderVideoWorker,
 )
 from src.interfaces.qt.workers.worker_manager import WorkerManager
+
+
+@dataclass(frozen=True)
+class NodeLaunchConfig:
+    """Offer constraints and bake mode used by one node."""
+
+    gpu_profile: str = "rtx_4070"
+    max_price_per_hour: float = 0.0
+    preferred_region: str = "prefer_americas"
+    min_inet_down_mbps: float = 0.0
+    min_inet_up_mbps: float = 0.0
+    task_type: str = "render"
+    bake_geometry_nodes: bool = False
 
 
 @dataclass
@@ -84,6 +98,8 @@ class RenderNodeCardModel:
     final: bool = False
     run_id: str = ""
     run_label: str = ""
+    assignment: tuple[tuple[str, tuple[int, ...]], ...] = ()
+    launch: NodeLaunchConfig | None = None
 
     @property
     def key(self) -> str:
@@ -103,7 +119,22 @@ class RenderRunState:
     progress_by_node: dict[int, int] = field(default_factory=dict)
     frame_seconds: dict[str, list[float]] = field(default_factory=dict)
     retry: bool = False
+    node_indices: tuple[int, ...] = ()
+    label: str = ""
+    relaunch_key: str = ""
+    settings: RenderSettings = field(default_factory=RenderSettings)
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
+class RelaunchPlan:
+    """One failed node retried on a fresh offer with the same frames."""
+
+    shots: tuple[RenderShot, ...]
+    plan: RenderPlan
+    staging: object
+    launch: NodeLaunchConfig
+    bake_geometry_nodes: bool
 
 
 @dataclass
@@ -129,6 +160,7 @@ class ShotReviewModel:
     warnings: tuple[str, ...]
     relative_path: str
     task_type: str = ""
+    particle_state: str = ""
 
 
 SHOT_STATUS_TOOLTIPS = {
@@ -279,6 +311,7 @@ class RenderPanelViewModel(BaseViewModel):
         self._preview_run_id = ""
         self._benchmark_cards: list[RenderNodeCardModel] = []
         self._benchmark_run_id = ""
+        self._relaunch_active: set[str] = set()
         self._local_run_id = ""
         self._progress_by_shot: dict[str, int] = {}
         self._progress_by_node: dict[int, int] = {}
@@ -322,6 +355,7 @@ class RenderPanelViewModel(BaseViewModel):
         self._preview_run_id = ""
         self._benchmark_cards = []
         self._benchmark_run_id = ""
+        self._relaunch_active = set()
         self._local_run_id = ""
         self._locked_shots = set()
         self._failed_shots = set()
@@ -374,6 +408,18 @@ class RenderPanelViewModel(BaseViewModel):
     @property
     def selected_shots(self) -> list[RenderShot]:
         return self.service.selected_shots(self.shots, self.settings)
+
+    def bake_geometry_nodes_effective(
+        self, shots: list[RenderShot] | None = None
+    ) -> bool:
+        if self.settings.bake_geometry_nodes is not None:
+            return bool(self.settings.bake_geometry_nodes)
+        targets = list(shots if shots is not None else self.selected_shots)
+        for shot in targets:
+            for bake in shot.geometry_bakes:
+                if not bake.local_cache or bake.cache_stale:
+                    return True
+        return False
 
     def update_settings(self, settings: RenderSettings) -> None:
         self.settings = settings
@@ -613,7 +659,16 @@ class RenderPanelViewModel(BaseViewModel):
             warnings=tuple(warnings),
             relative_path=shot.relative_path,
             task_type=shot.task_type,
+            particle_state=self._particle_state(shot),
         )
+
+    @staticmethod
+    def _particle_state(shot: RenderShot) -> str:
+        if not shot.particle_caches:
+            return ""
+        if any(not cache.baked for cache in shot.particle_caches):
+            return "Particle cache missing"
+        return "Particle cache present"
 
     def _shot_status(
         self, shot: RenderShot, rendered: int, approved: int, expected: int
@@ -840,7 +895,8 @@ class RenderPanelViewModel(BaseViewModel):
                     node=int(node),
                     status="queued",
                     run_id=run.run_id,
-                    run_label=self._run_label(run.plan),
+                    run_label=run.label or self._run_label(run.plan),
+                    launch=self._launch_config(run.settings),
                 )
                 run.cards[int(node)] = card
                 self._sync_node_cards()
@@ -856,8 +912,21 @@ class RenderPanelViewModel(BaseViewModel):
             self._sync_node_cards()
         return self._plan_cards[int(node)]
 
+    @staticmethod
+    def _launch_config(settings: RenderSettings) -> NodeLaunchConfig:
+        return NodeLaunchConfig(
+            gpu_profile=settings.gpu_profile,
+            max_price_per_hour=settings.max_price_per_hour,
+            preferred_region=settings.preferred_region,
+            min_inet_down_mbps=settings.min_inet_down_mbps,
+            min_inet_up_mbps=settings.min_inet_up_mbps,
+            task_type=settings.task_type,
+            bake_geometry_nodes=bool(settings.bake_geometry_nodes),
+        )
+
     def _create_run_cards(self, run: RenderRunState) -> None:
-        label = self._run_label(run.plan)
+        label = run.label or self._run_label(run.plan)
+        launch = self._launch_config(run.settings)
         cards: dict[int, RenderNodeCardModel] = {}
         if run.backend == "local":
             cards[0] = RenderNodeCardModel(
@@ -867,17 +936,23 @@ class RenderPanelViewModel(BaseViewModel):
                 run_id=run.run_id,
                 run_label=label,
                 gpu_name="Local workstation",
+                launch=launch,
             )
             run.cards = cards
             return
-        for index in range(max(1, int(run.plan.required_nodes or 1))):
+        node_indices = (
+            list(run.node_indices)
+            if run.node_indices
+            else list(range(max(1, int(run.plan.required_nodes or 1))))
+        )
+        for position, node in enumerate(node_indices):
             offer = (
-                self.candidate_offers[index]
-                if index < len(self.candidate_offers)
+                self.candidate_offers[position]
+                if position < len(self.candidate_offers)
                 else None
             )
-            cards[index] = RenderNodeCardModel(
-                node=index,
+            cards[int(node)] = RenderNodeCardModel(
+                node=int(node),
                 status="queued",
                 message="Waiting for a node.",
                 run_id=run.run_id,
@@ -886,6 +961,7 @@ class RenderPanelViewModel(BaseViewModel):
                 region=str(getattr(offer, "geolocation", "") or ""),
                 price_per_hour=float(getattr(offer, "price_per_hour", 0.0) or 0.0),
                 offer_id=int(getattr(offer, "id", 0) or 0),
+                launch=launch,
             )
         run.cards = cards
 
@@ -899,7 +975,7 @@ class RenderPanelViewModel(BaseViewModel):
             self.project_root, shots, task_type=self.settings.task_type
         )
         price = self.offer.price_per_hour if self.offer is not None else 0.0
-        return self._with_offer_warning(
+        plan = self._with_offer_warning(
             self.service.adjust_plan_for_backend(
                 self.service.plan(
                     self.project_root,
@@ -915,6 +991,31 @@ class RenderPanelViewModel(BaseViewModel):
                 self.settings.local_speed_factor,
             )
         )
+        warnings = list(plan.warnings)
+        bake_effective = self.bake_geometry_nodes_effective(pending)
+        gn_shots = [shot for shot in pending if shot.geometry_bakes]
+        if gn_shots:
+            if bake_effective:
+                warnings.append(
+                    "Geometry-node caches will be baked on each node before "
+                    "rendering; the first frame waits for the bake."
+                )
+            else:
+                warnings.append(
+                    "Geometry-node caches will be uploaded to every node. "
+                    "Enable the node bake to reduce the upload."
+                )
+        missing_particles = [
+            shot.name
+            for shot in pending
+            if any(not cache.baked for cache in shot.particle_caches)
+        ]
+        if missing_particles:
+            warnings.append(
+                "Particle caches missing (not baked by the node): "
+                + ", ".join(sorted(set(missing_particles)))
+            )
+        return replace(plan, warnings=tuple(warnings))
 
     def recalculate(self) -> None:
         if not self.shots or self.project_root is None:
@@ -974,6 +1075,7 @@ class RenderPanelViewModel(BaseViewModel):
             offer=self.offer,
             audit=self.audit,
             run_id=self._active_run_id,
+            bake_geometry_nodes=self.bake_geometry_nodes_effective(targets),
         )
         worker.preview_ready.connect(self._on_preview_ready)
         worker.preview_progress.connect(self.preview_progress)
@@ -1066,6 +1168,7 @@ class RenderPanelViewModel(BaseViewModel):
                 gpu_profile=self.settings.gpu_profile,
                 price_per_hour=price,
                 budget=self.settings.budget,
+                bake_geometry_nodes=self.bake_geometry_nodes_effective([shot]),
             )
         except Exception:  # noqa: BLE001 - the dialog falls back to the plain prompt
             return None
@@ -1140,6 +1243,7 @@ class RenderPanelViewModel(BaseViewModel):
             self.offer,
             audit=self.audit,
             run_id=run_id,
+            bake_geometry_nodes=self.bake_geometry_nodes_effective([shot]),
         )
         worker.benchmark_progress.connect(self.benchmark_progress)
         worker.benchmark_progress.connect(self._on_burst_progress_status)
@@ -1170,6 +1274,7 @@ class RenderPanelViewModel(BaseViewModel):
                 gpu_profile=self.settings.gpu_profile,
                 price_per_hour=price,
                 budget=self.settings.budget,
+                bake_geometry_nodes=self.bake_geometry_nodes_effective(targets),
             )
         except Exception:  # noqa: BLE001 - the dialog falls back to a plain prompt
             return None
@@ -1248,6 +1353,9 @@ class RenderPanelViewModel(BaseViewModel):
             self.offer,
             audit=self.audit,
             run_id=run_id,
+            bake_geometry_nodes=self.bake_geometry_nodes_effective(
+                [item for item, _selection in estimate.shots]
+            ),
         )
         worker.benchmarks_progress.connect(self.benchmark_progress)
         worker.benchmarks_progress.connect(self._on_burst_progress_status)
@@ -1321,6 +1429,172 @@ class RenderPanelViewModel(BaseViewModel):
         self.scan()
 
     # ------------------------------------------------------------------
+    # Relaunch a failed node
+    # ------------------------------------------------------------------
+    def node_card(self, key: str) -> RenderNodeCardModel | None:
+        return next(
+            (card for card in self.node_cards if card.key == str(key)),
+            None,
+        )
+
+    def _relaunch_shots(self, card: RenderNodeCardModel) -> list[RenderShot]:
+        by_path = {shot.relative_path: shot for shot in self.shots}
+        shots: list[RenderShot] = []
+        for relative_path, frames in card.assignment:
+            shot = by_path.get(relative_path)
+            if shot is None:
+                continue
+            ordered = sorted({int(frame) for frame in frames})
+            if not ordered:
+                continue
+            start = previous = ordered[0]
+            for frame in ordered[1:]:
+                if frame == previous + 1:
+                    previous = frame
+                    continue
+                shots.append(
+                    replace(
+                        shot,
+                        frame_start=start,
+                        frame_end=previous,
+                        frame_step=1,
+                    )
+                )
+                start = previous = frame
+            shots.append(
+                replace(
+                    shot,
+                    frame_start=start,
+                    frame_end=previous,
+                    frame_step=1,
+                )
+            )
+        return shots
+
+    def relaunch_plan(self, card: RenderNodeCardModel | None) -> RelaunchPlan | None:
+        if self.project_root is None or card is None:
+            return None
+        if card.status != "failed" or not card.assignment:
+            return None
+        shots = self._relaunch_shots(card)
+        if not shots:
+            return None
+        launch = card.launch or self._launch_config(self.settings)
+        bake_geometry_nodes = self.bake_geometry_nodes_effective(shots)
+        price = float(card.price_per_hour or 0.0)
+        plan = self.service.plan(
+            self.project_root,
+            target_hours=self.settings.target_hours,
+            gpu_profile=launch.gpu_profile,
+            quality_override=self.settings.final_quality,
+            price_per_hour=price,
+            max_nodes=1,
+            budget=self.settings.budget,
+            shots=shots,
+        )
+        staging = self.service.staging_estimate(
+            self.project_root,
+            exclude_names=(
+                bake_cache_names(shots) if bake_geometry_nodes else ()
+            ),
+        )
+        return RelaunchPlan(
+            shots=tuple(shots),
+            plan=plan,
+            staging=staging,
+            launch=launch,
+            bake_geometry_nodes=bake_geometry_nodes,
+        )
+
+    def relaunch_node(
+        self,
+        card: RenderNodeCardModel | None,
+        relaunch: RelaunchPlan | None = None,
+    ) -> bool:
+        if self.project_root is None or self.read_only or card is None:
+            return False
+        if card.status != "failed" or not card.assignment:
+            self.render_error.emit("This node has no failed assignment to relaunch.")
+            return False
+        if card.key in self._relaunch_active:
+            self.render_error.emit("This node is already being relaunched.")
+            return False
+        relaunch = relaunch or self.relaunch_plan(card)
+        if relaunch is None or not relaunch.plan.shots:
+            self.render_error.emit("The failed node has no frames to relaunch.")
+            return False
+        launch = relaunch.launch
+        snapshot = replace(
+            self.settings,
+            gpu_profile=launch.gpu_profile,
+            max_price_per_hour=launch.max_price_per_hour,
+            preferred_region=launch.preferred_region,
+            min_inet_down_mbps=launch.min_inet_down_mbps,
+            min_inet_up_mbps=launch.min_inet_up_mbps,
+            task_type=launch.task_type,
+            bake_geometry_nodes=relaunch.bake_geometry_nodes,
+        )
+        run_id = uuid.uuid4().hex[:12]
+        run = RenderRunState(
+            run_id=run_id,
+            backend="vast",
+            plan=relaunch.plan,
+            gpu_profile=launch.gpu_profile,
+            locked_shots=set(),
+            retry=True,
+            node_indices=(int(card.node),),
+            label="relaunch",
+            relaunch_key=card.key,
+            settings=snapshot,
+        )
+        self._create_run_cards(run)
+        retry_card = run.cards.get(int(card.node))
+        if retry_card is not None:
+            retry_card.assignment = card.assignment
+            retry_card.frames_expected = int(relaunch.plan.total_frames)
+            retry_card.message = (
+                f"Relaunching Node {card.node + 1} with a new offer"
+            )
+        self.audit.log(
+            "run_start",
+            run_id=run_id,
+            backend="vast-relaunch",
+            project=self.project_name,
+            node=int(card.node),
+            frames=int(relaunch.plan.total_frames),
+            upload_bytes=int(getattr(relaunch.staging, "bytes", 0) or 0),
+            upload_files=int(getattr(relaunch.staging, "files", 0) or 0),
+            bake_geometry_nodes=relaunch.bake_geometry_nodes,
+        )
+        self._relaunch_active.add(card.key)
+        self._register_run(run, clear_finished=False)
+        worker = RenderBurstWorker(
+            self.service,
+            self.project_root,
+            relaunch.plan,
+            max_price_per_hour=launch.max_price_per_hour,
+            preferred_region=launch.preferred_region,
+            min_inet_down_mbps=launch.min_inet_down_mbps,
+            min_inet_up_mbps=launch.min_inet_up_mbps,
+            audit=self.audit,
+            run_id=run_id,
+            skip_existing=True,
+            bake_geometry_nodes=relaunch.bake_geometry_nodes,
+            node_indices=[int(card.node)],
+        )
+        worker.burst_progress.connect(self.burst_progress)
+        worker.report_ready.connect(self._handle_burst_finished)
+        worker.error.connect(
+            lambda message, rid=run_id: self._on_run_error(rid, message)
+        )
+        self.report_status(
+            f"Relaunching Node {card.node + 1} with a new offer "
+            f"({relaunch.plan.total_frames} frame(s))...",
+            "yellow",
+        )
+        return self.workers.start(f"render_burst:{run_id}", worker, critical=True)
+
+    # ------------------------------------------------------------------
     # Render
     # ------------------------------------------------------------------
     def start_render(self, retry: bool = False) -> bool:
@@ -1382,6 +1656,12 @@ class RenderPanelViewModel(BaseViewModel):
             gpu_profile=self.settings.gpu_profile,
             locked_shots={shot.relative_path for shot in plan.shots},
             retry=retry,
+            settings=replace(
+                self.settings,
+                bake_geometry_nodes=self.bake_geometry_nodes_effective(
+                    list(plan.shots)
+                ),
+            ),
         )
         self._start_audit(run_id, backend, plan)
         self._failed_shots.difference_update(run.locked_shots)
@@ -1424,6 +1704,7 @@ class RenderPanelViewModel(BaseViewModel):
             audit=self.audit,
             run_id=run_id,
             skip_existing=retry,
+            bake_geometry_nodes=self.bake_geometry_nodes_effective(list(plan.shots)),
         )
         worker.burst_progress.connect(self.burst_progress)
         worker.report_ready.connect(self._handle_burst_finished)
@@ -1435,9 +1716,12 @@ class RenderPanelViewModel(BaseViewModel):
         )
         return self.workers.start(f"render_burst:{run_id}", worker, critical=True)
 
-    def _register_run(self, run: RenderRunState) -> None:
+    def _register_run(
+        self, run: RenderRunState, *, clear_finished: bool = True
+    ) -> None:
         self._runs[run.run_id] = run
-        self._finished_cards = []
+        if clear_finished:
+            self._finished_cards = []
         self._locked_shots.update(run.locked_shots)
         self._sync_node_cards()
         self._emit_shot_reviews()
@@ -1702,6 +1986,8 @@ class RenderPanelViewModel(BaseViewModel):
         self.render_error.emit(message)
 
     def _release_run(self, run: RenderRunState, *, ok: bool, rendered: int) -> None:
+        if run.relaunch_key:
+            self._relaunch_active.discard(run.relaunch_key)
         locked = set(run.locked_shots)
         if not ok and rendered <= 0:
             self._failed_shots.update(locked)
@@ -1729,7 +2015,8 @@ class RenderPanelViewModel(BaseViewModel):
                 card = RenderNodeCardModel(
                     node=int(result.node),
                     run_id=run.run_id,
-                    run_label=self._run_label(run.plan),
+                    run_label=run.label or self._run_label(run.plan),
+                    launch=self._launch_config(run.settings),
                 )
                 run.cards[int(result.node)] = card
             card.status = "completed" if result.ok else "failed"
@@ -2247,6 +2534,11 @@ class RenderPanelViewModel(BaseViewModel):
             card.offer_id = int(event.offer_id)
         if getattr(event, "shot", ""):
             card.current_shot = str(event.shot)
+        assignment = tuple(getattr(event, "assignment", ()) or ())
+        if assignment:
+            card.assignment = assignment
+        if card.launch is None and run is not None:
+            card.launch = self._launch_config(run.settings)
         bytes_total = int(getattr(event, "bytes_total", 0) or 0)
         if bytes_total > 0:
             card.upload_bytes_total = bytes_total

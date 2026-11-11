@@ -38,7 +38,11 @@ from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderShot
 from src.infrastructure.render.frame_state import RenderFrameStateStore
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
-from src.infrastructure.render.staging import STAGING_EXCLUDES, scan_staging
+from src.infrastructure.render.staging import (
+    STAGING_EXCLUDES,
+    bake_cache_names,
+    scan_staging,
+)
 from src.infrastructure.render.vast import (
     DEFAULT_DISK_GB,
     DEFAULT_IMAGE,
@@ -94,6 +98,95 @@ elif config["engine"].upper().startswith("BLENDER_EEVEE"):
     eevee = getattr(scene, "eevee", None)
     if eevee is not None:
         eevee.taa_render_samples = int(config["samples"])
+
+
+if config.get("bake_geometry_nodes"):
+    host_names = list(config.get("bake_hosts") or [])
+    missing_hosts = [
+        name for name in host_names if bpy.data.objects.get(name) is None
+    ]
+    if missing_hosts:
+        raise RuntimeError(
+            "Geometry-node bake host(s) not found: " + ", ".join(missing_hosts)
+        )
+
+    def enable_object_collections(view_layer, obj):
+        def walk(layer_collection):
+            collection = layer_collection.collection
+            if obj.name in collection.objects:
+                layer_collection.exclude = False
+                layer_collection.hide_viewport = False
+                collection.hide_viewport = False
+                return True
+            for child in layer_collection.children:
+                if walk(child):
+                    return True
+            return False
+
+        return walk(view_layer.layer_collection)
+
+    hosts = []
+    try:
+        for candidate in bpy.context.view_layer.objects:
+            candidate.select_set(False)
+    except Exception:
+        pass
+    for name in host_names:
+        obj = bpy.data.objects.get(name)
+        if obj is None or getattr(obj, "hide_render", False):
+            continue
+        try:
+            enable_object_collections(bpy.context.view_layer, obj)
+            obj.hide_set(False)
+            obj.hide_viewport = False
+            obj.select_set(True)
+        except Exception as exc:
+            print("OSBAKE::gn:select_error::%s::%s" % (obj.name, exc), flush=True)
+        if obj.select_get():
+            hosts.append(obj)
+
+    if host_names and not hosts:
+        raise RuntimeError(
+            "No geometry-node bake host could be selected: "
+            + ", ".join(host_names)
+        )
+    if not hosts:
+        print("OSBAKE::gn:none", flush=True)
+    else:
+        print("OSBAKE::gn:start::" + ",".join(obj.name for obj in hosts), flush=True)
+        for obj in hosts:
+            for modifier in obj.modifiers:
+                if getattr(modifier, "type", "") != "NODES":
+                    continue
+                bakes = list(getattr(modifier, "bakes", ()) or ())
+                for bake in bakes:
+                    print(
+                        "OSBAKE::gn:bake::%s::%s::%s::%s::%s::%s"
+                        % (
+                            obj.name,
+                            modifier.name,
+                            getattr(bake, "bake_mode", ""),
+                            getattr(bake, "bake_target", ""),
+                            getattr(bake, "frame_start", 0),
+                            getattr(bake, "frame_end", 0),
+                        ),
+                        flush=True,
+                    )
+        bpy.context.view_layer.objects.active = hosts[0]
+        with bpy.context.temp_override(
+            scene=scene,
+            selected_objects=hosts,
+            selected_editable_objects=hosts,
+            active_object=hosts[0],
+            object=hosts[0],
+        ):
+            result = bpy.ops.object.simulation_nodes_cache_bake(selected=True)
+        print("OSBAKE::gn:result::%s" % result, flush=True)
+        if "FINISHED" not in result:
+            raise RuntimeError(
+                "Geometry-node bake did not finish: %s" % (result,)
+            )
+        print("OSBAKE::gn:done", flush=True)
 
 if config.get("bake_particles"):
     print("OSBAKE::start", flush=True)
@@ -166,6 +259,7 @@ class BurstProgress:
     offer_id: int = 0
     shot: str = ""
     shot_path: str = ""
+    assignment: tuple[tuple[str, tuple[int, ...]], ...] = ()
     ok: bool = False
     bytes_done: int = 0
     bytes_total: int = 0
@@ -247,6 +341,7 @@ class RenderBurstRunner:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         bake_particles: bool = False,
+        bake_geometry_nodes: bool = False,
         audit: RenderRunAuditLogger | None = None,
         skip_existing: bool = False,
         run_id: str = "",
@@ -267,12 +362,14 @@ class RenderBurstRunner:
         self.min_inet_down_mbps = float(min_inet_down_mbps or 0.0)
         self.min_inet_up_mbps = float(min_inet_up_mbps or 0.0)
         self.bake_particles = bool(bake_particles)
+        self.bake_geometry_nodes = bool(bake_geometry_nodes)
         self.audit = audit
         self.skip_existing = bool(skip_existing)
         self._output_roots = {
             str(relative_path): Path(root)
             for relative_path, root in (output_roots or {}).items()
         }
+        self._plan_bake_cache_names: tuple[str, ...] = ()
         self._instances: dict[int, VastInstance] = {}
         self._node_stage: dict[int, str] = {}
         self._node_diagnostics: dict[int, str] = {}
@@ -303,9 +400,13 @@ class RenderBurstRunner:
         plan: RenderPlan,
         *,
         progress: ProgressCallback | None = None,
+        node_indices: Sequence[int] | None = None,
     ) -> BurstReport:
         if not self.ssh_key_path.is_file():
             raise BurstError(f"SSH key not found: {self.ssh_key_path}")
+        self._plan_bake_cache_names = (
+            bake_cache_names(plan.shots) if self.bake_geometry_nodes else ()
+        )
 
         initial_assignments = [
             assignment
@@ -361,6 +462,17 @@ class RenderBurstRunner:
                     cost=0.0,
                 )
 
+        indices = (
+            list(node_indices)
+            if node_indices is not None
+            else list(range(len(initial_assignments)))
+        )
+        if len(indices) < len(initial_assignments):
+            indices.extend(
+                range(len(indices), len(initial_assignments))
+            )
+        indices = indices[: len(initial_assignments)]
+
         self._audit(
             "run_start",
             project=self.project_root.name,
@@ -382,7 +494,7 @@ class RenderBurstRunner:
                 futures = {
                     pool.submit(
                         self._run_node,
-                        index,
+                        indices[index],
                         tasks,
                         offers[index % len(offers)],
                         progress,
@@ -390,20 +502,20 @@ class RenderBurstRunner:
                     for index, tasks in enumerate(initial_assignments)
                 }
                 for future in as_completed(futures):
-                    node = futures[future]
+                    index = futures[future]
                     try:
                         results.append(future.result())
                     except Exception as error:  # noqa: BLE001
                         results.append(
                             NodeResult(
-                                node=node,
+                                node=indices[index],
                                 instance_id=0,
                                 ok=False,
                                 message=str(error),
                                 frames_done=0,
                                 frames_expected=sum(
                                     len(task.frames)
-                                    for task in initial_assignments[node]
+                                    for task in initial_assignments[index]
                                 ),
                                 wall_seconds=0.0,
                                 cost=0.0,
@@ -665,6 +777,9 @@ class RenderBurstRunner:
                 region=getattr(offer, "geolocation", ""),
                 price_per_hour=getattr(offer, "price_per_hour", 0.0),
                 offer_id=getattr(offer, "id", 0),
+                assignment=tuple(
+                    (task.shot.relative_path, task.frames) for task in tasks
+                ),
             )
             stage = "create"
             instance = self.provider.create_instance(
@@ -688,7 +803,7 @@ class RenderBurstRunner:
             stage = "install"
             self._install_blender(instance, index, progress)
             stage = "stage"
-            self._stage_project(instance, index, progress)
+            self._stage_project(instance, index, progress, tasks)
 
             with tempfile.TemporaryDirectory(prefix="openstudio_burst_") as temp_dir:
                 temp = Path(temp_dir)
@@ -965,12 +1080,18 @@ class RenderBurstRunner:
         self._emit(progress, index, "setup", "Blender ready", instance_id=instance.id)
 
     def _stage_project(
-        self, instance: VastInstance, index: int, progress: ProgressCallback | None
+        self,
+        instance: VastInstance,
+        index: int,
+        progress: ProgressCallback | None,
+        tasks: Sequence[BurstTask] = (),
     ) -> None:
+        exclude_names = self._plan_bake_cache_names
         plan = scan_staging(
             self.project_root,
             self.production_folder,
             work_root=self.work_root,
+            exclude_names=exclude_names,
         )
         if not plan.exists:
             raise BurstError(
@@ -1019,7 +1140,9 @@ class RenderBurstRunner:
                 instance,
                 entry.local_path,
                 entry.remote_path,
+                extra_excludes=exclude_names,
                 on_percent=on_percent,
+                timeout_seconds=_rsync_timeout(entry.bytes),
             )
             uploaded_before += entry.bytes
         self._emit(
@@ -1072,6 +1195,12 @@ class RenderBurstRunner:
             "frame_start": min(task.frames),
             "frame_end": max(task.frames),
             "bake_particles": self.bake_particles,
+            "bake_geometry_nodes": self.bake_geometry_nodes,
+            "bake_hosts": sorted({
+                bake.object_name
+                for bake in task.shot.geometry_bakes
+                if bake.object_name and not bake.hide_render
+            }),
         }
         config_path = temp / f"config_{index}_{shot.name}.json"
         config_path.write_text(json.dumps(config), encoding="utf-8")
@@ -1343,6 +1472,8 @@ class RenderBurstRunner:
         remote_source: bool = False,
         extra_excludes: Sequence[str] = (),
         on_percent: Callable[[int], None] | None = None,
+        timeout_seconds: float = 3600.0,
+        attempts: int = 2,
     ) -> None:
         ssh = (
             f"ssh -i {self.ssh_key_path} -p {instance.ssh_port} "
@@ -1354,88 +1485,104 @@ class RenderBurstRunner:
         else:
             source = str(local).rstrip("/") + "/"
             destination = f"root@{instance.ssh_host}:{str(remote).rstrip('/')}/"
-        command = ["rsync", "-az"]
-        if on_percent is not None and not remote_source:
-            command.extend(["--info=progress2", "--no-inc-recursive"])
-        for pattern in STAGING_EXCLUDES:
-            command.extend(["--exclude", pattern])
-        for pattern in extra_excludes:
-            command.extend(["--exclude", pattern])
-        command.extend(["-e", ssh, source, destination])
+        last_error = "rsync failed."
+        for attempt in range(1, max(1, int(attempts)) + 1):
+            command = ["rsync", "-az", "--partial"]
+            if on_percent is not None and not remote_source:
+                command.extend(["--info=progress2", "--no-inc-recursive"])
+            for pattern in STAGING_EXCLUDES:
+                command.extend(["--exclude", pattern])
+            for pattern in extra_excludes:
+                command.extend(["--exclude", pattern])
+            command.extend(["-e", ssh, source, destination])
 
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            bufsize=0,
-        )
-        stdout_parts: list[str] = []
-        stderr_parts: list[str] = []
-        last_percent = -1
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+            stdout_parts: list[str] = []
+            stderr_parts: list[str] = []
+            last_percent = -1
 
-        def handle_stdout(line: str) -> None:
-            nonlocal last_percent
-            percent = _parse_rsync_progress(line)
-            if percent is None or percent <= last_percent:
-                return
-            last_percent = percent
-            if on_percent is not None:
-                try:
-                    on_percent(percent)
-                except Exception:  # noqa: BLE001 - progress must never break rsync
-                    pass
+            def handle_stdout(line: str) -> None:
+                nonlocal last_percent
+                percent = _parse_rsync_progress(line)
+                if percent is None or percent <= last_percent:
+                    return
+                last_percent = percent
+                if on_percent is not None:
+                    try:
+                        on_percent(percent)
+                    except Exception:  # noqa: BLE001
+                        pass
 
-        def drain(
-            stream,
-            sink: list[str],
-            on_line: Callable[[str], None] | None = None,
-        ) -> None:
-            buffer = ""
-            while True:
-                try:
-                    chunk = os.read(stream.fileno(), 4096)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                text = chunk.decode("utf-8", "replace")
-                sink.append(text)
-                if on_line is None:
-                    continue
-                buffer += text
-                parts = re.split(r"[\r\n]", buffer)
-                buffer = parts.pop()
-                for part in parts:
-                    on_line(part)
-            if buffer and on_line is not None:
-                on_line(buffer)
+            def drain(
+                stream,
+                sink: list[str],
+                on_line: Callable[[str], None] | None = None,
+            ) -> None:
+                buffer = ""
+                while True:
+                    try:
+                        chunk = os.read(stream.fileno(), 4096)
+                    except OSError:
+                        break
+                    if not chunk:
+                        break
+                    text = chunk.decode("utf-8", "replace")
+                    sink.append(text)
+                    if on_line is None:
+                        continue
+                    buffer += text
+                    parts = re.split(r"[\r\n]", buffer)
+                    buffer = parts.pop()
+                    for part in parts:
+                        on_line(part)
+                if buffer and on_line is not None:
+                    on_line(buffer)
 
-        threads = [
-            threading.Thread(
-                target=drain,
-                args=(process.stdout, stdout_parts, handle_stdout),
-                daemon=True,
-            ),
-            threading.Thread(
-                target=drain,
-                args=(process.stderr, stderr_parts),
-                daemon=True,
-            ),
-        ]
-        for thread in threads:
-            thread.start()
-        try:
-            returncode = process.wait(timeout=1800)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=30)
-            raise BurstError("rsync timed out.") from None
-        finally:
+            threads = [
+                threading.Thread(
+                    target=drain,
+                    args=(process.stdout, stdout_parts, handle_stdout),
+                    daemon=True,
+                ),
+                threading.Thread(
+                    target=drain,
+                    args=(process.stderr, stderr_parts),
+                    daemon=True,
+                ),
+            ]
             for thread in threads:
-                thread.join(timeout=5)
-        if returncode != 0:
+                thread.start()
+            try:
+                returncode = process.wait(timeout=max(60.0, timeout_seconds))
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=30)
+                last_error = f"rsync timed out after {timeout_seconds:.0f}s."
+                for thread in threads:
+                    thread.join(timeout=5)
+                if attempt < attempts:
+                    time.sleep(5)
+                    continue
+                raise BurstError(
+                    f"{last_error} ({attempt} attempt(s))."
+                ) from None
+            finally:
+                for thread in threads:
+                    thread.join(timeout=5)
+            if returncode == 0:
+                return
             stderr = "".join(stderr_parts) or "".join(stdout_parts)
-            raise BurstError(f"rsync failed: {_tail(stderr)}")
+            last_error = f"rsync failed: {_tail(stderr)}"
+            if attempt < attempts:
+                time.sleep(5)
+                continue
+            raise BurstError(last_error)
+        raise BurstError(last_error)
 
     # ------------------------------------------------------------------
     # Progress helper
@@ -1456,6 +1603,7 @@ class RenderBurstRunner:
         offer_id: int = 0,
         shot: str = "",
         shot_path: str = "",
+        assignment: tuple[tuple[str, tuple[int, ...]], ...] = (),
         ok: bool = False,
         bytes_done: int = 0,
         bytes_total: int = 0,
@@ -1497,6 +1645,7 @@ class RenderBurstRunner:
                     offer_id=offer_id,
                     shot=shot,
                     shot_path=shot_path,
+                    assignment=assignment,
                     ok=ok,
                     bytes_done=bytes_done,
                     bytes_total=bytes_total,
@@ -1507,6 +1656,11 @@ class RenderBurstRunner:
             )
         except Exception:  # noqa: BLE001 - progress must never abort a render
             pass
+
+
+def _rsync_timeout(byte_count: int, *, floor_seconds: float = 1800.0) -> float:
+    """Allow at least a 1 MB/s transfer before declaring a timeout."""
+    return max(float(floor_seconds), float(byte_count or 0) / 1_000_000.0)
 
 
 def _parse_rsync_progress(line: str) -> int | None:

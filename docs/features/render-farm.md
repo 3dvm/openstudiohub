@@ -24,6 +24,14 @@ every shot as a collapsible card; the right side shows the selected shot.
   refreshes in the background; unchanged files are not probed again. **Re-scan**
   (`⟳ Scan`) re-runs Blender for every file, while **Recalculate plan** only
   rebuilds the plan from the current settings.
+- **Node bake:** the Vast.ai plan has **Bake geometry nodes on the node**. When
+  enabled, the Hub excludes the geometry-node bake caches of the planned shots
+  from the upload and runs the simulation bake on each node before rendering.
+  It applies to final renders, previews and benchmarks. The checkbox follows
+  the local cache state: off when every selected GN cache exists and is newer
+  than its `.blend`, on when a cache is missing or stale. The plan warns when
+  particle caches are missing; particle caches are uploaded and are not
+  generated remotely.
 - **Shot cards:** each card shows the rendered and approved frame counts
   (`R 120/140 · A 80/140`), frame range, quality, measured time and warning
   summary. The header status is one of:
@@ -45,6 +53,10 @@ every shot as a collapsible card; the right side shows the selected shot.
   actions and log access sit at the top of the panel, above the preview. Every
   render-starting action asks for confirmation. While a process is active a
   banner is shown and the sensitive controls and shot actions are locked.
+- **Relaunch node:** a failed node card offers **Relaunch node**. It searches a
+  fresh Vast.ai offer with the planned GPU profile, price/region/bandwidth
+  limits and bake mode, reuses the node's planned frame assignment, and skips
+  frames already written. The retry keeps the original node number in the card.
 - **Render setup audit:** compositing on/off, view layers and whether each one
   is connected to the compositor output, output format/color, camera, fps and
   the output path.
@@ -215,7 +227,8 @@ changed in the panel.
   three representative frames of the shot's *scene* range (read from the
   `.blend` by the probe). **Benchmark all selected** measures every selected
   task-driven file on **one** Vast.ai node with a single upload and records a
-  median per shot. The confirmation dialog names the exact `.blend` files, the
+  median per shot. When the node bake is enabled, benchmarks bake the caches
+  before measuring. The confirmation dialog names the exact `.blend` files, the
   frames that will be measured, the scene ranges, the node and its price, and
   the production folder size before anything is rented; the batch also shows its
   own node card. Final-quality frames are saved in the shot's render folder;

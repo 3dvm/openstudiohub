@@ -2,6 +2,7 @@
 
 from src.infrastructure.render.staging import (
     STAGING_EXCLUDES,
+    bake_cache_names,
     scan_staging,
 )
 
@@ -47,3 +48,45 @@ def test_scan_staging_uses_a_custom_work_root(tmp_path):
     plan = scan_staging(tmp_path, "svn", work_root="/opt/openstudio/")
 
     assert plan.entries[0].remote_path == "/opt/openstudio/svn"
+
+
+def test_scan_staging_excludes_only_the_given_bake_names(tmp_path):
+    from pathlib import Path
+
+    from src.domain.render.models import GeometryBakeInfo, RenderQuality, RenderShot
+
+    project = tmp_path / "project"
+    production = project / "svn"
+    shot_dir = production / "pro" / "shots" / "sq010" / "sh040"
+    shot_dir.mkdir(parents=True)
+    (shot_dir / "sh040-layout.blend").write_bytes(b"b" * 10)
+    gn_cache = shot_dir / "blendcache_sh040_seeds"
+    gn_cache.mkdir()
+    (gn_cache / "blob").write_bytes(b"g" * 100)
+    particle_cache = shot_dir / "blendcache_sh040_particles"
+    particle_cache.mkdir()
+    (particle_cache / "cache").write_bytes(b"p" * 50)
+
+    shot = RenderShot(
+        name="sh040",
+        blend_path=shot_dir / "sh040-layout.blend",
+        relative_path="pro/shots/sq010/sh040/sh040-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(),
+        frame_start=1,
+        frame_end=2,
+        geometry_bakes=(
+            GeometryBakeInfo(
+                object_name="seeds_host",
+                directory="//blendcache_sh040_seeds",
+            ),
+        ),
+    )
+
+    plan = scan_staging(
+        project, "svn", exclude_names=bake_cache_names((shot,))
+    )
+
+    assert plan.files == 2
+    assert plan.bytes == 60
+    assert plan.files == 2
