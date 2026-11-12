@@ -583,7 +583,9 @@ print('OSDEPS::ok')
         if key in visited:
             return
         visited.add(key)
-        raw_paths = self._probe_dependency_paths(probe, blend, cache)
+        raw_paths, authoritative = self._probe_dependency_paths(
+            probe, blend, cache
+        )
         for raw in raw_paths:
             resolved = _resolve_path(blend.parent, raw)
             if resolved is None:
@@ -591,6 +593,11 @@ print('OSDEPS::ok')
             owner = self._relative_or_absolute(blend, project_root)
             kind = self._dependency_kind(resolved)
             if not resolved.exists():
+                if self._is_stale_dependency(resolved):
+                    continue
+                relative_raw = bool(raw) and not Path(raw).is_absolute()
+                if relative_raw and not authoritative:
+                    continue
                 if resolved.suffix or kind == "blend":
                     issues.add(
                         DependencyIssue(
@@ -651,34 +658,58 @@ print('OSDEPS::ok')
         probe: BlenderProbe,
         blend: Path,
         cache: dict,
-    ) -> tuple[str, ...]:
+    ) -> tuple[tuple[str, ...], bool]:
         try:
             stat = blend.stat()
             key = str(blend.resolve())
         except OSError:
-            return ()
+            return (), False
         entry = cache.get(key)
         if (
             isinstance(entry, dict)
             and int(entry.get("size") or -1) == stat.st_size
             and int(entry.get("mtime_ns") or -1) == stat.st_mtime_ns
             and isinstance(entry.get("paths"), list)
+            and "authoritative" in entry
         ):
-            return tuple(str(item) for item in entry["paths"])
+            return (
+                tuple(str(item) for item in entry["paths"]),
+                bool(entry.get("authoritative")),
+            )
         try:
             result = probe.probe(blend)
         except RenderProbeError:
-            return ()
-        paths = set(result.blend_paths)
-        paths.update(result.libraries)
-        paths.update(result.images)
-        ordered = tuple(sorted(str(item) for item in paths if str(item)))
+            return (), False
+        blend_paths = tuple(
+            str(item) for item in (result.blend_paths or ()) if str(item)
+        )
+        authoritative = bool(blend_paths)
+        if blend_paths:
+            ordered = tuple(sorted(set(blend_paths)))
+        else:
+            paths = set(result.libraries)
+            paths.update(result.images)
+            ordered = tuple(sorted(str(item) for item in paths if str(item)))
         cache[key] = {
             "size": stat.st_size,
             "mtime_ns": stat.st_mtime_ns,
             "paths": list(ordered),
+            "authoritative": authoritative,
         }
-        return ordered
+        return ordered, authoritative
+
+    @staticmethod
+    def _is_stale_dependency(path: Path) -> bool:
+        """Return True for known unused BlenderKit export leftovers."""
+        text = str(path).replace("\\", "/").lower()
+        name = Path(text).name
+        if name == "export_blenderkit.blend":
+            return True
+        if "export_blenderkit" in text and (
+            "/temp/" in text or "/tmp/" in text or "local/temp" in text
+        ):
+            return True
+        return False
 
     @staticmethod
     def _dependency_kind(path: Path) -> str:
@@ -890,9 +921,16 @@ print('OSDEPS::ok')
                 "the node will not bake them (geometry-node bakes only)."
             )
         dependencies: set[str] = set()
-        for value in (*result.libraries, *result.images):
+        source_paths = (
+            tuple(result.blend_paths)
+            if result.blend_paths
+            else (*result.libraries, *result.images)
+        )
+        for value in source_paths:
             resolved = _resolve_path(path.parent, value)
             if resolved is None:
+                continue
+            if not resolved.exists() and not Path(value).is_absolute():
                 continue
             if not _is_inside(resolved, project_root):
                 warnings.append(f"External dependency outside the project: {value}")

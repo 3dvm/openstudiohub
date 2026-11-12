@@ -78,8 +78,11 @@ class RenderBurstWorker(ManagedWorker):
         self.fill_allow_less_vram = bool(fill_allow_less_vram)
         self.gpu_profile = str(gpu_profile or "")
         self.runner = None
+        self._cancelled = False
 
     def run(self) -> None:
+        if self._cancelled:
+            return
         try:
             self.runner = self.service.build_burst_runner(
                 self.project_root,
@@ -98,6 +101,8 @@ class RenderBurstWorker(ManagedWorker):
                 fill_allow_less_vram=self.fill_allow_less_vram,
                 gpu_profile=self.gpu_profile,
             )
+            if self._cancelled:
+                self.runner.cancel()
             report = self.runner.run(
                 self.plan.shots,
                 self.plan,
@@ -109,6 +114,7 @@ class RenderBurstWorker(ManagedWorker):
             self.error.emit(str(error))
 
     def cancel(self) -> None:
+        self._cancelled = True
         if self.runner is not None:
             self.runner.cancel()
 

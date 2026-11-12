@@ -373,6 +373,7 @@ class RenderPanelViewModel(BaseViewModel):
         self._benchmark_cards: list[RenderNodeCardModel] = []
         self._benchmark_run_id = ""
         self._relaunch_active: set[str] = set()
+        self._cleared_runs: set[str] = set()
         self._local_run_id = ""
         self._progress_by_shot: dict[str, int] = {}
         self._progress_by_node: dict[int, int] = {}
@@ -423,6 +424,7 @@ class RenderPanelViewModel(BaseViewModel):
         self._benchmark_cards = []
         self._benchmark_run_id = ""
         self._relaunch_active = set()
+        self._cleared_runs = set()
         self._local_run_id = ""
         self._locked_shots = set()
         self._failed_shots = set()
@@ -2206,28 +2208,35 @@ class RenderPanelViewModel(BaseViewModel):
     def clear_queued_relaunch(
         self, card: RenderNodeCardModel | None, *, quiet: bool = False
     ) -> bool:
-        """Remove a relaunch run that never reached its worker."""
+        """Cancel and remove a queued or still-starting relaunch."""
         if card is None:
             return False
-        run = next(
-            (
-                item
-                for item in self._runs.values()
-                if item.relaunch_key == card.key
-            ),
-            None,
-        )
+        run = self._runs.get(str(card.run_id or ""))
+        if run is None:
+            run = next(
+                (
+                    item
+                    for item in self._runs.values()
+                    if item.relaunch_key == card.key
+                ),
+                None,
+            )
         if run is None:
             self._relaunch_active.discard(card.key)
-            return False
-        worker_key = f"render_burst:{run.run_id}"
-        if self.workers.is_running(worker_key):
             if not quiet:
                 self.render_error.emit(
-                    "The relaunch worker is still running; cancel it first."
+                    "No queued relaunch was found for this node."
                 )
             return False
-        message = "Queued relaunch cleared."
+        worker_key = f"render_burst:{run.run_id}"
+        worker = self.workers.get(worker_key)
+        if worker is not None and self.workers.is_running(worker_key):
+            self._cleared_runs.add(run.run_id)
+            if hasattr(worker, "cancel"):
+                worker.cancel()
+            message = "Relaunch cancelled and cleared."
+        else:
+            message = "Queued relaunch cleared."
         self._runs.pop(run.run_id, None)
         self._finish_audit(run.run_id, ok=False, message=message)
         for item in run.cards.values():
@@ -2235,12 +2244,12 @@ class RenderPanelViewModel(BaseViewModel):
             item.message = message
             item.final = True
             item.eta_seconds = 0.0
+        self._relaunch_active.discard(run.relaunch_key)
         self._release_run(run, ok=False, rendered=0)
-        self.report_status(message, "yellow")
-        if not quiet:
-            self.render_error.emit(
-                f"Node {card.node + 1}: {message} You can relaunch it again."
-            )
+        self.report_status(
+            f"Node {card.node + 1}: {message} You can relaunch it again.",
+            "yellow",
+        )
         return True
 
     def relaunch_node(
@@ -2726,6 +2735,9 @@ class RenderPanelViewModel(BaseViewModel):
 
     def _handle_burst_finished(self, report) -> None:
         run_id = str(getattr(report, "run_id", "") or "")
+        if run_id in self._cleared_runs:
+            self._cleared_runs.discard(run_id)
+            return
         run = self._runs.pop(run_id, None)
         ok = bool(getattr(report, "ok", False))
         message = getattr(report, "message", "Render finished.")
@@ -2751,8 +2763,12 @@ class RenderPanelViewModel(BaseViewModel):
         self.render_finished.emit(report)
 
     def _on_run_error(self, run_id: str, message: str) -> None:
-        run = self._runs.pop(str(run_id or ""), None)
-        if self._local_run_id == str(run_id or ""):
+        run_id = str(run_id or "")
+        if run_id in self._cleared_runs:
+            self._cleared_runs.discard(run_id)
+            return
+        run = self._runs.pop(run_id, None)
+        if self._local_run_id == run_id:
             self._local_run_id = ""
         self._finish_audit(run_id, ok=False, message=message)
         if run is not None:

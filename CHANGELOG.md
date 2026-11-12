@@ -9,6 +9,14 @@ releases may include larger UI or workflow changes.
 
 ### Added
 
+- Recursive dependency auditing ignores known BlenderKit export leftovers such
+  as `export_blenderkit.blend` and its Windows temp copies. They are stale
+  references, not active render dependencies, so they no longer block Vast
+  renders.
+- Dependency auditing now treats `bpy.utils.blend_paths(absolute=True)` as
+  authoritative. Library-relative image paths are no longer resolved against
+  the shot folder, eliminating false `missing` reports for textures inside
+  linked `.blend` libraries. Old dependency caches re-audit once.
 - Vast staging now verifies every uploaded file remotely by size and SHA-256,
   then runs a Blender preflight for linked libraries and world/HDRI images
   before baking or rendering. Truncated uploads or missing libraries fail the
@@ -280,6 +288,16 @@ releases may include larger UI or workflow changes.
 
 ### Fixed
 
+- **Clear queued relaunch** now finds the relaunch run by its own `run_id`
+  instead of the original failed card's `relaunch_key`. When the relaunch
+  worker is still starting, Clear cancels it, removes the run and cards, and
+  ignores late worker signals; cancellation is also checked before renting a
+  node. The card shows a visible status and can be relaunched again.
+- Vast single-file staging no longer creates directory placeholders at file
+  destinations before copying them. Uploads such as storyboards and linked
+  assets are now verified as files instead of failing as `missing`. The
+  verification error also reports totals, distinguishes directories from
+  missing files and lists up to ten entries with a remaining count.
 - SVN commits with accented or non-ASCII messages no longer fail with
   `E000022`. The Hub inherited a forced `C` locale that could not represent
   UTF-8 text; the client locale is now configurable per VCS server and is also

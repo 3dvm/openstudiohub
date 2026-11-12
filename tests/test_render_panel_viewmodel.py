@@ -1424,13 +1424,69 @@ def test_burst_frame_progress_emits_live_frame(qapp):
     ]
 
 
-def test_clear_queued_relaunch_removes_only_that_run(qapp, tmp_path):
+def test_clear_queued_relaunch_removes_the_new_run_card(qapp, tmp_path):
     from datetime import datetime, timezone
 
     from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
         RenderNodeCardModel,
         RenderRunState,
     )
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    shot = _shot()
+    plan = viewmodel._plan_for_shots([shot])
+    original = RenderNodeCardModel(
+        node=6,
+        status="failed",
+        run_id="original-run",
+        run_label="render",
+        assignment=((shot.relative_path, (101,)),),
+    )
+    card = RenderNodeCardModel(
+        node=6,
+        status="queued",
+        run_id="relaunch-run",
+        run_label="relaunch",
+        assignment=((shot.relative_path, (101,)),),
+    )
+    run = RenderRunState(
+        run_id="relaunch-run",
+        backend="vast",
+        plan=plan,
+        gpu_profile="rtx_3080",
+        cards={6: card},
+        label="relaunch",
+        relaunch_key=original.key,
+        started_at=datetime.now(timezone.utc),
+    )
+    viewmodel._runs = {run.run_id: run}
+    viewmodel._relaunch_active = {original.key}
+    viewmodel.node_cards = [card]
+
+    assert viewmodel.clear_queued_relaunch(card) is True
+    assert "relaunch-run" not in viewmodel._runs
+    assert original.key not in viewmodel._relaunch_active
+    assert card.status == "failed"
+
+
+def test_clear_queued_relaunch_cancels_a_running_worker(
+    qapp, tmp_path, monkeypatch
+):
+    from datetime import datetime, timezone
+    from types import SimpleNamespace
+
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
+        RenderNodeCardModel,
+        RenderRunState,
+    )
+
+    class FakeWorker:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
 
     viewmodel = RenderPanelViewModel(RenderService())
     viewmodel.project_root = tmp_path
@@ -1450,17 +1506,34 @@ def test_clear_queued_relaunch_removes_only_that_run(qapp, tmp_path):
         gpu_profile="rtx_3080",
         cards={6: card},
         label="relaunch",
-        relaunch_key=card.key,
+        relaunch_key="original-run:6",
         started_at=datetime.now(timezone.utc),
     )
+    worker = FakeWorker()
     viewmodel._runs = {run.run_id: run}
-    viewmodel._relaunch_active = {card.key}
+    viewmodel._relaunch_active = {run.relaunch_key}
     viewmodel.node_cards = [card]
+    monkeypatch.setattr(
+        viewmodel.workers,
+        "get",
+        lambda key: worker if key == "render_burst:relaunch-run" else None,
+    )
+    monkeypatch.setattr(
+        viewmodel.workers,
+        "is_running",
+        lambda key: key == "render_burst:relaunch-run",
+    )
 
     assert viewmodel.clear_queued_relaunch(card) is True
+    assert worker.cancelled is True
+    assert "relaunch-run" in viewmodel._cleared_runs
     assert "relaunch-run" not in viewmodel._runs
-    assert card.key not in viewmodel._relaunch_active
-    assert card.status == "failed"
+    assert run.relaunch_key not in viewmodel._relaunch_active
+
+    viewmodel._handle_burst_finished(
+        SimpleNamespace(run_id="relaunch-run", ok=True, message="late")
+    )
+    assert "relaunch-run" not in viewmodel._cleared_runs
 
 
 def test_dependencies_audited_updates_the_shot_list(qapp, monkeypatch):

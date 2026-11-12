@@ -66,6 +66,10 @@ missing = []
 bad = []
 for relative, expected in manifest.items():
     path = os.path.join(root, relative)
+    if os.path.isdir(path):
+        bad.append({"path": relative, "reason": "directory",
+                    "actual": "directory", "expected": "file"})
+        continue
     if not os.path.isfile(path):
         missing.append(relative)
         continue
@@ -91,19 +95,64 @@ _PREFLIGHT_SCRIPT = r"""
 import bpy
 import json
 import os
+import sys
 
+
+def staging_root():
+    argv = sys.argv
+    if "--" in argv:
+        arguments = argv[argv.index("--") + 1:]
+        if arguments:
+            return os.path.abspath(arguments[0])
+    return ""
+
+
+def resolve(path, library=None):
+    if not path:
+        return ""
+    if library is not None and getattr(library, "filepath", ""):
+        try:
+            resolved = bpy.path.abspath(path, library=library)
+        except TypeError:
+            resolved = ""
+        if resolved:
+            return os.path.normpath(resolved)
+        library_path = bpy.path.abspath(library.filepath)
+        if library_path and path.startswith("//"):
+            return os.path.normpath(
+                os.path.join(os.path.dirname(library_path), path[2:])
+            )
+    return os.path.normpath(bpy.path.abspath(path))
+
+
+def inside_staging(path, root):
+    if not root or not path:
+        return True
+    try:
+        return os.path.commonpath(
+            [os.path.abspath(path), root]
+        ) == root
+    except ValueError:
+        return False
+
+
+def record(collection, filepath, library=None):
+    path = resolve(filepath, library)
+    if path and not os.path.isfile(path) and inside_staging(path, root):
+        collection.append({"filepath": filepath, "resolved": path})
+
+
+root = staging_root()
 missing_images = []
 missing_libs = []
 for image in bpy.data.images:
     if getattr(image, "packed_file", None) or not image.filepath:
         continue
-    path = bpy.path.abspath(image.filepath)
-    if path and not os.path.isfile(path):
-        missing_images.append(image.filepath)
+    record(missing_images, image.filepath, getattr(image, "library", None))
 for library in bpy.data.libraries:
-    path = bpy.path.abspath(library.filepath)
-    if path and not os.path.isfile(path):
-        missing_libs.append(library.filepath)
+    path = resolve(library.filepath)
+    if path and not os.path.isfile(path) and inside_staging(path, root):
+        missing_libs.append({"filepath": library.filepath, "resolved": path})
 for world in bpy.data.worlds:
     tree = getattr(world, "node_tree", None)
     if tree is None:
@@ -114,12 +163,24 @@ for world in bpy.data.worlds:
         image = getattr(node, "image", None)
         if image is None or getattr(image, "packed_file", None):
             continue
-        path = bpy.path.abspath(image.filepath)
-        if path and not os.path.isfile(path):
-            missing_images.append(image.filepath)
+        record(missing_images, image.filepath, getattr(image, "library", None))
+
+
+def dedupe(items):
+    seen = set()
+    result = []
+    for item in items:
+        key = (item["filepath"], item["resolved"])
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(item)
+    return sorted(result, key=lambda item: (item["filepath"], item["resolved"]))
+
+
 print("OSPREFLIGHT::" + json.dumps({
-    "missing_images": sorted(set(missing_images)),
-    "missing_libs": sorted(set(missing_libs)),
+    "missing_images": dedupe(missing_images),
+    "missing_libs": dedupe(missing_libs),
 }))
 """
 
@@ -505,6 +566,8 @@ class RenderBurstRunner:
         progress: ProgressCallback | None = None,
         node_indices: Sequence[int] | None = None,
     ) -> BurstReport:
+        if self._cancel.is_set():
+            raise BurstError("Render cancelled.")
         if not self.ssh_key_path.is_file():
             raise BurstError(f"SSH key not found: {self.ssh_key_path}")
         self._plan_bake_cache_names = (
@@ -548,6 +611,8 @@ class RenderBurstRunner:
             similar_mode=self.similar_gpu_mode,
             allow_less_vram=self.fill_allow_less_vram,
         )
+        if self._cancel.is_set():
+            raise BurstError("Render cancelled.")
         if not offers:
             raise BurstError("No Vast.ai offer is available for this GPU profile.")
         if len(offers) < len(initial_assignments):
@@ -1228,17 +1293,24 @@ class RenderBurstRunner:
         missing = list(payload.get("missing") or ())
         bad = list(payload.get("bad") or ())
         if missing or bad:
+            limit = 10
             details = []
-            for item in missing[:5]:
+            for item in missing[:limit]:
                 details.append(f"missing: {item}")
-            for item in bad[:5]:
+            for item in bad[:limit]:
                 details.append(
                     f"{item.get('reason')}: {item.get('path')} "
                     f"({item.get('actual')} vs {item.get('expected')})"
                 )
-            raise BurstError(
-                "Upload verification failed: " + "; ".join(details)
+            hidden = max(0, len(missing) - limit) + max(0, len(bad) - limit)
+            summary = f"{len(missing)} missing, {len(bad)} bad"
+            message = (
+                f"Upload verification failed ({summary}): "
+                + "; ".join(details)
             )
+            if hidden:
+                message += f"; (+{hidden} more)"
+            raise BurstError(message)
         self._emit(
             progress,
             index,
@@ -1260,10 +1332,9 @@ class RenderBurstRunner:
             script = Path(temp_dir) / "preflight.py"
             script.write_text(_PREFLIGHT_SCRIPT, encoding="utf-8")
             self._scp(instance, script, "/root/os_preflight.py")
+        remote_root = f"{self.work_root}/{self.production_folder}"
         for task in tasks:
-            remote_blend = (
-                f"{self.work_root}/{self.production_folder}/{task.remote_blend}"
-            )
+            remote_blend = f"{remote_root}/{task.remote_blend}"
             self._emit(
                 progress,
                 index,
@@ -1276,18 +1347,11 @@ class RenderBurstRunner:
             command = (
                 "bash -lc \"cd '/root/openstudio' && "
                 "/root/blender/blender -b --factory-startup "
-                f"'{remote_blend}' --python /root/os_preflight.py\""
+                f"'{remote_blend}' --python /root/os_preflight.py "
+                f"-- '{remote_root}'\""
             )
             result = self._ssh(instance, command, timeout=600, check=False)
             output = (result.stdout or "") + "\n" + (result.stderr or "")
-            low = output.lower()
-            warnings = (
-                "unrecognized file format",
-                "cannot find lib",
-                "linked data-blocks are missing",
-                "libraries and",
-            )
-            bad = [item for item in warnings if item in low]
             payload = None
             for line in output.splitlines():
                 if "OSPREFLIGHT::" in line:
@@ -1302,14 +1366,25 @@ class RenderBurstRunner:
                     f"Preflight failed for {task.shot.name}: Blender could not "
                     f"open the scene (exit {result.returncode})."
                 )
-            if bad or missing_images or missing_libs:
-                details = list(bad)
-                details.extend(f"missing image: {item}" for item in missing_images[:5])
-                details.extend(f"missing library: {item}" for item in missing_libs[:5])
-                raise BurstError(
-                    f"Preflight failed for {task.shot.name}: "
-                    + "; ".join(details[:8])
+            if missing_images or missing_libs:
+                details = []
+                for item in missing_images[:5]:
+                    details.append(f"missing image: {_preflight_label(item)}")
+                for item in missing_libs[:5]:
+                    details.append(f"missing library: {_preflight_label(item)}")
+                hidden = (
+                    max(0, len(missing_images) - 5)
+                    + max(0, len(missing_libs) - 5)
                 )
+                message = (
+                    f"Preflight failed for {task.shot.name} "
+                    f"({len(missing_images)} image(s), "
+                    f"{len(missing_libs)} library(ies)): "
+                    + "; ".join(details)
+                )
+                if hidden:
+                    message += f"; (+{hidden} more)"
+                raise BurstError(message)
             self._emit(
                 progress,
                 index,
@@ -1353,7 +1428,8 @@ class RenderBurstRunner:
         last_percent = -1
         last_emit = 0.0
         for entry in plan.entries:
-            self._ssh(instance, f"mkdir -p '{entry.remote_path}'")
+            if not entry.single_file:
+                self._ssh(instance, f"mkdir -p '{entry.remote_path}'")
 
             def on_percent(percent: int, entry_bytes: int = entry.bytes) -> None:
                 nonlocal uploaded_before, last_percent, last_emit
@@ -1973,6 +2049,16 @@ class RenderBurstRunner:
 def _rsync_timeout(byte_count: int, *, floor_seconds: float = 1800.0) -> float:
     """Allow at least a 1 MB/s transfer before declaring a timeout."""
     return max(float(floor_seconds), float(byte_count or 0) / 1_000_000.0)
+
+
+def _preflight_label(item) -> str:
+    if isinstance(item, dict):
+        filepath = str(item.get("filepath") or "")
+        resolved = str(item.get("resolved") or "")
+        if filepath and resolved and filepath != resolved:
+            return f"{filepath} -> {resolved}"
+        return filepath or resolved
+    return str(item)
 
 
 def _parse_rsync_progress(line: str) -> int | None:

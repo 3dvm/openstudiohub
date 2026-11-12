@@ -1,11 +1,24 @@
 """Unit tests for direct Vast burst planning (no instances are created)."""
 
+import json
+import os
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from src.domain.render.capacity import RenderCapacityCalculator
 from src.domain.render.models import RenderQuality, RenderShot
-from src.infrastructure.render.burst import RenderBurstRunner
+from src.infrastructure.render.burst import (
+    _PREFLIGHT_SCRIPT,
+    _VERIFY_SCRIPT,
+    BurstError,
+    BurstTask,
+    RenderBurstRunner,
+)
 
 
 class FakeProvider:
@@ -460,3 +473,392 @@ def test_run_does_not_silently_reduce_nodes(tmp_path, monkeypatch):
 
     with pytest.raises(BurstError, match="Only 1 Vast.ai offer"):
         runner.run([shot], plan)
+
+
+def test_stage_project_does_not_mkdir_single_file_destinations(tmp_path, monkeypatch):
+    production = tmp_path / "02_archivos_de_produccion"
+    shot_dir = production / "pro" / "shots" / "sq010" / "sh010"
+    shot_dir.mkdir(parents=True)
+    blend = shot_dir / "sh010-layout.blend"
+    blend.write_bytes(b"blend")
+    dependency = production / "pro" / "assets" / "textures" / "albedo.exr"
+    dependency.parent.mkdir(parents=True)
+    dependency.write_bytes(b"texture")
+
+    shot = RenderShot(
+        name="sh010",
+        blend_path=blend,
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(),
+        frame_start=1,
+        frame_end=1,
+        dependencies=(
+            "02_archivos_de_produccion/pro/assets/textures/albedo.exr",
+        ),
+    )
+    task = BurstTask(
+        shot=shot,
+        frames=(1,),
+        output_subdir="shots/sq010/sh010.render",
+    )
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+    )
+    ssh_calls: list[str] = []
+    scp_calls: list[tuple[Path, str]] = []
+    rsync_calls: list[tuple[Path, str]] = []
+
+    def fake_ssh(_instance, command, **_kwargs):
+        ssh_calls.append(command)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    def fake_scp(_instance, local, remote):
+        scp_calls.append((Path(local), remote))
+
+    def fake_rsync(_instance, local, remote, **_kwargs):
+        rsync_calls.append((Path(local), remote))
+
+    monkeypatch.setattr(runner, "_ssh", fake_ssh)
+    monkeypatch.setattr(runner, "_scp", fake_scp)
+    monkeypatch.setattr(runner, "_rsync", fake_rsync)
+    monkeypatch.setattr(runner, "_verify_upload", lambda *args, **kwargs: None)
+
+    runner._stage_project(SimpleNamespace(id=1), 0, None, [task])
+
+    remote_root = "/root/openstudio/02_archivos_de_produccion"
+    remote_file = f"{remote_root}/pro/assets/textures/albedo.exr"
+    assert f"mkdir -p '{remote_file}'" not in ssh_calls
+    assert f"mkdir -p '{remote_root}/pro/assets/textures'" in ssh_calls
+    assert scp_calls == [(dependency, remote_file)]
+    assert f"mkdir -p '{remote_root}/pro/shots/sq010/sh010'" in ssh_calls
+    assert rsync_calls == [(shot_dir, f"{remote_root}/pro/shots/sq010/sh010")]
+
+
+def test_verify_script_reports_directories_named_like_files(tmp_path):
+    root = tmp_path / "remote"
+    root.mkdir()
+    (root / "good.bin").write_bytes(b"ok")
+    (root / "file.mp4").mkdir()
+    (root / "file.mp4" / "file.mp4").write_bytes(b"copied inside")
+    manifest = {
+        "good.bin": {"bytes": 2, "sha256": ""},
+        "file.mp4": {"bytes": 13, "sha256": ""},
+        "missing.bin": {"bytes": 1, "sha256": ""},
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    script_path = tmp_path / "verify.py"
+    script_path.write_text(_VERIFY_SCRIPT, encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(script_path), str(manifest_path), str(root)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(
+        next(
+            line.split("OSVERIFY::", 1)[1]
+            for line in result.stdout.splitlines()
+            if "OSVERIFY::" in line
+        )
+    )
+
+    assert payload["missing"] == ["missing.bin"]
+    assert payload["bad"] == [
+        {
+            "path": "file.mp4",
+            "reason": "directory",
+            "actual": "directory",
+            "expected": "file",
+        }
+    ]
+
+
+_FAKE_BPY = r'''
+import json
+import os
+
+
+class _Path:
+    def abspath(self, path, start=None, library=None):
+        if library is not None:
+            raise TypeError("library argument unsupported")
+        if path.startswith("//"):
+            return os.path.join(os.environ["FAKE_BLEND_DIR"], path[2:])
+        return path
+
+
+class Library:
+    def __init__(self, filepath):
+        self.filepath = filepath
+
+
+class Image:
+    def __init__(self, filepath, library=None, packed_file=None):
+        self.filepath = filepath
+        self.library = library
+        self.packed_file = packed_file
+
+
+class Node:
+    def __init__(self, type, image=None):
+        self.type = type
+        self.image = image
+
+
+class NodeTree:
+    def __init__(self, nodes):
+        self.nodes = nodes
+
+
+class World:
+    def __init__(self, node_tree):
+        self.node_tree = node_tree
+
+
+class Data:
+    pass
+
+
+spec = json.loads(os.environ["FAKE_BPY_STATE"])
+libraries = [Library(item) for item in spec.get("libraries", [])]
+images = []
+for item in spec.get("images", []):
+    images.append(
+        Image(
+            item["filepath"],
+            libraries[item["library"]] if "library" in item else None,
+            item.get("packed_file"),
+        )
+    )
+worlds = []
+for item in spec.get("worlds", []):
+    nodes = [
+        Node(node["type"], images[node["image"]] if "image" in node else None)
+        for node in item.get("nodes", [])
+    ]
+    worlds.append(World(NodeTree(nodes)))
+data = Data()
+data.images = images
+data.libraries = libraries
+data.worlds = worlds
+path = _Path()
+'''
+
+
+def test_preflight_script_resolves_linked_library_paths(tmp_path):
+    staging = tmp_path / "remote" / "02_archivos_de_produccion"
+    environment = staging / "pro" / "assets" / "environment"
+    textures = environment / "textures"
+    textures.mkdir(parents=True)
+    (textures / "tex.exr").write_bytes(b"tex")
+    library = environment / "environment-model.blend"
+    library.write_bytes(b"lib")
+    missing_library = environment / "missing-lib.blend"
+    essentials = (
+        tmp_path
+        / "06_conf_LOCAL"
+        / "blender-build"
+        / "blender-5.2.3-linux-x64"
+        / "5.2"
+        / "datafiles"
+        / "assets"
+        / "nodes"
+        / "geometry_nodes_essentials.blend"
+    )
+    state = {
+        "libraries": [str(library), str(missing_library), str(essentials)],
+        "images": [
+            {"filepath": "//textures/tex.exr", "library": 0},
+            {"filepath": "//textures/missing.exr", "library": 0},
+        ],
+        "worlds": [{"nodes": [{"type": "TEX_ENVIRONMENT", "image": 0}]}],
+    }
+    fake = tmp_path / "fake"
+    fake.mkdir()
+    (fake / "bpy.py").write_text(_FAKE_BPY, encoding="utf-8")
+    script = tmp_path / "preflight.py"
+    script.write_text(_PREFLIGHT_SCRIPT, encoding="utf-8")
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(fake) + os.pathsep + environment.get("PYTHONPATH", "")
+    environment["FAKE_BPY_STATE"] = json.dumps(state)
+    environment["FAKE_BLEND_DIR"] = str(tmp_path)
+
+    result = subprocess.run(
+        [sys.executable, str(script), "--", str(staging)],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=environment,
+    )
+    payload = json.loads(
+        next(
+            line.split("OSPREFLIGHT::", 1)[1]
+            for line in result.stdout.splitlines()
+            if "OSPREFLIGHT::" in line
+        )
+    )
+
+    assert [item["filepath"] for item in payload["missing_images"]] == [
+        "//textures/missing.exr"
+    ]
+    assert payload["missing_images"][0]["resolved"] == str(
+        textures / "missing.exr"
+    )
+    assert [item["filepath"] for item in payload["missing_libs"]] == [
+        str(missing_library)
+    ]
+
+
+def test_preflight_assets_ignores_unstructured_blender_warnings(tmp_path, monkeypatch):
+    shot = _shot()
+    task = BurstTask(
+        shot=shot,
+        frames=(101,),
+        output_subdir="shots/sq010/sh010.render",
+    )
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+    )
+    commands: list[str] = []
+
+    def fake_ssh(_instance, command, **_kwargs):
+        commands.append(command)
+        output = (
+            'Cannot find lib "geometry_nodes_essentials.blend"\n'
+            "Unrecognized file format 'library.blend'\n"
+            'OSPREFLIGHT::{"missing_images": [], "missing_libs": []}\n'
+        )
+        return subprocess.CompletedProcess([], 0, output, "")
+
+    monkeypatch.setattr(runner, "_scp", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_ssh", fake_ssh)
+
+    runner._preflight_assets(SimpleNamespace(id=1), 0, [task], None)
+
+    assert (
+        "-- '/root/openstudio/02_archivos_de_produccion'" in commands[0]
+    )
+
+
+def test_preflight_assets_reports_resolved_missing_paths(tmp_path, monkeypatch):
+    shot = _shot()
+    task = BurstTask(
+        shot=shot,
+        frames=(101,),
+        output_subdir="shots/sq010/sh010.render",
+    )
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=Path("/tmp/key"),
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+    )
+    payload = {
+        "missing_images": [
+            {"filepath": "//textures/a.exr", "resolved": "/root/staging/a.exr"}
+        ],
+        "missing_libs": [
+            {"filepath": "//lib/b.blend", "resolved": "/root/staging/b.blend"}
+        ],
+    }
+
+    def fake_ssh(_instance, _command, **_kwargs):
+        return subprocess.CompletedProcess(
+            [], 0, "OSPREFLIGHT::" + json.dumps(payload), ""
+        )
+
+    monkeypatch.setattr(runner, "_scp", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_ssh", fake_ssh)
+
+    with pytest.raises(BurstError) as error:
+        runner._preflight_assets(SimpleNamespace(id=1), 0, [task], None)
+
+    message = str(error.value)
+    assert "1 image(s), 1 library(ies)" in message
+    assert "//textures/a.exr -> /root/staging/a.exr" in message
+    assert "//lib/b.blend -> /root/staging/b.blend" in message
+
+
+def test_render_burst_worker_cancel_sets_flag_and_cancels_runner(qapp):
+    from src.interfaces.qt.workers.render_workers import RenderBurstWorker
+
+    class FakeRunner:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    worker = RenderBurstWorker(
+        FakeProvider(), Path("/project"), SimpleNamespace(), run_id="worker"
+    )
+    runner = FakeRunner()
+    worker.runner = runner
+
+    worker.cancel()
+
+    assert worker._cancelled is True
+    assert runner.cancelled is True
+
+
+def test_burst_run_cancelled_during_offer_search_does_not_rent(tmp_path):
+    key = tmp_path / "key"
+    key.write_text("key", encoding="utf-8")
+    shot = _shot()
+    created: list[int] = []
+
+    class Provider:
+        def balance(self) -> float:
+            return 100.0
+
+        def choose_offers(self, *_args, **_kwargs):
+            runner.cancel()
+            return [
+                SimpleNamespace(
+                    id=1,
+                    price_per_hour=0.1,
+                    gpu_name="RTX 3080",
+                    geolocation="US",
+                )
+            ]
+
+        def create_instance(self, *_args, **_kwargs):
+            created.append(1)
+            raise AssertionError("cancelled run must not rent an instance")
+
+    runner = RenderBurstRunner(
+        Provider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=key,
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+    )
+    plan = SimpleNamespace(
+        shots=(shot,),
+        required_nodes=1,
+        gpu_profile="rtx_3080",
+        price_per_hour=0.1,
+        estimated_cost=0.1,
+        total_frames=shot.frames,
+    )
+
+    with pytest.raises(BurstError, match="cancelled"):
+        runner.run([shot], plan)
+
+    assert created == []

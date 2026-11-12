@@ -364,6 +364,28 @@ and shows the status, frames done/expected, active nodes, cost, latest preview
 and review video. No node is rented and no Blender process starts from the
 artist session.
 
+## Clearing a queued relaunch
+
+A relaunch creates a new run whose node cards use the new `run_id`
+(`<relaunch_run_id>:<node>`), while `RenderRunState.relaunch_key` keeps the
+original failed card key (`<original_run_id>:<node>`). **Clear queued
+relaunch** finds the run by `card.run_id` (with a `relaunch_key` fallback), so
+the new card always matches.
+
+When the relaunch worker is still starting, **Clear** cancels it as well: it
+sets `RenderBurstWorker._cancelled`, cancels the runner, removes the run and
+its cards, finishes the audit and discards `run.relaunch_key` from
+`_relaunch_active`. `RenderBurstRunner.run()` checks the cancellation flag
+after `choose_offers` and before creating instances, so clearing during the
+offer search cannot rent a node. Late worker signals for a cleared run are
+ignored. The card is marked failed with a visible status message and can be
+relaunched again.
+
+Relevant code: `src/interfaces/qt/viewmodels/render_panel_viewmodel.py`
+(`clear_queued_relaunch`, `relaunch_node`),
+`src/interfaces/qt/components/render_node_card.py`,
+`src/interfaces/qt/workers/render_workers.py`.
+
 ## Flamenco later
 
 Flamenco remains the target for a persistent local farm and for studios with
