@@ -74,7 +74,7 @@ size before renting.
 
 The shot list only contains `.blend` files with a Kitsu shot task, and the scan
 result is cached in the project's `vfs_local` folder so the panel opens without
-waiting for Blender. Use **Re-scan** when files or task assignments changed.
+waiting for Blender. Use **Scan shots** when files or task assignments changed.
 
 Geometry-node bakes can be generated on the render nodes instead of uploading
 them. The **Bake geometry nodes on the node** checkbox defaults to on when a

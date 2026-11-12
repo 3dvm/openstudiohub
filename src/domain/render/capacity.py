@@ -55,6 +55,49 @@ def gpu_relative_speed(gpu_profile: str) -> float:
     return profile.relative_speed if profile is not None else 1.0
 
 
+def similar_gpu_profiles(
+    base_profile: str,
+    mode: str = "floor",
+    *,
+    allow_less_vram: bool = False,
+) -> tuple[str, ...]:
+    """Return profiles considered similar to ``base_profile``.
+
+    ``floor`` accepts the selected GPU or faster; ``ceiling`` accepts the
+    selected GPU or slower. Host VRAM must cover the selected profile unless
+    ``allow_less_vram`` explicitly relaxes that safety rule.
+    """
+    base = GPU_PROFILES.get(base_profile)
+    if base is None:
+        return ()
+    direction = (mode or "floor").strip().lower()
+    if direction not in ("floor", "ceiling"):
+        direction = "floor"
+    profiles = []
+    for key, profile in GPU_PROFILES.items():
+        if key == base_profile:
+            continue
+        if not allow_less_vram and profile.vram_gb < base.vram_gb:
+            continue
+        if direction == "floor":
+            if profile.relative_speed < base.relative_speed:
+                continue
+        else:
+            if profile.relative_speed > base.relative_speed:
+                continue
+        profiles.append((key, profile))
+    profiles.sort(key=lambda item: (item[1].relative_speed, item[1].label))
+    return tuple(key for key, _profile in profiles)
+
+
+def slowest_gpu_profile(profiles) -> str:
+    """Return the profile with the lowest relative speed."""
+    keys = [str(key) for key in profiles if key in GPU_PROFILES]
+    if not keys:
+        return ""
+    return min(keys, key=lambda key: GPU_PROFILES[key].relative_speed)
+
+
 def scale_seconds_for_gpu(
     seconds: float,
     source_gpu: str,
@@ -113,6 +156,7 @@ class RenderCapacityCalculator:
         price_per_hour: float,
         max_nodes: int = 0,
         budget: float = 0.0,
+        measured_speed_factor: float = 1.0,
     ) -> RenderPlan:
         if target_hours <= 0:
             raise ValueError("target_hours must be greater than zero")
@@ -128,6 +172,7 @@ class RenderCapacityCalculator:
         stale = tuple(shot.name for shot in ready if shot.measurement_stale)
         scaled = tuple(shot.name for shot in ready if shot.measurement_scaled)
         target_speed = max(0.1, gpu_relative_speed(gpu_profile))
+        measured_factor = max(0.1, float(measured_speed_factor or 1.0))
 
         total_seconds = 0.0
         for shot in ready:
@@ -136,6 +181,8 @@ class RenderCapacityCalculator:
                 seconds = default_seconds_per_frame(
                     shot.quality, shot.geometry_node_objects
                 ) / target_speed
+            else:
+                seconds = float(seconds) * measured_factor
             total_seconds += shot.frames * max(0.0, float(seconds))
 
         target_seconds = float(target_hours) * 3600.0

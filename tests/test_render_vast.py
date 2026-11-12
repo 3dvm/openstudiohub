@@ -278,3 +278,90 @@ def test_search_other_profiles_returns_valid_alternatives(tmp_path):
 
     assert [item.gpu_profile for item in alternatives] == ["rtx_3090"]
     assert alternatives[0].offer.offer_id == 9
+
+
+def _offer_row(offer_id, gpu, *, price=0.15, cpu_ram=64000, down=500, up=200):
+    return {
+        "id": offer_id,
+        "gpu_name": gpu,
+        "gpu_total_ram": 24576 if gpu == "RTX 3090" else 12288,
+        "cpu_ram": cpu_ram,
+        "disk_space": 200,
+        "cuda_max_good": "13.0",
+        "reliability2": 0.99,
+        "dph_total": price,
+        "inet_down": down,
+        "inet_up": up,
+        "geolocation": "United States, US",
+    }
+
+
+def test_choose_offers_fills_similar_faster_gpus_on_floor(tmp_path):
+    primary = [
+        _offer_row(1, "RTX 3080", price=0.12),
+        _offer_row(2, "RTX 3080", price=0.13),
+    ]
+    fallback = [
+        _offer_row(3, "RTX 3090", price=0.15),
+        _offer_row(4, "RTX 3090", price=0.16),
+        _offer_row(5, "RTX 3090", price=0.17),
+    ]
+    runner = FakeRunner(
+        [
+            (lambda cmd: "RTX_3080" in " ".join(cmd), primary, 0),
+            (lambda cmd: "RTX_3090" in " ".join(cmd), fallback, 0),
+            (lambda cmd: "search" in cmd and "offers" in cmd, [], 0),
+        ]
+    )
+    provider = VastProvider(_cli(tmp_path), runner=runner)
+
+    selected = provider.choose_offers(
+        "rtx_3080",
+        count=5,
+        max_price_per_hour=0.18,
+        min_cpu_ram_gb=30,
+        fill_similar=True,
+        similar_mode="floor",
+    )
+
+    assert [offer.id for offer in selected] == [1, 2, 3, 4, 5]
+    assert selected[2].gpu_profile == "rtx_3090"
+    assert selected[2].gpu_label == "RTX 3090 24 GB"
+
+
+def test_choose_offers_ceiling_can_allow_less_vram(tmp_path):
+    primary = [_offer_row(1, "RTX 3080", price=0.18)]
+    slower = [
+        _offer_row(2, "RTX 3070", price=0.09),
+        _offer_row(3, "RTX 3070", price=0.10),
+    ]
+    runner = FakeRunner(
+        [
+            (lambda cmd: "RTX_3080" in " ".join(cmd), primary, 0),
+            (lambda cmd: "RTX_3070" in " ".join(cmd), slower, 0),
+            (lambda cmd: "search" in cmd and "offers" in cmd, [], 0),
+        ]
+    )
+    provider = VastProvider(_cli(tmp_path), runner=runner)
+
+    without = provider.choose_offers(
+        "rtx_3080",
+        count=3,
+        max_price_per_hour=0.18,
+        min_cpu_ram_gb=30,
+        fill_similar=True,
+        similar_mode="ceiling",
+        allow_less_vram=False,
+    )
+    assert [offer.id for offer in without] == [1]
+
+    with_low_vram = provider.choose_offers(
+        "rtx_3080",
+        count=3,
+        max_price_per_hour=0.18,
+        min_cpu_ram_gb=30,
+        fill_similar=True,
+        similar_mode="ceiling",
+        allow_less_vram=True,
+    )
+    assert [offer.id for offer in with_low_vram] == [1, 2, 3]

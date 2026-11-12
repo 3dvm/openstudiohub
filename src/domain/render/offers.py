@@ -60,6 +60,8 @@ class OfferSnapshot:
     inet_down_mbps: float
     inet_up_mbps: float
     geolocation: str
+    gpu_profile: str = ""
+    gpu_label: str = ""
 
 
 @dataclass(frozen=True)

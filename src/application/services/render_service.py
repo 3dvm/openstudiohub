@@ -16,7 +16,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
+import subprocess
+import tempfile
 from datetime import datetime
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -31,7 +34,13 @@ from src.domain.render.capacity import (
 )
 from src.domain.render.frames import BenchmarkFrameSelection, benchmark_frames
 from src.domain.render.image_formats import image_format
-from src.domain.render.models import RenderPlan, RenderQuality, RenderSettings, RenderShot
+from src.domain.render.models import (
+    DependencyIssue,
+    RenderPlan,
+    RenderQuality,
+    RenderSettings,
+    RenderShot,
+)
 from src.domain.workspace.blueprint import ProjectBlueprint
 from src.infrastructure.render.burst import (
     BurstProgress,
@@ -59,6 +68,7 @@ from src.infrastructure.render.staging import (
     StagingPlan,
     bake_cache_names,
     scan_staging,
+    scan_staging_for_shots,
 )
 from src.infrastructure.render.comments import RenderCommentStore
 from src.infrastructure.render.frame_state import RenderFrameStateStore
@@ -417,6 +427,302 @@ class RenderService:
             )
         return shots or None
 
+    def fix_external_dependencies(
+        self,
+        project_root: Path | str,
+        owners: Sequence[str],
+    ) -> tuple[bool, str]:
+        """Pack and locally unpack external files in the owner .blend files."""
+        root = Path(project_root)
+        blueprint = self.load_blueprint(root)
+        blender = self.resolve_blender(root, blueprint)
+        unique = sorted({str(item) for item in owners or () if str(item)})
+        if not unique:
+            return False, "No dependency owner files were found."
+        script = """import bpy
+import sys
+owner = sys.argv[-1]
+bpy.ops.wm.open_mainfile(filepath=owner)
+bpy.ops.file.pack_all()
+bpy.ops.file.unpack_all(method='USE_LOCAL')
+bpy.ops.wm.save_mainfile()
+print('OSDEPS::ok')
+"""
+        readonly = [
+            owner
+            for owner in unique
+            if not os.access(root / owner, os.W_OK)
+        ]
+        if readonly:
+            return (
+                False,
+                "Acquire the SVN lock for these files before packing: "
+                + ", ".join(readonly),
+            )
+        failures: list[str] = []
+        with tempfile.TemporaryDirectory(prefix="openstudio_deps_") as temp_dir:
+            script_path = Path(temp_dir) / "fix_dependencies.py"
+            script_path.write_text(script, encoding="utf-8")
+            env = os.environ.copy()
+            env.setdefault("LC_ALL", "C")
+            env.setdefault("LANG", "C")
+            for owner in unique:
+                path = root / owner
+                if not path.is_file():
+                    failures.append(f"{owner}: not found")
+                    continue
+                command = [
+                    str(blender),
+                    "-b",
+                    "--factory-startup",
+                    "--python",
+                    str(script_path),
+                    "--",
+                    str(path),
+                ]
+                try:
+                    result = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                        env=env,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired) as error:
+                    failures.append(f"{owner}: {error}")
+                    continue
+                if result.returncode != 0 or "OSDEPS::ok" not in (result.stdout or ""):
+                    detail = (result.stderr or result.stdout or "").strip()
+                    failures.append(f"{owner}: {detail[-300:] or result.returncode}")
+        if failures:
+            return False, "Dependency fix failed: " + "; ".join(failures)
+        return True, f"Fixed {len(unique)} dependency owner file(s)."
+
+    # ------------------------------------------------------------------
+    # Dependency audit
+    # ------------------------------------------------------------------
+    def audit_dependencies(
+        self,
+        project_root: Path | str,
+        shots: Sequence[RenderShot],
+        *,
+        progress: Callable[[str, int, int], None] | None = None,
+    ) -> list[RenderShot]:
+        """Walk every shot's external files and linked .blend libraries."""
+        root = Path(project_root)
+        blueprint = self.load_blueprint(root)
+        production_folder = self._production_folder(root, blueprint)
+        production_root = root / production_folder
+        blender = self.resolve_blender(root, blueprint)
+        probe = BlenderProbe(blender)
+        cache_path = (
+            root
+            / blueprint.topography.vfs_local
+            / "render_dependency_cache.json"
+        )
+        cache = self._load_dependency_cache(cache_path)
+        audited: list[RenderShot] = []
+        total = len(shots)
+        for index, shot in enumerate(shots, start=1):
+            if progress is not None:
+                progress(shot.name, index, total)
+            dependencies: set[str] = set()
+            issues: set[DependencyIssue] = set()
+            self._walk_dependencies(
+                shot.blend_path,
+                project_root=root,
+                production_root=production_root,
+                local_root=root / blueprint.topography.vfs_local,
+                pipeline_root=root / blueprint.topography.vfs_pipeline,
+                probe=probe,
+                cache=cache,
+                dependencies=dependencies,
+                issues=issues,
+                visited=set(),
+            )
+            audited.append(
+                replace(
+                    shot,
+                    dependencies=tuple(sorted(dependencies)),
+                    dependencies_audited=True,
+                    dependency_issues=tuple(
+                        sorted(
+                            issues,
+                            key=lambda item: (
+                                item.status,
+                                item.path,
+                                item.owner,
+                            ),
+                        )
+                    ),
+                )
+            )
+        self._save_dependency_cache(cache_path, cache)
+        return audited
+
+    def _walk_dependencies(
+        self,
+        blend_path: Path,
+        *,
+        project_root: Path,
+        production_root: Path,
+        local_root: Path,
+        pipeline_root: Path,
+        probe: BlenderProbe,
+        cache: dict,
+        dependencies: set[str],
+        issues: set[DependencyIssue],
+        visited: set[str],
+    ) -> None:
+        blend = Path(blend_path)
+        try:
+            key = str(blend.resolve())
+        except OSError:
+            key = str(blend)
+        if key in visited:
+            return
+        visited.add(key)
+        raw_paths = self._probe_dependency_paths(probe, blend, cache)
+        for raw in raw_paths:
+            resolved = _resolve_path(blend.parent, raw)
+            if resolved is None:
+                continue
+            owner = self._relative_or_absolute(blend, project_root)
+            kind = self._dependency_kind(resolved)
+            if not resolved.exists():
+                if resolved.suffix or kind == "blend":
+                    issues.add(
+                        DependencyIssue(
+                            path=str(resolved),
+                            kind=kind,
+                            status="missing",
+                            owner=owner,
+                        )
+                    )
+                continue
+            if not _is_inside(resolved, project_root):
+                issues.add(
+                    DependencyIssue(
+                        path=str(resolved),
+                        kind=kind,
+                        status="external",
+                        owner=owner,
+                    )
+                )
+                continue
+            if not _is_inside(resolved, production_root):
+                if _is_inside(resolved, local_root) or _is_inside(
+                    resolved, pipeline_root
+                ):
+                    continue
+                issues.add(
+                    DependencyIssue(
+                        path=str(resolved),
+                        kind=kind,
+                        status="outside_production",
+                        owner=owner,
+                    )
+                )
+                continue
+            if not resolved.is_file():
+                continue
+            try:
+                relative = resolved.relative_to(project_root.resolve())
+            except ValueError:
+                continue
+            dependencies.add(relative.as_posix())
+            if resolved.suffix.lower() == ".blend":
+                self._walk_dependencies(
+                    resolved,
+                    project_root=project_root,
+                    production_root=production_root,
+                    local_root=local_root,
+                    pipeline_root=pipeline_root,
+                    probe=probe,
+                    cache=cache,
+                    dependencies=dependencies,
+                    issues=issues,
+                    visited=visited,
+                )
+
+    def _probe_dependency_paths(
+        self,
+        probe: BlenderProbe,
+        blend: Path,
+        cache: dict,
+    ) -> tuple[str, ...]:
+        try:
+            stat = blend.stat()
+            key = str(blend.resolve())
+        except OSError:
+            return ()
+        entry = cache.get(key)
+        if (
+            isinstance(entry, dict)
+            and int(entry.get("size") or -1) == stat.st_size
+            and int(entry.get("mtime_ns") or -1) == stat.st_mtime_ns
+            and isinstance(entry.get("paths"), list)
+        ):
+            return tuple(str(item) for item in entry["paths"])
+        try:
+            result = probe.probe(blend)
+        except RenderProbeError:
+            return ()
+        paths = set(result.blend_paths)
+        paths.update(result.libraries)
+        paths.update(result.images)
+        ordered = tuple(sorted(str(item) for item in paths if str(item)))
+        cache[key] = {
+            "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns,
+            "paths": list(ordered),
+        }
+        return ordered
+
+    @staticmethod
+    def _dependency_kind(path: Path) -> str:
+        suffix = path.suffix.lower()
+        if suffix == ".blend":
+            return "blend"
+        if "blendcache" in path.name.lower():
+            return "cache"
+        if suffix in (".exr", ".hdr", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".tx"):
+            return "image"
+        if suffix in (".mov", ".mp4", ".avi"):
+            return "movie"
+        if suffix in (".ttf", ".otf"):
+            return "font"
+        return "file"
+
+    @staticmethod
+    def _relative_or_absolute(path: Path, project_root: Path) -> str:
+        try:
+            return path.resolve().relative_to(project_root.resolve()).as_posix()
+        except (OSError, ValueError):
+            return str(path)
+
+    @staticmethod
+    def _load_dependency_cache(path: Path) -> dict:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    @staticmethod
+    def _save_dependency_cache(path: Path, cache: dict) -> None:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(
+                json.dumps(cache, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+        except OSError:
+            pass
+
     def _shot_with_measurements(
         self,
         project_root: Path,
@@ -583,10 +889,22 @@ class RenderService:
                 f"{len(missing_particles)} particle system cache(s) missing; "
                 "the node will not bake them (geometry-node bakes only)."
             )
-        for image in result.images:
-            resolved = _resolve_path(path.parent, image)
-            if resolved is not None and not _is_inside(resolved, project_root):
-                warnings.append(f"External dependency outside the project: {image}")
+        dependencies: set[str] = set()
+        for value in (*result.libraries, *result.images):
+            resolved = _resolve_path(path.parent, value)
+            if resolved is None:
+                continue
+            if not _is_inside(resolved, project_root):
+                warnings.append(f"External dependency outside the project: {value}")
+                continue
+            try:
+                dependency_relative = resolved.relative_to(
+                    Path(project_root).resolve()
+                )
+            except ValueError:
+                continue
+            if resolved.is_file():
+                dependencies.add(dependency_relative.as_posix())
         return RenderShot(
             name=path.parent.name,
             blend_path=path,
@@ -613,6 +931,7 @@ class RenderService:
             geometry_bakes=tuple(result.geometry_bakes),
             particle_caches=tuple(result.particle_caches),
             warnings=tuple(warnings),
+            dependencies=tuple(sorted(dependencies)),
         )
 
     # ------------------------------------------------------------------
@@ -630,6 +949,7 @@ class RenderService:
         budget: float = 0.0,
         shots: Sequence[RenderShot] | None = None,
         progress: ScanProgressCallback | None = None,
+        measured_gpu_profile: str = "",
     ) -> RenderPlan:
         if shots is None:
             shots = self.scan_shots(
@@ -640,6 +960,11 @@ class RenderService:
             )
         if gpu_profile not in GPU_PROFILES:
             raise RenderServiceError(f"Unknown GPU profile: {gpu_profile}")
+        measured_factor = 1.0
+        if measured_gpu_profile and measured_gpu_profile != gpu_profile:
+            source_speed = max(0.1, gpu_relative_speed(measured_gpu_profile))
+            target_speed = max(0.1, gpu_relative_speed(gpu_profile))
+            measured_factor = source_speed / target_speed
         return self.calculator.plan(
             list(shots),
             target_hours=target_hours,
@@ -647,6 +972,7 @@ class RenderService:
             price_per_hour=price_per_hour,
             max_nodes=max_nodes,
             budget=budget,
+            measured_speed_factor=measured_factor,
         )
 
     def record_measurement(
@@ -710,6 +1036,9 @@ class RenderService:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         min_cpu_ram_gb: float = 0.0,
+        fill_similar: bool = False,
+        similar_mode: str = "floor",
+        allow_less_vram: bool = False,
     ) -> list[VastOffer]:
         """Return candidate offers for the requested number of nodes.
 
@@ -725,6 +1054,9 @@ class RenderService:
             min_inet_down_mbps=min_inet_down_mbps,
             min_inet_up_mbps=min_inet_up_mbps,
             min_cpu_ram_gb=min_cpu_ram_gb,
+            fill_similar=fill_similar,
+            similar_mode=similar_mode,
+            allow_less_vram=allow_less_vram,
         )
 
     def alternate_offers(
@@ -761,6 +1093,9 @@ class RenderService:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         min_cpu_ram_gb: float = 0.0,
+        fill_similar: bool = False,
+        similar_mode: str = "floor",
+        allow_less_vram: bool = False,
     ) -> VastOffer:
         offers = self.candidate_offers(
             gpu_profile,
@@ -771,6 +1106,9 @@ class RenderService:
             min_inet_down_mbps=min_inet_down_mbps,
             min_inet_up_mbps=min_inet_up_mbps,
             min_cpu_ram_gb=min_cpu_ram_gb,
+            fill_similar=fill_similar,
+            similar_mode=similar_mode,
+            allow_less_vram=allow_less_vram,
         )
         if not offers:
             raise RenderServiceError("No Vast.ai offer is available.")
@@ -914,6 +1252,10 @@ class RenderService:
             run_id=run_id,
             bake_geometry_nodes=bake_geometry_nodes,
             min_cpu_ram_gb=min_cpu_ram_gb,
+            fill_similar_gpus=settings.fill_similar_gpus,
+            similar_gpu_mode=settings.similar_gpu_mode,
+            fill_allow_less_vram=settings.fill_allow_less_vram,
+            gpu_profile=settings.gpu_profile,
         )
         report = runner.run(plan.shots, plan, progress=progress)
         results: list[tuple[RenderShot, Path]] = []
@@ -1199,6 +1541,53 @@ class RenderService:
         )
         return path
 
+    def create_publish_video(
+        self,
+        project_root: Path | str,
+        shot: RenderShot,
+        settings: RenderSettings,
+        *,
+        first_frame: int,
+        last_frame: int,
+        version: str = "",
+    ) -> Path:
+        """Create the low-quality MP4 that is published to Kitsu."""
+        root = Path(project_root)
+        source, extension = self._video_source(root, shot, settings)
+        review_dir = self.kitsu_review_dir(
+            root, shot, settings.video_task_type or settings.task_type
+        )
+        review_dir.mkdir(parents=True, exist_ok=True)
+        chosen_version = version.strip() or next_version(
+            review_dir,
+            f"{shot.name}-{settings.video_task_type or settings.task_type}",
+        )
+        video_path = review_dir / (
+            f"{shot.name}-{settings.video_task_type or settings.task_type}"
+            f"-{chosen_version}.mp4"
+        )
+        self.video.create_video_with_placeholders(
+            source,
+            int(first_frame),
+            int(last_frame),
+            shot.setup.fps if shot.setup else 24.0,
+            video_path,
+            width=max(1, shot.quality.effective_width),
+            height=max(1, shot.quality.effective_height),
+            icon_path=(
+                Path(__file__).resolve().parents[3]
+                / "assets"
+                / "icons"
+                / "image-off.svg"
+            ),
+            extension=extension,
+            crf=28,
+            preset="veryfast",
+            video_filter="scale=iw/2:-2",
+        )
+        self.video.write_review_metadata(review_dir, video_path.name, source)
+        return video_path
+
     def create_review_video(
         self,
         project_root: Path | str,
@@ -1290,13 +1679,15 @@ class RenderService:
         project_root: Path | str,
         *,
         exclude_names=(),
+        shots=None,
     ) -> StagingPlan:
-        """Measure the production folder a Vast node will receive."""
+        """Measure the files a Vast node needs for the selected shots."""
         root = Path(project_root)
         blueprint = self.load_blueprint(root)
-        return scan_staging(
+        return scan_staging_for_shots(
             root,
             self._production_folder(root, blueprint),
+            shots,
             exclude_names=exclude_names,
         )
 
@@ -1342,7 +1733,11 @@ class RenderService:
             shot=shot,
             selection=selection,
             plan=plan,
-            staging=self.staging_estimate(root, exclude_names=exclude_names),
+            staging=self.staging_estimate(
+                root,
+                exclude_names=exclude_names,
+                shots=[shot],
+            ),
         )
 
     def benchmark_batch_estimate(
@@ -1411,6 +1806,10 @@ class RenderService:
         bake_particles: bool = False,
         bake_geometry_nodes: bool = False,
         min_cpu_ram_gb: float = 0.0,
+        fill_similar_gpus: bool = False,
+        similar_gpu_mode: str = "floor",
+        fill_allow_less_vram: bool = False,
+        gpu_profile: str = "",
         audit: RenderRunAuditLogger | None = None,
         run_id: str = "",
         skip_existing: bool = False,
@@ -1434,6 +1833,10 @@ class RenderService:
             bake_particles=bake_particles,
             bake_geometry_nodes=bake_geometry_nodes,
             min_cpu_ram_gb=min_cpu_ram_gb,
+            fill_similar_gpus=fill_similar_gpus,
+            similar_gpu_mode=similar_gpu_mode,
+            fill_allow_less_vram=fill_allow_less_vram,
+            gpu_profile=gpu_profile,
             audit=audit,
             run_id=run_id,
             skip_existing=skip_existing,
@@ -1454,6 +1857,10 @@ class RenderService:
         bake_particles: bool = False,
         bake_geometry_nodes: bool = False,
         min_cpu_ram_gb: float = 0.0,
+        fill_similar_gpus: bool = False,
+        similar_gpu_mode: str = "floor",
+        fill_allow_less_vram: bool = False,
+        gpu_profile: str = "",
     ) -> BurstReport:
         runner = self.build_burst_runner(
             project_root,
@@ -1466,6 +1873,10 @@ class RenderService:
             bake_particles=bake_particles,
             bake_geometry_nodes=bake_geometry_nodes,
             min_cpu_ram_gb=min_cpu_ram_gb,
+            fill_similar_gpus=fill_similar_gpus,
+            similar_gpu_mode=similar_gpu_mode,
+            fill_allow_less_vram=fill_allow_less_vram,
+            gpu_profile=gpu_profile,
         )
         return runner.run(plan.shots, plan, progress=progress)
 

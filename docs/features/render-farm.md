@@ -20,9 +20,11 @@ every shot as a collapsible card; the right side shows the selected shot.
   and each card shows its task type in the header. If Kitsu is unavailable the
   list stays empty and the panel warns instead of guessing.
 - **Scan cache:** the scan is stored in the project's `vfs_local` folder as
-  `render_scan_cache.json`. Opening the panel shows those shots immediately and
-  refreshes in the background; unchanged files are not probed again. **Re-scan**
-  (`⟳ Scan`) re-runs Blender for every file, while **Recalculate plan** only
+  `render_scan_cache.json`. Opening the panel shows those shots immediately
+  without starting Blender again; the **Shots** label marks them as cached and
+  asks for **Scan shots** to refresh. Unchanged files are not probed again.
+  **Scan shots** (`⟳ Scan shots`) re-runs Blender for every file, while
+  **Recalculate plan** only
   rebuilds the plan from the current settings.
 - **Node bake:** the Vast.ai plan has **Bake geometry nodes on the node**. When
   enabled, the Hub excludes the geometry-node bake caches of the planned shots
@@ -35,7 +37,10 @@ every shot as a collapsible card; the right side shows the selected shot.
   at least **60 GB of host RAM** by default (configurable as **Min RAM** in the
   Vast.ai plan); this keeps 16/31 GB hosts from being OOM-killed during heavy
   baked scenes.
-- **Shot cards:** each card shows the rendered and approved frame counts
+- **Shot cards:** cards start collapsed. Any click selects the shot; the toggle
+  only expands the card. Shot setup lives inside the card. Card actions open the
+  **Shot Inspector** on Comments, Shot Dependencies or Publish Shot. Each card
+  shows the rendered and approved frame counts
   (`R 120/140 · A 80/140`), frame range, quality, measured time and warning
   summary. The header status is one of:
   `Not ready`, `Check setup`, `Rendering`, `Failed`, `Finished`
@@ -44,22 +49,29 @@ every shot as a collapsible card; the right side shows the selected shot.
   detailed tooltip.
 - **Per-shot actions:** **View** toggles play/stop for the shot sequence and the
   active shot keeps an orange outline. **Preview**, **Benchmark**, **Render**,
-  **Retry**, **Approve**, **Delete** and a **More** menu with unapprove, video
-  creation and folder/.blend actions. **Open .blend** uses the same task
+  **Retry**, **Approve**, **Delete**, **Comments**, **Dependencies** and
+  **Publish** sit on the card. **Publish** opens the Shot Inspector on Publish
+  Shot. The **More** menu keeps unapprove, quick preview MP4, folder and
+  `.blend` actions. **Open .blend** uses the same task
   sandbox as the task cards: it acquires the SVN lock, launches the isolated
   Blender with the Kitsu task environment, and releases the lock when the
   session closes.
 - **Selection:** only ready shots can be checked. Shots that are part of the
   active run are locked: their checkbox and render actions are disabled until
   the run finishes.
-- **Run controls:** Start, Cancel, **Stop all processes**, preview/review video
-  actions and log access sit at the top of the panel, above the preview. Every
-  render-starting action asks for confirmation. While a process is active a
-  banner is shown and the sensitive controls and shot actions are locked.
+- **Run controls:** Start, Cancel and **Stop all processes** sit at the top of
+  the panel, above the preview. **Open run logs** is in the **Nodes** header.
+  Every render-starting action asks for confirmation, and Vast confirmations
+  show the upload size, file count and image list before renting a node. While
+  a process is active a banner is shown and the sensitive controls and shot
+  actions are locked.
 - **Relaunch node:** a failed node card offers **Relaunch node**. It searches a
   fresh Vast.ai offer with the planned GPU profile, price/region/bandwidth
   limits and bake mode, reuses the node's planned frame assignment, and skips
   frames already written. The retry keeps the original node number in the card.
+  A relaunch that fails to start is cleaned up and marked failed; a queued
+  relaunch with no worker can be removed with **Clear queued relaunch** and
+  retried.
 - **Render setup audit:** compositing on/off, view layers and whether each one
   is connected to the compositor output, output format/color, camera, fps and
   the output path.
@@ -67,20 +79,38 @@ every shot as a collapsible card; the right side shows the selected shot.
   `.render_status.json` and `03_render/.previews/index.json`. When a run is
   reopened, the panel also searches the timestamped Vast preview folders, so a
   finished preview stays attached to its shot after a reload.
-- **Preview:** one frame of the composite is rendered at 50% / 32 samples in
+- **Preview:** the confirmation shows the upload size when the preview uses
+  Vast. One frame of the composite is rendered at 50% / 32 samples in
   PNG by
   default. Preview can run locally (default) or on a Vast node. The preview is
   the quickest way to catch a missing view layer or a broken compositor before
   the full render. Each shot has its own **Preview frame** field; without an
   override the panel uses the configured mode (middle by default).
-- **Nodes / instances:** approved frames are excluded from the plan; frames
+- **Live frames:** every rendered frame is downloaded to
+  `03_render/.live/<run>/<node>/` as a PNG preview. The **Preview** section
+  shows a large follow-latest image and a filmstrip of incoming frames; each
+  node card shows its own latest frame. Clicking a node thumbnail opens that
+  frame in Preview and stops following the latest frame. Non-PNG finals get a
+  PNG proxy for live viewing.
+- **Dependencies:** each scan recursively follows `.blend` libraries and
+  external files (HDRIs, textures, fonts, caches, movie clips). Missing or
+  external dependencies block render starts until they are fixed. The
+  **Dependencies** section shows the exact path and owner `.blend`. A cached
+  shot list without a dependency audit must run **Audit dependencies** before
+  Start render. Each issue has a **blocking** checkbox: checked issues stop the
+  render, unchecked ones are accepted by the TD and allow it to start. **Fix
+  external dependencies (pack/unpack)** runs Blender's
+  `pack_all` and `unpack_all(USE_LOCAL)` on the owner files; the commit stays
+  manual.
+- **Nodes:** approved frames are excluded from the plan; frames
   that are not approved yet count as pending work. While runs are active, the
   section leads with the live state: runs, nodes, rendered/expected frames,
   GPU-hours, live cost and ETA, followed by the **Queued next** plan. A plan
   with zero pending frames means every selected shot is already rendering; the
   panel says so explicitly instead of showing `0 frames`. Before any instance
   is rented, the panel lists the candidate offers for the required nodes in a
-  four-column card grid (**Refresh candidates** re-queries Vast.ai). Each card
+  four-column card grid (**Refresh Vast** re-queries the balance and candidate
+  offers). Each card
   then follows its own lifecycle: candidate, creating, booting, SSH, installing,
   staging, rendering, syncing, completed, failed or destroyed. Each active card
   shows its current shot, a progress bar, rendered/expected frames, measured
@@ -94,6 +124,16 @@ every shot as a collapsible card; the right side shows the selected shot.
   any region, search again, search the other GPU profiles, or switch to local.
   **View all offers** opens the full table with every candidate and its
   per-constraint result. No limit is relaxed automatically.
+- **Fill with similar GPUs:** when the selected GPU does not have enough
+  offers, the panel reports how many nodes are missing and offers an explicit
+  opt-in fill. The selected GPU is the speed reference: **Speed priority** uses
+  the selected GPU or faster (the plan stays conservative), while **Budget
+  priority** uses the selected GPU or slower and recalculates the plan with the
+  slowest selected GPU. Every limit still applies. Budget mode can use GPUs
+  with less VRAM only after an extra confirmation and shows an out-of-memory
+  warning. If the fill still cannot reach the plan, the panel offers **Use N
+  nodes instead** and recalculates the ETA instead of silently starting with
+  fewer nodes.
 - **Scheduling:** the plan uses one instance when the measured work fits the
   target, and packs whole shots per node. A shot is only split across nodes when
   it cannot fit one instance. Each run locks only the shots it renders; other
@@ -111,6 +151,16 @@ every shot as a collapsible card; the right side shows the selected shot.
 - **Format proxies:** non-PNG final frames also write a PNG proxy in
   `.proxies/`. The in-app sequence player, frame review and preview/review
   videos use those proxies, while delivery frames keep the selected format.
+- **Preview in Nodes:** starting a preview creates a preview node card
+  immediately. Local preview uses one card; Vast preview uses the real node
+  card. Both show the current shot and global `N/total previews` progress, then
+  finish as completed/failed.
+- **Shot Inspector:** a collapsible tabbed panel with **Comments**, **Shot
+  Dependencies** and **Publish Shot**. Publish Shot generates a low-quality MP4
+  from all rendered frames (missing frames become numbered placeholders),
+  chooses the Kitsu task/status/version and publishes. Kitsu permissions are
+  authoritative; a 403 is reported. High-quality video is not generated or
+  uploaded.
 - **Preview poster:** the preview panel shows a poster with the latest still or
   the first rendered frame and a large play overlay when a rendered sequence
   exists. Without a sequence the play action is disabled; with no preview or
@@ -186,10 +236,11 @@ Frames are written in the same layout that Blender Studio Tools expects:
                 └── ...
 ```
 
-The render-review video is also written next to the frames as
-`<shot>-<first>-<last>.mp4`, so Blender Kitsu's render review can find it.
-The quick preview video lives under `.previews/` and is generated on demand,
-independently from the review videos.
+Publish Shot generates a **low-quality** MP4 from all rendered frames and
+uploads it to Kitsu. Missing frames are replaced by numbered placeholders with
+the `image-off` icon. High-quality video is not generated or uploaded; final
+quality stays in the edit/Blender file. The quick preview MP4 remains available
+from the card's **More** menu under `.previews/`.
 
 Approved frames are recorded in `.frame_state.json` next to the frames. The
 player can move a bad frame to `.frame_trash/`; a new render fills only the
@@ -210,13 +261,16 @@ changed in the panel.
 ## Rendering
 
 - **Vast.ai:** the Hub rents the on-demand instances, installs the project's
-  exact Blender, stages the production folder, renders contiguous frame chunks
-  and syncs the frames back. Every instance is destroyed in a `finally` block.
-  Only the production folder (`topography.vfs_svn`) is uploaded; briefs and the
-  shared folder are not required to render. Before the upload starts the Hub
-  reports how many files and how many bytes will be transferred, and the node
-  card shows the live upload percentage; every `rsync` excludes `.svn`,
-  `.blend1/2`, crash logs and `__pycache__`.
+  exact Blender, stages only the files needed by the node, renders contiguous
+  frame chunks and syncs the frames back. Every instance is destroyed in a
+  `finally` block. The upload contains the selected shot folders, their linked
+  assets/dependencies and nothing from other shots; briefs, storyboards, edit
+  files and the shared folder are not required to render. Before the upload
+  starts the Hub reports how many files and how many bytes will be transferred,
+  and the **Start render** confirmation lists the image files (textures/HDRIs)
+  included in the upload under **Show Details**; the node card shows the live
+  upload percentage; every `rsync` excludes
+  `.svn`, `.blend1/2`, crash logs and `__pycache__`.
   Each node is audited independently, so a failure on one node never hides the
   state of another. The node cards update live from the burst progress events.
 - When a run is partial, **Retry missing frames** renders only the frames that
@@ -253,10 +307,12 @@ The default price cap is **$0.13/h**, with a preference for Americas offers
 (US/Canada/Mexico/Brazil) and a minimum bandwidth (100 Mbps down / 50 Mbps up by
 default). The panel shows the offer's location and bandwidth. If no offer fits,
 it names the failing limits, the nearest offers, the smallest limit change that
-would match, and can search the other GPU profiles. The TD decides which limit
-to relax; nothing is changed automatically. Budget profiles (3070/3080/4070)
-use a benchmark scaled from the 3090 reference until they are benchmarked
-directly.
+would match, and can search the other GPU profiles. When there are not enough
+offers for the planned nodes, it can opt in to fill with similar GPUs using the
+selected GPU as a speed floor or ceiling. The TD decides which limit or speed
+direction to use; nothing is changed automatically. Budget profiles
+(3070/3080/4070) use a benchmark scaled from the 3090 reference until they are
+benchmarked directly.
 
 ## Scene requirements
 

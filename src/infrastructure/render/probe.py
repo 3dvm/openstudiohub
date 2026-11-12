@@ -198,6 +198,7 @@ data = {
         for image in bpy.data.images
         if image.filepath and not image.packed_file
     }),
+    "blend_paths": sorted(set(bpy.utils.blend_paths(absolute=True))),
     "output_path": str(render.filepath or ""),
     "file_format": str(render.image_settings.file_format or ""),
     "use_nodes": bool(getattr(scene, "use_nodes", False)),
@@ -245,6 +246,7 @@ class RenderProbeResult:
     output_path: str
     file_format: str
     setup: RenderSetup
+    blend_paths: tuple[str, ...] = ()
     geometry_bakes: tuple = ()
     particle_caches: tuple = ()
 
@@ -268,6 +270,7 @@ class RenderProbeResult:
             "has_camera": self.has_camera,
             "libraries": list(self.libraries),
             "images": list(self.images),
+            "blend_paths": list(self.blend_paths),
             "output_path": self.output_path,
             "file_format": self.file_format,
             "use_nodes": setup.use_nodes,
@@ -391,6 +394,9 @@ class RenderProbeResult:
             output_path=str(data.get("output_path") or ""),
             file_format=str(data.get("file_format") or ""),
             setup=setup,
+            blend_paths=tuple(
+                str(item) for item in data.get("blend_paths") or ()
+            ),
             geometry_bakes=tuple(
                 GeometryBakeInfo(
                     object_name=str(item.get("object_name") or ""),

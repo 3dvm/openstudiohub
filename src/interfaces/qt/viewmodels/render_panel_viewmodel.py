@@ -24,13 +24,22 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 
 from src.application.services.launch_service import LaunchService
-from src.application.services.render_service import RenderService
+from src.application.services.render_service import RenderService, next_version
 from src.application.services.task_file_sync_service import TaskFileSyncService
+from src.domain.render.capacity import (
+    GPU_PROFILES,
+    slowest_gpu_profile,
+)
 from src.domain.render.bakes import (
     bake_geometry_nodes_effective as _bake_effective,
     min_cpu_ram_gb_effective as _min_ram_effective,
 )
-from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
+from src.domain.render.models import (
+    DependencyIssue,
+    RenderPlan,
+    RenderSettings,
+    RenderShot,
+)
 from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.staging import bake_cache_names
 from src.infrastructure.render.status import RenderStatusStore
@@ -42,7 +51,11 @@ from src.interfaces.qt.viewmodels.vcs_credential_gate import (
     vcs_requires_credentials,
 )
 from src.interfaces.qt.workers.render_workers import (
+    DependencyFixWorker,
     KitsuStatusesWorker,
+    KitsuTasksWorker,
+    PublishShotWorker,
+    RenderDependencyAuditWorker,
     RenderAlternativeOffersWorker,
     KitsuUploadWorker,
     LocalRenderWorker,
@@ -72,6 +85,9 @@ class NodeLaunchConfig:
     task_type: str = "render"
     bake_geometry_nodes: bool = False
     min_cpu_ram_gb: float = 0.0
+    fill_similar_gpus: bool = False
+    similar_gpu_mode: str = "floor"
+    fill_allow_less_vram: bool = False
 
 
 @dataclass
@@ -106,6 +122,7 @@ class RenderNodeCardModel:
     run_label: str = ""
     assignment: tuple[tuple[str, tuple[int, ...]], ...] = ()
     launch: NodeLaunchConfig | None = None
+    live_frame_path: str = ""
 
     @property
     def key(self) -> str:
@@ -186,6 +203,9 @@ class ShotReviewModel:
     relative_path: str
     task_type: str = ""
     particle_state: str = ""
+    setup_html: str = ""
+    dependency_count: int = 0
+    dependency_blocking_count: int = 0
 
 
 SHOT_STATUS_TOOLTIPS = {
@@ -232,6 +252,7 @@ _STAGE_TO_STATUS = {
     "install": "installing",
     "setup": "installing",
     "stage": "staging",
+    "verify": "verifying",
     "render": "rendering",
     "frame": "rendering",
     "sync": "syncing",
@@ -243,6 +264,10 @@ _STAGE_TO_STATUS = {
 
 class RenderPanelViewModel(BaseViewModel):
     shots_ready = Signal(list, object, object, float, list)
+    shots_cache_loaded = Signal(bool)
+    vast_balance_ready = Signal(float)
+    dependency_fix_finished = Signal(bool, str)
+    dependencies_audited = Signal(bool)
     offer_diagnostics_ready = Signal(object)
     offer_alternatives_ready = Signal(list)
     shot_reviews_ready = Signal(list)
@@ -266,6 +291,7 @@ class RenderPanelViewModel(BaseViewModel):
     benchmark_running = Signal(bool)
 
     burst_progress = Signal(object)
+    live_frame_ready = Signal(str, int, str, int)  # shot, frame, path, node
     local_render_progress = Signal(str, int, int, float)
     render_finished = Signal(object)
     render_error = Signal(str)
@@ -277,6 +303,8 @@ class RenderPanelViewModel(BaseViewModel):
 
     kitsu_statuses_ready = Signal(list)
     kitsu_status_error = Signal(str)
+    kitsu_tasks_ready = Signal(list)
+    publish_finished = Signal(bool, str, str)
     kitsu_upload_finished = Signal(bool, str)
     shot_launch_finished = Signal(str, bool, str)  # (relative path, ok, message)
 
@@ -310,6 +338,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.local_render_progress.connect(self._on_local_progress_status)
         self.scan_error.connect(self._on_scan_error)
         self.preview_error.connect(self._on_preview_error)
+        self.preview_progress.connect(self._on_preview_progress_status)
         self.render_error.connect(self._on_render_error)
 
         self.project_name = ""
@@ -323,6 +352,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.preview_paths: dict[str, Path] = {}
         self.video_paths: dict[str, Path] = {}
         self.kitsu_statuses: list[dict] = []
+        self.kitsu_tasks: list[dict] = []
         self.read_only = False
         self.status_store: RenderStatusStore | None = None
         self.audit = RenderRunAuditLogger()
@@ -338,6 +368,8 @@ class RenderPanelViewModel(BaseViewModel):
         self._finished_cards: list[RenderNodeCardModel] = []
         self._preview_cards: list[RenderNodeCardModel] = []
         self._preview_run_id = ""
+        self._preview_rendered = 0
+        self._preview_total = 0
         self._benchmark_cards: list[RenderNodeCardModel] = []
         self._benchmark_run_id = ""
         self._relaunch_active: set[str] = set()
@@ -349,6 +381,8 @@ class RenderPanelViewModel(BaseViewModel):
         self._failed_shots: set[str] = set()
         self.last_preview_failed: list[str] = []
         self.last_preview_report = None
+        self._shots_from_cache = False
+        self._dependency_blocking: dict[tuple[str, str, str], bool] = {}
 
     # ------------------------------------------------------------------
     # Project / settings
@@ -384,6 +418,8 @@ class RenderPanelViewModel(BaseViewModel):
         self._finished_cards = []
         self._preview_cards = []
         self._preview_run_id = ""
+        self._preview_rendered = 0
+        self._preview_total = 0
         self._benchmark_cards = []
         self._benchmark_run_id = ""
         self._relaunch_active = set()
@@ -391,6 +427,7 @@ class RenderPanelViewModel(BaseViewModel):
         self._locked_shots = set()
         self._failed_shots = set()
         self._node_frame_seconds = {}
+        self._dependency_blocking = {}
         self.node_cards_ready.emit([])
         self.shot_reviews_ready.emit([])
         self.render_runs_changed.emit(0)
@@ -400,8 +437,11 @@ class RenderPanelViewModel(BaseViewModel):
             self.settings = RenderSettings()
         if not read_only:
             self._write_status(status="idle", message="Render panel loaded.")
-            self._load_cached_shots()
-            self.scan()
+            cached = self._load_cached_shots()
+            if cached is None:
+                self.report_status(
+                    "No cached shots. Press Re-scan to scan the project.", "white"
+                )
         else:
             self.report_status("Render panel loaded in read-only mode.", "white")
 
@@ -418,6 +458,8 @@ class RenderPanelViewModel(BaseViewModel):
         if not shots:
             return None
         self.shots = list(shots)
+        self._shots_from_cache = True
+        self.shots_cache_loaded.emit(True)
         available = {shot.relative_path for shot in self.shots}
         selected = tuple(
             path for path in self.settings.selected_shots if path in available
@@ -488,6 +530,10 @@ class RenderPanelViewModel(BaseViewModel):
                 preferred_region=settings.preferred_region,
                 min_inet_down_mbps=settings.min_inet_down_mbps,
                 min_inet_up_mbps=settings.min_inet_up_mbps,
+                min_cpu_ram_gb=settings.min_cpu_ram_gb,
+                fill_similar_gpus=settings.fill_similar_gpus,
+                similar_gpu_mode=settings.similar_gpu_mode,
+                fill_allow_less_vram=settings.fill_allow_less_vram,
             )
         self.settings = replace(self.settings, **updates)
         self._save_settings()
@@ -525,6 +571,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.balance = float(balance or 0.0)
         self.offer_diagnostics = None
         self.alternate_offers = []
+        self.vast_balance_ready.emit(self.balance)
         self.recalculate()
         if self.offer is None:
             self.report_status(
@@ -615,6 +662,158 @@ class RenderPanelViewModel(BaseViewModel):
                 "No other GPU profile matches the current limits.", "red"
             )
 
+    def staging_estimate(self, shots: list[RenderShot] | None = None):
+        """Return the upload the next Vast node would receive."""
+        if self.project_root is None:
+            return None
+        targets = list(
+            shots
+            if shots is not None
+            else (list(self.plan.shots) if self.plan is not None else ())
+        )
+        exclude_names = (
+            bake_cache_names(targets)
+            if self.bake_geometry_nodes_effective(targets)
+            else ()
+        )
+        try:
+            return self.service.staging_estimate(
+                self.project_root,
+                exclude_names=exclude_names,
+                shots=targets,
+            )
+        except Exception:  # noqa: BLE001 - the dialog falls back to no estimate
+            return None
+
+    def audit_dependencies(self) -> bool:
+        if self.project_root is None or self.read_only:
+            return False
+        if self.workers.is_running("dependency_audit"):
+            return False
+        targets = self.selected_shots
+        if not targets:
+            return False
+        worker = RenderDependencyAuditWorker(
+            self.service, self.project_root, targets
+        )
+        worker.audited.connect(self._on_dependencies_audited)
+        worker.error.connect(self._on_dependency_audit_error)
+        self.report_status("Auditing dependencies recursively...", "yellow")
+        return self.workers.start("dependency_audit", worker, critical=False)
+
+    def _on_dependencies_audited(self, audited: list) -> None:
+        by_path = {shot.relative_path: shot for shot in audited or ()}
+        self.shots = [
+            by_path.get(shot.relative_path, shot) for shot in self.shots
+        ]
+        self._apply_dependency_preferences()
+        self.recalculate()
+        self._emit_shot_reviews()
+        self.dependencies_audited.emit(True)
+        issues = self.dependency_issues()
+        self.report_status(
+            f"Dependency audit complete: {len(issues)} issue(s).",
+            "green" if not issues else "red",
+        )
+
+    def _on_dependency_audit_error(self, message: str) -> None:
+        self.dependencies_audited.emit(False)
+        self.report_status(f"Dependency audit failed: {message}", "red")
+
+    def dependency_issues(
+        self, shots: list[RenderShot] | None = None
+    ) -> list[DependencyIssue]:
+        targets = list(
+            shots
+            if shots is not None
+            else (
+                list(self.plan.shots)
+                if self.plan is not None
+                else list(self.selected_shots)
+            )
+        )
+        seen: set[tuple[str, str, str]] = set()
+        issues: list[DependencyIssue] = []
+        for shot in targets:
+            for issue in getattr(shot, "dependency_issues", ()) or ():
+                key = (issue.path, issue.status, issue.owner)
+                if key in seen:
+                    continue
+                seen.add(key)
+                issues.append(issue)
+        return issues
+
+    def blocking_dependency_issues(
+        self, shots: list[RenderShot] | None = None
+    ) -> list[DependencyIssue]:
+        return [
+            issue for issue in self.dependency_issues(shots) if issue.blocking
+        ]
+
+    def set_dependency_blocking(
+        self, issue: DependencyIssue, blocking: bool
+    ) -> None:
+        key = (issue.path, issue.status, issue.owner)
+        self._dependency_blocking[key] = bool(blocking)
+        self._apply_dependency_preferences()
+        self.dependencies_audited.emit(True)
+
+    def _apply_dependency_preferences(self) -> None:
+        updated: list[RenderShot] = []
+        for shot in self.shots:
+            issues = tuple(
+                replace(
+                    issue,
+                    blocking=self._dependency_blocking.get(
+                        (issue.path, issue.status, issue.owner),
+                        issue.blocking,
+                    ),
+                )
+                for issue in getattr(shot, "dependency_issues", ()) or ()
+            )
+            updated.append(replace(shot, dependency_issues=issues))
+        self.shots = updated
+        by_path = {shot.relative_path: shot for shot in updated}
+        if self.plan is not None:
+            plan_shots = []
+            for shot in self.plan.shots:
+                source = by_path.get(shot.relative_path)
+                if source is not None:
+                    shot = replace(
+                        shot, dependency_issues=source.dependency_issues
+                    )
+                plan_shots.append(shot)
+            self.plan = replace(self.plan, shots=tuple(plan_shots))
+
+    def fix_dependencies(self) -> bool:
+        if self.project_root is None or self.read_only:
+            return False
+        if self.workers.is_running("dependency_fix"):
+            return False
+        issues = self.dependency_issues()
+        owners = sorted(
+            {
+                issue.owner
+                for issue in issues
+                if issue.owner and issue.status in ("external", "outside_production")
+            }
+        )
+        if not owners:
+            self.report_status("No external dependency owners to fix.", "yellow")
+            return False
+        worker = DependencyFixWorker(
+            self.service, self.project_root, owners
+        )
+        worker.fixed.connect(self._on_dependencies_fixed)
+        self.report_status("Packing and unpacking external dependencies...", "yellow")
+        return self.workers.start("dependency_fix", worker, critical=True)
+
+    def _on_dependencies_fixed(self, ok: bool, message: str) -> None:
+        self.report_status(message, "green" if ok else "red")
+        self.dependency_fix_finished.emit(ok, message)
+        if ok:
+            self.scan(force=False)
+
     def preview_frame_for(self, shot: RenderShot) -> int:
         return self.service.preview_frame(shot, self.settings)
 
@@ -662,7 +861,7 @@ class RenderPanelViewModel(BaseViewModel):
             force=force,
         )
         worker.scan_progress.connect(self.scan_progress)
-        worker.shots_ready.connect(self._on_shots_ready)
+        worker.shots_ready.connect(self._on_scan_shots_ready)
         worker.scan_warning.connect(self._on_scan_warning)
         worker.offer_blocked.connect(self._on_offer_blocked)
         worker.error.connect(self.scan_error)
@@ -678,6 +877,36 @@ class RenderPanelViewModel(BaseViewModel):
     def _on_scan_warning(self, message: str) -> None:
         self.report_status(message, "yellow")
 
+    def _apply_dependency_preferences_from(self, shots: list) -> None:
+        prepared = []
+        for shot in shots:
+            issues = tuple(
+                replace(
+                    issue,
+                    blocking=self._dependency_blocking.get(
+                        (issue.path, issue.status, issue.owner),
+                        issue.blocking,
+                    ),
+                )
+                for issue in getattr(shot, "dependency_issues", ()) or ()
+            )
+            prepared.append(replace(shot, dependency_issues=issues))
+        self.shots = prepared
+
+    def _on_scan_shots_ready(
+        self, shots: list, plan: RenderPlan, offer, balance: float, candidates: list
+    ) -> None:
+        self._shots_from_cache = False
+        self._apply_dependency_preferences_from(shots)
+        self.shots_cache_loaded.emit(False)
+        self._on_shots_ready(
+            self.shots or shots,
+            plan,
+            self.offer,
+            self.balance,
+            self.candidate_offers,
+        )
+
     def _on_shots_ready(
         self, shots: list, plan: RenderPlan, offer, balance: float, candidates: list
     ) -> None:
@@ -685,6 +914,7 @@ class RenderPanelViewModel(BaseViewModel):
         self.shots = list(shots)
         self.offer = offer
         self.balance = balance
+        self.vast_balance_ready.emit(float(balance or 0.0))
         self.candidate_offers = list(candidates or ())
         if offer is not None or not (
             self.settings.render_backend == "vast"
@@ -753,6 +983,12 @@ class RenderPanelViewModel(BaseViewModel):
         quality = shot.quality
         status = self._shot_status(shot, rendered, approved, expected)
         warnings = list(shot.warnings)
+        dependency_count = len(getattr(shot, "dependency_issues", ()) or ())
+        dependency_blocking_count = sum(
+            1
+            for issue in getattr(shot, "dependency_issues", ()) or ()
+            if issue.blocking
+        )
         setup = shot.setup
         if setup is not None:
             warnings.extend(setup.warnings or ())
@@ -784,6 +1020,36 @@ class RenderPanelViewModel(BaseViewModel):
             relative_path=shot.relative_path,
             task_type=shot.task_type,
             particle_state=self._particle_state(shot),
+            setup_html=self._setup_html(shot),
+            dependency_count=dependency_count,
+            dependency_blocking_count=dependency_blocking_count,
+        )
+
+    def _setup_html(self, shot: RenderShot) -> str:
+        setup = shot.setup
+        if setup is None:
+            return "Render setup: not available."
+        layers = ", ".join(
+            f"{layer.name}{'✓' if layer.connected_to_output else '⚠'}"
+            for layer in setup.view_layers
+        ) or "-"
+        comp = "on" if setup.is_compositing_ready else "check"
+        outputs = (
+            ", ".join(item.base_path for item in setup.file_outputs)
+            if setup.file_outputs
+            else "composite only"
+        )
+        return (
+            f"<b>Compositing:</b> {comp} ({setup.compositor_name or '-'}) · "
+            f"<b>View layers:</b> {layers}<br>"
+            f"<b>Output:</b> {setup.output_format or '-'} "
+            f"{setup.color_mode or '-'} "
+            f"{setup.color_depth + '-bit' if setup.color_depth else ''} · "
+            f"<b>Color:</b> {setup.view_transform or '-'}<br>"
+            f"<b>Camera:</b> {setup.camera or '-'} · "
+            f"<b>FPS:</b> {setup.fps:.2f} · "
+            f"<b>Range:</b> {shot.frame_start}–{shot.frame_end}<br>"
+            f"<b>Files:</b> {outputs}"
         )
 
     @staticmethod
@@ -985,9 +1251,48 @@ class RenderPanelViewModel(BaseViewModel):
         self.candidate_offers = list(candidates or [])
         self.offer_diagnostics = None
         self.alternate_offers = []
-        if self.plan is not None:
-            self._build_node_cards(self.plan)
+        self.recalculate()
         self.report_status("Candidate offers refreshed.", "green")
+
+    def fill_with_similar_profiles(
+        self,
+        mode: str = "floor",
+        *,
+        allow_less_vram: bool = False,
+    ) -> bool:
+        """Enable fill mode and refresh the candidate offers explicitly."""
+        if self.project_root is None or self.read_only:
+            return False
+        direction = (mode or "floor").strip().lower()
+        if direction not in ("floor", "ceiling"):
+            direction = "floor"
+        self.settings = replace(
+            self.settings,
+            fill_similar_gpus=True,
+            similar_gpu_mode=direction,
+            fill_allow_less_vram=bool(allow_less_vram),
+        )
+        self._save_settings()
+        self.recalculate()
+        started = self.refresh_candidates()
+        if not started:
+            self._refresh_vast_offer()
+        return True
+
+    def cap_plan_to_available(self) -> bool:
+        """Cap the plan at the number of offers currently available."""
+        available = len(self.candidate_offers or ())
+        if available <= 0 or self.project_root is None or self.read_only:
+            return False
+        self.settings = replace(self.settings, max_nodes=available)
+        self._save_settings()
+        self.recalculate()
+        self.report_status(
+            f"Plan capped at {available} node(s); the deadline may require "
+            "a longer target.",
+            "yellow",
+        )
+        return True
 
     def _ensure_node_card(self, run_id: str, node: int) -> RenderNodeCardModel:
         run_id = str(run_id or "")
@@ -1051,6 +1356,9 @@ class RenderPanelViewModel(BaseViewModel):
             task_type=settings.task_type,
             bake_geometry_nodes=bool(settings.bake_geometry_nodes),
             min_cpu_ram_gb=float(settings.min_cpu_ram_gb or 0.0),
+            fill_similar_gpus=bool(settings.fill_similar_gpus),
+            similar_gpu_mode=str(settings.similar_gpu_mode or "floor"),
+            fill_allow_less_vram=bool(settings.fill_allow_less_vram),
         )
 
     def _create_run_cards(self, run: RenderRunState) -> None:
@@ -1099,17 +1407,130 @@ class RenderPanelViewModel(BaseViewModel):
             shot for shot in self.selected_shots if not self.is_shot_locked(shot)
         ]
 
+    @staticmethod
+    def _offer_profile_key(offer) -> str:
+        key = str(getattr(offer, "gpu_profile", "") or "")
+        if key in GPU_PROFILES:
+            return key
+        name = str(getattr(offer, "gpu_name", "") or "").strip().lower()
+        for profile_key, profile in GPU_PROFILES.items():
+            if name and name == profile.vast_gpu_name.strip().lower():
+                return profile_key
+        return ""
+
+    def effective_gpu_profile(self) -> str:
+        """Return the speed reference used by the current offer mix."""
+        base = self.settings.gpu_profile
+        if (
+            self.settings.render_backend != "vast"
+            or not self.settings.fill_similar_gpus
+            or self.settings.similar_gpu_mode != "ceiling"
+            or not self.candidate_offers
+        ):
+            return base
+        profiles = [
+            self._offer_profile_key(offer) for offer in self.candidate_offers
+        ]
+        slowest = slowest_gpu_profile(profiles)
+        return slowest or base
+
+    def _with_offer_mix(self, plan: RenderPlan) -> RenderPlan:
+        """Apply per-node prices and warnings to a mixed offer selection."""
+        if self.settings.render_backend != "vast":
+            return plan
+        offers = list(self.candidate_offers or ())
+        required = int(plan.required_nodes or 0)
+        selected = offers[:required] if required > 0 else offers
+        base = GPU_PROFILES.get(self.settings.gpu_profile)
+        warnings = list(plan.warnings)
+        if base is not None and selected:
+            fallback = [
+                offer
+                for offer in selected
+                if self._offer_profile_key(offer) not in ("", base.key)
+            ]
+            if fallback:
+                counts: dict[str, int] = {}
+                for offer in fallback:
+                    label = str(
+                        getattr(offer, "gpu_label", "")
+                        or getattr(offer, "gpu_name", "")
+                        or "similar GPU"
+                    )
+                    counts[label] = counts.get(label, 0) + 1
+                detail = ", ".join(
+                    f"{count}× {label}" for label, count in counts.items()
+                )
+                if self.settings.similar_gpu_mode == "ceiling":
+                    warnings.append(
+                        f"{len(fallback)} node(s) filled with same or slower "
+                        f"GPUs: {detail}. The plan uses the slowest selected GPU."
+                    )
+                else:
+                    warnings.append(
+                        f"{len(fallback)} node(s) filled with same or faster "
+                        f"GPUs: {detail}. Actual wall time may improve."
+                    )
+            less_vram = [
+                offer
+                for offer in selected
+                if float(getattr(offer, "gpu_ram_gb", 0.0) or 0.0) < base.vram_gb
+            ]
+            if less_vram:
+                warnings.append(
+                    f"{len(less_vram)} selected node(s) have less VRAM than "
+                    f"{base.label}; out-of-memory risk is higher."
+                )
+        if required > 0 and len(offers) < required:
+            message = (
+                f"Only {len(offers)} of {required} node offer(s) are available. "
+                "Fill with similar GPUs or cap the plan."
+            )
+            if not any(
+                "node offer(s) are available" in item
+                or "candidate offer(s) for" in item
+                for item in warnings
+            ):
+                warnings.append(message)
+            return replace(plan, warnings=tuple(warnings))
+        if required > 0 and offers:
+            wall = float(plan.estimated_wall_seconds or 0.0)
+            cost = sum(
+                float(getattr(offer, "price_per_hour", 0.0) or 0.0)
+                * wall
+                / 3600.0
+                for offer in offers[:required]
+            )
+            warnings = [
+                warning
+                for warning in warnings
+                if not warning.startswith("Estimated cost (")
+            ]
+            if self.settings.budget > 0 and cost > self.settings.budget:
+                warnings.append(
+                    f"Estimated cost ({cost:.2f}) exceeds the budget "
+                    f"({self.settings.budget:.2f})."
+                )
+            plan = replace(plan, estimated_cost=cost)
+        return replace(plan, warnings=tuple(warnings))
+
     def _plan_for_shots(self, shots: list[RenderShot]) -> RenderPlan:
         pending = self.service.pending_shots(
             self.project_root, shots, task_type=self.settings.task_type
         )
         price = self.offer.price_per_hour if self.offer is not None else 0.0
+        effective = self.effective_gpu_profile()
         plan = self._with_offer_warning(
             self.service.adjust_plan_for_backend(
                 self.service.plan(
                     self.project_root,
                     target_hours=self.settings.target_hours,
-                    gpu_profile=self.settings.gpu_profile,
+                    gpu_profile=effective,
+                    measured_gpu_profile=(
+                        self.settings.gpu_profile
+                        if effective != self.settings.gpu_profile
+                        else ""
+                    ),
                     quality_override=self.settings.final_quality,
                     price_per_hour=price,
                     max_nodes=self.settings.max_nodes,
@@ -1120,6 +1541,7 @@ class RenderPanelViewModel(BaseViewModel):
                 self.settings.local_speed_factor,
             )
         )
+        plan = self._with_offer_mix(plan)
         warnings = list(plan.warnings)
         bake_effective = self.bake_geometry_nodes_effective(pending)
         gn_shots = [shot for shot in pending if shot.geometry_bakes]
@@ -1250,11 +1672,34 @@ class RenderPanelViewModel(BaseViewModel):
 
         self._active_run_id = uuid.uuid4().hex[:12]
         self._preview_run_id = self._active_run_id
-        self._preview_cards = []
-        self._sync_node_cards()
+        self._preview_rendered = 0
+        self._preview_total = len(targets)
         backend = (
             "vast" if self.settings.preview_backend == "vast" else "local"
         )
+        preview_offer = self.offer if backend == "vast" else None
+        self._preview_cards = [
+            RenderNodeCardModel(
+                node=0,
+                status="queued",
+                message="Preparing preview...",
+                run_id=self._preview_run_id,
+                run_label="preview",
+                gpu_name=(
+                    str(getattr(preview_offer, "gpu_name", "") or "")
+                    if backend == "vast"
+                    else "Local workstation"
+                ),
+                region=str(getattr(preview_offer, "geolocation", "") or ""),
+                price_per_hour=float(
+                    getattr(preview_offer, "price_per_hour", 0.0) or 0.0
+                ),
+                offer_id=int(getattr(preview_offer, "id", 0) or 0),
+                frames_expected=len(targets),
+                launch=self._launch_config(self.settings),
+            )
+        ]
+        self._sync_node_cards()
         self.audit.log(
             "run_start",
             run_id=self._active_run_id,
@@ -1299,6 +1744,12 @@ class RenderPanelViewModel(BaseViewModel):
     def _on_preview_ready(self, shot_name: str, image_path: str) -> None:
         path = Path(image_path)
         self.preview_paths[shot_name] = path
+        self._preview_rendered += 1
+        self._update_preview_card(
+            status="rendering",
+            message=f"Preview ready: {shot_name}",
+            current_shot=shot_name,
+        )
         self._save_preview_index()
         self._write_status(
             preview=str(path),
@@ -1307,6 +1758,38 @@ class RenderPanelViewModel(BaseViewModel):
             },
         )
         self.preview_ready.emit(shot_name, str(path))
+
+    def _on_preview_progress_status(
+        self, shot_name: str, done: int, total: int, seconds: float
+    ) -> None:
+        self._update_preview_card(
+            status="rendering",
+            message=f"{shot_name}: preview frame {done}/{total}",
+            current_shot=shot_name,
+            seconds_per_frame=float(seconds or 0.0),
+            eta_seconds=float(seconds or 0.0),
+        )
+        self._write_status(
+            status="previewing",
+            message=f"{shot_name}: preview frame {done}/{total}",
+            frames_done=self._preview_rendered,
+            frames_expected=self._preview_total,
+        )
+
+    def _update_preview_card(self, **updates) -> None:
+        if not self._preview_cards:
+            return
+        card = self._preview_cards[0]
+        for key, value in updates.items():
+            setattr(card, key, value)
+        card.frames_expected = max(1, self._preview_total)
+        card.frames_done = min(self._preview_rendered, card.frames_expected)
+        card.progress_percent = (
+            card.frames_done * 100.0 / card.frames_expected
+            if card.frames_expected
+            else 0.0
+        )
+        self.node_card_updated.emit(card.key)
 
     def _on_previews_finished(
         self, rendered: int, total: int, failed: list, report
@@ -1321,6 +1804,14 @@ class RenderPanelViewModel(BaseViewModel):
             card.final = True
             card.eta_seconds = 0.0
             card.status = "completed" if not failed else "failed"
+            card.frames_expected = max(1, total)
+            card.frames_done = rendered
+            card.progress_percent = (
+                rendered * 100.0 / card.frames_expected
+                if card.frames_expected
+                else 0.0
+            )
+            card.message = f"Previews finished ({rendered}/{total})"
         self._preview_run_id = ""
         self._sync_node_cards()
         self.last_preview_failed = list(failed or [])
@@ -1702,6 +2193,7 @@ class RenderPanelViewModel(BaseViewModel):
             exclude_names=(
                 bake_cache_names(shots) if bake_geometry_nodes else ()
             ),
+            shots=shots,
         )
         return RelaunchPlan(
             shots=tuple(shots),
@@ -1711,6 +2203,46 @@ class RenderPanelViewModel(BaseViewModel):
             bake_geometry_nodes=bake_geometry_nodes,
         )
 
+    def clear_queued_relaunch(
+        self, card: RenderNodeCardModel | None, *, quiet: bool = False
+    ) -> bool:
+        """Remove a relaunch run that never reached its worker."""
+        if card is None:
+            return False
+        run = next(
+            (
+                item
+                for item in self._runs.values()
+                if item.relaunch_key == card.key
+            ),
+            None,
+        )
+        if run is None:
+            self._relaunch_active.discard(card.key)
+            return False
+        worker_key = f"render_burst:{run.run_id}"
+        if self.workers.is_running(worker_key):
+            if not quiet:
+                self.render_error.emit(
+                    "The relaunch worker is still running; cancel it first."
+                )
+            return False
+        message = "Queued relaunch cleared."
+        self._runs.pop(run.run_id, None)
+        self._finish_audit(run.run_id, ok=False, message=message)
+        for item in run.cards.values():
+            item.status = "failed"
+            item.message = message
+            item.final = True
+            item.eta_seconds = 0.0
+        self._release_run(run, ok=False, rendered=0)
+        self.report_status(message, "yellow")
+        if not quiet:
+            self.render_error.emit(
+                f"Node {card.node + 1}: {message} You can relaunch it again."
+            )
+        return True
+
     def relaunch_node(
         self,
         card: RenderNodeCardModel | None,
@@ -1718,11 +2250,24 @@ class RenderPanelViewModel(BaseViewModel):
     ) -> bool:
         if self.project_root is None or self.read_only or card is None:
             return False
+        if card.key in self._relaunch_active:
+            stale = next(
+                (
+                    item
+                    for item in self._runs.values()
+                    if item.relaunch_key == card.key
+                ),
+                None,
+            )
+            if stale is not None and not self.workers.is_running(
+                f"render_burst:{stale.run_id}"
+            ):
+                self.clear_queued_relaunch(card, quiet=True)
+            else:
+                self.render_error.emit("This node is already being relaunched.")
+                return False
         if card.status != "failed" or not card.assignment:
             self.render_error.emit("This node has no failed assignment to relaunch.")
-            return False
-        if card.key in self._relaunch_active:
-            self.render_error.emit("This node is already being relaunched.")
             return False
         relaunch = relaunch or self.relaunch_plan(card)
         if relaunch is None or not relaunch.plan.shots:
@@ -1758,7 +2303,8 @@ class RenderPanelViewModel(BaseViewModel):
             retry_card.assignment = card.assignment
             retry_card.frames_expected = int(relaunch.plan.total_frames)
             retry_card.message = (
-                f"Relaunching Node {card.node + 1} with a new offer"
+                f"Searching a new offer and preparing the upload for "
+                f"Node {card.node + 1}…"
             )
         self.audit.log(
             "run_start",
@@ -1772,33 +2318,50 @@ class RenderPanelViewModel(BaseViewModel):
             bake_geometry_nodes=relaunch.bake_geometry_nodes,
         )
         self._relaunch_active.add(card.key)
-        self._register_run(run, clear_finished=False)
-        worker = RenderBurstWorker(
-            self.service,
-            self.project_root,
-            relaunch.plan,
-            max_price_per_hour=launch.max_price_per_hour,
-            preferred_region=launch.preferred_region,
-            min_inet_down_mbps=launch.min_inet_down_mbps,
-            min_inet_up_mbps=launch.min_inet_up_mbps,
-            audit=self.audit,
-            run_id=run_id,
-            skip_existing=True,
-            bake_geometry_nodes=relaunch.bake_geometry_nodes,
-            min_cpu_ram_gb=relaunch.launch.min_cpu_ram_gb,
-            node_indices=[int(card.node)],
-        )
-        worker.burst_progress.connect(self.burst_progress)
-        worker.report_ready.connect(self._handle_burst_finished)
-        worker.error.connect(
-            lambda message, rid=run_id: self._on_run_error(rid, message)
-        )
-        self.report_status(
-            f"Relaunching Node {card.node + 1} with a new offer "
-            f"({relaunch.plan.total_frames} frame(s))...",
-            "yellow",
-        )
-        return self.workers.start(f"render_burst:{run_id}", worker, critical=True)
+        try:
+            self._register_run(run, clear_finished=False)
+            worker = RenderBurstWorker(
+                self.service,
+                self.project_root,
+                relaunch.plan,
+                max_price_per_hour=launch.max_price_per_hour,
+                preferred_region=launch.preferred_region,
+                min_inet_down_mbps=launch.min_inet_down_mbps,
+                min_inet_up_mbps=launch.min_inet_up_mbps,
+                audit=self.audit,
+                run_id=run_id,
+                skip_existing=True,
+                bake_geometry_nodes=relaunch.bake_geometry_nodes,
+                min_cpu_ram_gb=relaunch.launch.min_cpu_ram_gb,
+                node_indices=[int(card.node)],
+                fill_similar_gpus=relaunch.launch.fill_similar_gpus,
+                similar_gpu_mode=relaunch.launch.similar_gpu_mode,
+                fill_allow_less_vram=relaunch.launch.fill_allow_less_vram,
+                gpu_profile=relaunch.launch.gpu_profile,
+            )
+            worker.burst_progress.connect(self.burst_progress)
+            worker.report_ready.connect(self._handle_burst_finished)
+            worker.error.connect(
+                lambda message, rid=run_id: self._on_run_error(rid, message)
+            )
+            self.report_status(
+                f"Relaunching Node {card.node + 1} with a new offer "
+                f"({relaunch.plan.total_frames} frame(s))...",
+                "yellow",
+            )
+            started = self.workers.start(
+                f"render_burst:{run_id}", worker, critical=True
+            )
+            if not started:
+                raise RuntimeError("Could not start the relaunch worker.")
+            return True
+        except Exception as error:  # noqa: BLE001
+            self._relaunch_active.discard(card.key)
+            self._on_run_error(
+                run_id,
+                f"Relaunch could not start: {error}",
+            )
+            return False
 
     # ------------------------------------------------------------------
     # Render
@@ -1826,6 +2389,17 @@ class RenderPanelViewModel(BaseViewModel):
         if self.settings.render_backend == "vast" and self.offer is None:
             self.render_error.emit(
                 "No Vast.ai offer within the price cap; raise the max price or use local."
+            )
+            return False
+        if (
+            self.settings.render_backend == "vast"
+            and self.candidate_offers
+            and len(self.candidate_offers) < int(plan.required_nodes or 0)
+        ):
+            self.render_error.emit(
+                f"Only {len(self.candidate_offers)} of "
+                f"{plan.required_nodes} node offers are available. "
+                "Fill with similar GPUs, refresh the offers, or cap the plan."
             )
             return False
         if self.workers.is_running("render_preview"):
@@ -1913,6 +2487,10 @@ class RenderPanelViewModel(BaseViewModel):
             skip_existing=retry,
             bake_geometry_nodes=self.bake_geometry_nodes_effective(list(plan.shots)),
             min_cpu_ram_gb=self.min_cpu_ram_gb_effective(list(plan.shots)),
+            fill_similar_gpus=self.settings.fill_similar_gpus,
+            similar_gpu_mode=self.settings.similar_gpu_mode,
+            fill_allow_less_vram=self.settings.fill_allow_less_vram,
+            gpu_profile=self.settings.gpu_profile,
         )
         worker.burst_progress.connect(self.burst_progress)
         worker.report_ready.connect(self._handle_burst_finished)
@@ -2585,6 +3163,81 @@ class RenderPanelViewModel(BaseViewModel):
     # ------------------------------------------------------------------
     # Kitsu
     # ------------------------------------------------------------------
+    def load_kitsu_tasks(self) -> bool:
+        if self.production_service is None or not self.project_id:
+            return False
+        if self.workers.is_running("kitsu_tasks"):
+            return False
+        worker = KitsuTasksWorker(self.production_service, self.project_id)
+        worker.tasks_ready.connect(self._on_kitsu_tasks)
+        worker.error.connect(self.kitsu_status_error)
+        return self.workers.start("kitsu_tasks", worker)
+
+    def _on_kitsu_tasks(self, tasks: list) -> None:
+        self.kitsu_tasks = list(tasks or ())
+        self.kitsu_tasks_ready.emit(self.kitsu_tasks)
+
+    def rendered_frame_numbers(self, shot: RenderShot) -> list[int]:
+        return self._rendered_frames(shot)
+
+    def suggested_publish_version(self, shot: RenderShot) -> str:
+        if self.project_root is None:
+            return "v001"
+        folder = self.service.kitsu_review_dir(
+            self.project_root,
+            shot,
+            self.settings.video_task_type or self.settings.task_type,
+        )
+        return next_version(
+            folder,
+            f"{shot.name}-{self.settings.video_task_type or self.settings.task_type}",
+        )
+
+    def publish_shot(
+        self,
+        shot: RenderShot,
+        *,
+        task_id: str,
+        status: dict,
+        comment: str,
+        version: str,
+        set_thumbnail: bool = False,
+    ) -> bool:
+        if (
+            self.project_root is None
+            or self.production_service is None
+            or self.read_only
+        ):
+            return False
+        if self.workers.is_running("publish_shot"):
+            return False
+        frames = self.rendered_frame_numbers(shot)
+        if not frames:
+            self.report_status("No rendered frames to publish.", "red")
+            return False
+        worker = PublishShotWorker(
+            self.service,
+            self.production_service,
+            self.project_id,
+            self.project_root,
+            shot,
+            self.settings,
+            task_id=task_id,
+            task_status=status,
+            comment=comment,
+            version=version,
+            first_frame=min(frames),
+            last_frame=max(frames),
+            set_thumbnail=set_thumbnail,
+        )
+        worker.finished_publish.connect(self._on_publish_finished)
+        self.report_status("Publishing shot to Kitsu...", "yellow")
+        return self.workers.start("publish_shot", worker, critical=True)
+
+    def _on_publish_finished(self, ok: bool, message: str, video: str) -> None:
+        self.report_status(message, "green" if ok else "red")
+        self.publish_finished.emit(ok, message, video)
+
     def load_kitsu_statuses(self) -> bool:
         if self.production_service is None or not self.project_id:
             return False
@@ -2777,6 +3430,15 @@ class RenderPanelViewModel(BaseViewModel):
                 seconds = float(payload.get("seconds") or 0.0)
             except (TypeError, ValueError):
                 seconds = 0.0
+            live_path = str(getattr(event, "live_frame_path", "") or "")
+            if live_path:
+                card.live_frame_path = live_path
+                self.live_frame_ready.emit(
+                    str(getattr(event, "shot", "") or ""),
+                    int(getattr(event, "frame", 0) or 0),
+                    live_path,
+                    node,
+                )
             if seconds > 0:
                 samples = self._node_frame_seconds.setdefault(
                     card.key, deque(maxlen=8)

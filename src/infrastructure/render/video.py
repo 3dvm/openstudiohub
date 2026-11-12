@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -46,6 +47,100 @@ class RenderVideoService:
             return ""
         first = (result.stdout or "").splitlines()
         return first[0].strip() if first else ""
+
+    def create_video_with_placeholders(
+        self,
+        frames_dir: Path | str,
+        first_frame: int,
+        last_frame: int,
+        fps: float,
+        output_path: Path | str,
+        *,
+        width: int,
+        height: int,
+        icon_path: Path | str = "assets/icons/image-off.svg",
+        crf: int = 28,
+        preset: str = "veryfast",
+        video_filter: str = "scale=iw/2:-2",
+        extension: str = "png",
+    ) -> Path:
+        """Create a video, filling missing frames with a numbered placeholder."""
+        source = Path(frames_dir)
+        suffix = str(extension or "png").lstrip(".")
+        first = int(first_frame)
+        last = int(last_frame)
+        if not source.is_dir():
+            raise RenderVideoError(f"Frames folder not found: {source}")
+        with tempfile.TemporaryDirectory(prefix="openstudio_video_") as temp_dir:
+            temp = Path(temp_dir)
+            for frame in range(first, last + 1):
+                name = f"frame_{frame:04d}.{suffix}"
+                candidate = source / name
+                if candidate.is_file():
+                    shutil.copy2(candidate, temp / name)
+                else:
+                    placeholder = temp / f"frame_{frame:04d}.png"
+                    self._write_missing_frame(
+                        placeholder,
+                        frame,
+                        width=max(1, int(width)),
+                        height=max(1, int(height)),
+                        icon_path=Path(icon_path),
+                    )
+                    if suffix != "png":
+                        (temp / name).write_bytes(placeholder.read_bytes())
+            return self.create_video(
+                temp,
+                first,
+                last,
+                fps,
+                output_path,
+                crf=crf,
+                preset=preset,
+                video_filter=video_filter,
+                extension="png",
+            )
+
+    @staticmethod
+    def _write_missing_frame(
+        path: Path,
+        frame: int,
+        *,
+        width: int,
+        height: int,
+        icon_path: Path,
+    ) -> None:
+        from PySide6.QtCore import QRectF, Qt
+        from PySide6.QtGui import QColor, QFont, QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+
+        image = QImage(width, height, QImage.Format_RGB32)
+        image.fill(QColor("#0F172A"))
+        painter = QPainter(image)
+        try:
+            if icon_path.is_file():
+                renderer = QSvgRenderer(str(icon_path))
+                size = min(width, height) * 0.22
+                target = QRectF(
+                    (width - size) / 2.0,
+                    (height - size) / 2.0 - height * 0.04,
+                    size,
+                    size,
+                )
+                renderer.render(painter, target)
+            painter.setPen(QColor("#CBD5E1"))
+            font = QFont()
+            font.setPixelSize(max(16, int(height * 0.045)))
+            painter.setFont(font)
+            painter.drawText(
+                QRectF(0, height * 0.64, width, height * 0.12),
+                Qt.AlignCenter,
+                f"Missing frame {frame}",
+            )
+        finally:
+            painter.end()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        image.save(str(path), "PNG")
 
     def create_video(
         self,

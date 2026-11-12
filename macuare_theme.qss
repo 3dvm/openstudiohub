@@ -1532,3 +1532,22 @@ QProgressBar#ErrorProgress::chunk {
 QLabel#StatusText[state="success"] { color: #10B981; }
 QLabel#StatusText[state="warning"] { color: #F59E0B; }
 QLabel#StatusText[state="error"] { color: #EF4444; }
+
+QTabWidget#StandardTabWidget::pane {
+    border: 1px solid #334155;
+    border-radius: 6px;
+    background-color: #111827;
+}
+
+QTabWidget#StandardTabWidget QTabBar::tab {
+    background-color: #1F2531;
+    color: #CBD5E1;
+    padding: 6px 12px;
+    border: 1px solid #334155;
+    border-bottom: none;
+}
+
+QTabWidget#StandardTabWidget QTabBar::tab:selected {
+    background-color: #2563EB;
+    color: #FFFFFF;
+}

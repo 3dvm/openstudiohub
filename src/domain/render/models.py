@@ -210,6 +210,9 @@ class RenderSettings:
     preferred_region: str = "prefer_americas"
     min_inet_down_mbps: float = 100.0
     min_inet_up_mbps: float = 50.0
+    fill_similar_gpus: bool = False
+    similar_gpu_mode: str = "floor"
+    fill_allow_less_vram: bool = False
 
     def preview_frame_for(self, relative_path: str) -> int | None:
         """Return the explicit preview frame for a shot, when configured."""
@@ -245,6 +248,9 @@ class RenderSettings:
             "preferred_region": self.preferred_region,
             "min_inet_down_mbps": self.min_inet_down_mbps,
             "min_inet_up_mbps": self.min_inet_up_mbps,
+            "fill_similar_gpus": self.fill_similar_gpus,
+            "similar_gpu_mode": self.similar_gpu_mode,
+            "fill_allow_less_vram": self.fill_allow_less_vram,
         }
 
     @classmethod
@@ -285,6 +291,13 @@ class RenderSettings:
             preferred_region=str(data.get("preferred_region") or "prefer_americas"),
             min_inet_down_mbps=float(data.get("min_inet_down_mbps") or 100.0),
             min_inet_up_mbps=float(data.get("min_inet_up_mbps") or 50.0),
+            fill_similar_gpus=bool(data.get("fill_similar_gpus", False)),
+            similar_gpu_mode=(
+                str(data.get("similar_gpu_mode") or "floor")
+                if str(data.get("similar_gpu_mode") or "floor") in ("floor", "ceiling")
+                else "floor"
+            ),
+            fill_allow_less_vram=bool(data.get("fill_allow_less_vram", False)),
         )
 
 
@@ -335,6 +348,17 @@ def _preview_frames_from_dict(data) -> tuple[tuple[str, int], ...]:
 
 
 @dataclass(frozen=True)
+class DependencyIssue:
+    """One missing or non-project file referenced by a render shot."""
+
+    path: str
+    kind: str
+    status: str  # external | missing | outside_production
+    owner: str = ""
+    blocking: bool = True
+
+
+@dataclass(frozen=True)
 class RenderShot:
     """One renderable shot and its measured (or estimated) cost."""
 
@@ -364,6 +388,9 @@ class RenderShot:
     geometry_bakes: tuple[GeometryBakeInfo, ...] = ()
     particle_caches: tuple[ParticleCacheInfo, ...] = ()
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    dependencies: tuple[str, ...] = ()
+    dependency_issues: tuple[DependencyIssue, ...] = ()
+    dependencies_audited: bool = False
 
     @property
     def frames(self) -> int:

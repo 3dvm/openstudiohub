@@ -38,16 +38,17 @@ panel.
    project card.
 2. Select the shots with checkboxes.
 3. Choose the final quality, target duration, GPU, price cap, node cap, budget,
-   backend (Vast or local), preview backend and video options.
+   backend (Vast or local) and preview backend.
 4. Click **Recalculate plan**.
 5. Optionally click **Preview all selected** (or the per-shot **Preview** action)
    to render one composite frame at the chosen preview quality (local by
    default; Vast is available). Enable **Bake geometry nodes on the node** to
    generate GN caches on the node instead of uploading them.
 6. Click **Start render**. The panel asks for confirmation and shows the plan.
-7. When the render finishes, the panel creates the Kitsu review video and the
-   render-review copy. Use **Upload video & set status** to publish it to the
-   matching Kitsu task.
+7. When frames exist, open **Publish Shot** in the Shot Inspector. Choose the
+   Kitsu task, status, editable version, comment and optional thumbnail. Publish
+   creates the low-quality review MP4 and uploads it to Kitsu. High-quality
+   video is not generated or uploaded.
 
 ## What the burst does
 
@@ -62,8 +63,9 @@ For each node:
 4. Install the project's exact Blender version and its runtime libraries
    (about two to four minutes).
 5. Report how many files and bytes will be uploaded, then stage only the
-   production folder (`topography.vfs_svn`) over `rsync`, showing live upload
-   progress on the node card. Briefs and the shared folder are not uploaded. A
+   selected shot folders and their linked assets over `rsync`, showing live
+   upload progress on the node card. Other shots, storyboards, edit files, the
+   shared folder and briefs are not uploaded. A
    **Benchmark all selected** run reuses one node and one upload for every
    selected shot.
    With **Bake geometry nodes on the node** enabled, the geometry-node bake
@@ -108,8 +110,18 @@ If no offer fits, the panel reports the exact failed limits, the nearest offers
 and the smallest limit change that would match (for example **Lower Min RAM to
 31 GB** or **Raise max price to $0.34/h**). It can also search the other GPU
 profiles. Every fix is explicit: the Hub does not silently relax a limit or rent
-a more expensive node. The GPU selector offers RTX 3070, 3080, 4070, 3090, 4090
-and A6000.
+a more expensive node.
+
+When the selected profile has fewer offers than the plan needs, **Fill with
+similar GPUs** is available as an opt-in. **Speed priority** accepts the
+selected GPU or faster and keeps the ETA conservative. **Budget priority**
+accepts the selected GPU or slower; the plan is recalculated with the slowest
+selected GPU so the deadline estimate stays honest. Budget mode may use GPUs
+with less VRAM only after an extra confirmation, and the plan warns about
+out-of-memory risk. If the plan still cannot be filled, the panel offers **Use N
+nodes instead** rather than launching fewer nodes silently.
+
+The GPU selector offers RTX 3070, 3080, 4070, 3090, 4090 and A6000.
 
 The instance that was used for the post-reboot test was an RTX 3090 at
 $0.208/h in China (468/243 Mbps). It was used only to finish the benchmark and
@@ -178,6 +190,9 @@ from the application layer.
   cancelled, and verify `vastai show instances --raw` is empty after a failed
   run.
 - Do not stage secrets (`.env`, cloud keys) with the production folder.
+- Uploads are selective: only the selected shots and their resolved linked
+  assets are staged. Files outside the project are reported as external
+  dependencies instead of being uploaded silently.
 
 ## Related
 

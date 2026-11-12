@@ -159,3 +159,19 @@ def test_min_cpu_ram_round_trips(tmp_path):
     loaded = RenderSettingsStore(store.path).load()
 
     assert loaded.min_cpu_ram_gb == 64.0
+
+
+def test_render_settings_round_trip_similar_gpu_fill(tmp_path):
+    store = RenderSettingsStore(tmp_path / "render_settings.json")
+    settings = RenderSettings(
+        fill_similar_gpus=True,
+        similar_gpu_mode="ceiling",
+        fill_allow_less_vram=True,
+    )
+    store.save(settings)
+
+    loaded = RenderSettingsStore(store.path).load()
+
+    assert loaded.fill_similar_gpus is True
+    assert loaded.similar_gpu_mode == "ceiling"
+    assert loaded.fill_allow_less_vram is True

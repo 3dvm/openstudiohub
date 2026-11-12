@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -42,6 +42,8 @@ class ShotReviewCard(QFrame):
     selection_changed = Signal(str, bool)
     activated = Signal(str)
     action_requested = Signal(str, str)
+    inspector_requested = Signal(str, str)
+    publish_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -64,8 +66,8 @@ class ShotReviewCard(QFrame):
         self.toggle = QToolButton()
         self.toggle.setObjectName("ShotReviewToggle")
         self.toggle.setCheckable(True)
-        self.toggle.setChecked(True)
-        self.toggle.setArrowType(Qt.DownArrow)
+        self.toggle.setChecked(False)
+        self.toggle.setArrowType(Qt.RightArrow)
         self.toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.toggle.clicked.connect(self._on_toggle)
         header.addWidget(self.toggle)
@@ -73,12 +75,18 @@ class ShotReviewCard(QFrame):
         self.lbl_status = QLabel("")
         self.lbl_status.setStyleSheet("font-weight: bold;")
         header.addWidget(self.lbl_status)
+        self.lbl_deps = QLabel("")
+        self.lbl_deps.setObjectName("MutedLabel")
+        self.lbl_deps.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        header.addWidget(self.lbl_deps)
         header.addStretch()
         outer.addLayout(header)
 
         self.lbl_progress = QLabel("")
         self.lbl_progress.setStyleSheet("color: #94A3B8; font-size: 11px;")
         outer.addWidget(self.lbl_progress)
+        for label in (self.lbl_status, self.lbl_deps, self.lbl_progress):
+            label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
         self.content = QWidget()
         content_layout = QVBoxLayout(self.content)
@@ -87,12 +95,29 @@ class ShotReviewCard(QFrame):
         self.lbl_details = QLabel("")
         self.lbl_details.setWordWrap(True)
         self.lbl_details.setStyleSheet("color: #CBD5E1; font-size: 11px;")
+        self.lbl_details.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         content_layout.addWidget(self.lbl_details)
 
         self.lbl_warnings = QLabel("")
         self.lbl_warnings.setWordWrap(True)
         self.lbl_warnings.setStyleSheet("color: #F59E0B; font-size: 11px;")
+        self.lbl_warnings.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         content_layout.addWidget(self.lbl_warnings)
+
+        self.setup_toggle = QToolButton()
+        self.setup_toggle.setObjectName("ShotReviewToggle")
+        self.setup_toggle.setCheckable(True)
+        self.setup_toggle.setChecked(False)
+        self.setup_toggle.setArrowType(Qt.RightArrow)
+        self.setup_toggle.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.setup_toggle.setText(self.tr("Shot setup"))
+        self.setup_toggle.clicked.connect(self._on_setup_toggle)
+        content_layout.addWidget(self.setup_toggle)
+        self.lbl_setup = QLabel("")
+        self.lbl_setup.setWordWrap(True)
+        self.lbl_setup.setStyleSheet("color: #CBD5E1; font-size: 11px;")
+        self.lbl_setup.hide()
+        content_layout.addWidget(self.lbl_setup)
 
         primary = QHBoxLayout()
         self.btn_view = self._action_button("", "view", "View the rendered sequence")
@@ -107,10 +132,21 @@ class ShotReviewCard(QFrame):
         self.btn_render = self._action_button(
             "Render", "render", "Render only this shot"
         )
+        self.btn_comments = self._inspector_button("Comments", "comments")
+        self.btn_dependencies = self._inspector_button(
+            "Dependencies", "dependencies"
+        )
+        self.btn_publish = QPushButton(self.tr("Publish"))
+        self.btn_publish.setObjectName("SuccessButton")
+        self.btn_publish.setToolTip(self.tr("Open Publish Shot for this shot"))
+        self.btn_publish.clicked.connect(self._on_publish_clicked)
         primary.addWidget(self.btn_view)
         primary.addWidget(self.btn_preview)
         primary.addWidget(self.btn_benchmark)
         primary.addWidget(self.btn_render)
+        primary.addWidget(self.btn_comments)
+        primary.addWidget(self.btn_dependencies)
+        primary.addWidget(self.btn_publish)
         primary.addStretch()
         content_layout.addLayout(primary)
 
@@ -129,11 +165,13 @@ class ShotReviewCard(QFrame):
         self.menu = QMenu(self)
         self._add_menu_action("Unapprove all", "unapprove_all")
         self._add_menu_action("Create preview video", "preview_video")
-        self._add_menu_action("Create review video", "review_video")
         self.menu.addSeparator()
         self._add_menu_action("Open output folder", "open_output")
         self._add_menu_action("Open .blend", "open_blend")
         self.btn_more.setMenu(self.menu)
+        self.btn_more.clicked.connect(
+            lambda _checked=False: self.activated.emit(self._shot_path)
+        )
         secondary.addWidget(self.btn_retry)
         secondary.addWidget(self.btn_approve)
         secondary.addWidget(self.btn_delete)
@@ -141,6 +179,7 @@ class ShotReviewCard(QFrame):
         secondary.addStretch()
         content_layout.addLayout(secondary)
         outer.addWidget(self.content)
+        self.content.setVisible(False)
 
     def _action_button(self, label: str, action: str, tooltip: str = "") -> QPushButton:
         button = QPushButton(label)
@@ -148,10 +187,28 @@ class ShotReviewCard(QFrame):
         if tooltip:
             button.setToolTip(tooltip)
         button.clicked.connect(
-            lambda _checked=False, name=action: self.action_requested.emit(self._shot_path, name)
+            lambda _checked=False, name=action: (
+                self.activated.emit(self._shot_path),
+                self.action_requested.emit(self._shot_path, name),
+            )
         )
         button.setProperty("shotAction", action)
         return button
+
+    def _inspector_button(self, label: str, tab: str) -> QPushButton:
+        button = QPushButton(label)
+        button.setObjectName("SecondaryButton")
+        button.clicked.connect(
+            lambda _checked=False, name=tab: (
+                self.activated.emit(self._shot_path),
+                self.inspector_requested.emit(self._shot_path, name),
+            )
+        )
+        return button
+
+    def _on_publish_clicked(self) -> None:
+        self.activated.emit(self._shot_path)
+        self.publish_requested.emit(self._shot_path)
 
     def _add_menu_action(self, label: str, action: str) -> None:
         item = self.menu.addAction(label)
@@ -181,6 +238,20 @@ class ShotReviewCard(QFrame):
         self.lbl_progress.setText(
             f"R {model.rendered}/{model.frames} · A {model.approved}/{model.frames}"
         )
+        dep_count = int(getattr(model, "dependency_count", 0) or 0)
+        dep_blocking = int(getattr(model, "dependency_blocking_count", 0) or 0)
+        if dep_count:
+            self.lbl_deps.setText(
+                self.tr("Deps {0} · {1} blocking").format(dep_count, dep_blocking)
+            )
+            color = "#EF4444" if dep_blocking else "#F59E0B"
+            self.lbl_deps.setStyleSheet(f"color: {color}; font-size: 11px;")
+            self.lbl_deps.setToolTip(
+                self.tr("Show shot dependencies")
+            )
+        else:
+            self.lbl_deps.setText("")
+        self.lbl_setup.setText(str(getattr(model, "setup_html", "") or ""))
         self.lbl_progress.setToolTip(
             f"{model.rendered}/{model.frames} rendered · "
             f"{model.approved}/{model.frames} approved · "
@@ -248,7 +319,23 @@ class ShotReviewCard(QFrame):
             action.setEnabled(False)
 
     def _on_selection_changed(self, checked: bool) -> None:
+        self.activated.emit(self._shot_path)
         self.selection_changed.emit(self._shot_path, bool(checked))
+
+    def _on_setup_toggle(self) -> None:
+        expanded = self.setup_toggle.isChecked()
+        self.setup_toggle.setArrowType(Qt.DownArrow if expanded else Qt.RightArrow)
+        self.lbl_setup.setVisible(expanded)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._shot_path:
+            self.activated.emit(self._shot_path)
+        super().mousePressEvent(event)
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() == QEvent.MouseButtonPress and self._shot_path:
+            self.activated.emit(self._shot_path)
+        return super().eventFilter(watched, event)
 
     def set_view_playing(self, playing: bool) -> None:
         icon = QStyle.SP_MediaStop if playing else QStyle.SP_MediaPlay

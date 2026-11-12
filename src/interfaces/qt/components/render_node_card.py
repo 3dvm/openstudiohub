@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import QSize, QUrl, Signal
+from PySide6.QtGui import QDesktopServices, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -31,6 +31,7 @@ _STATUS_COLORS = {
     "ssh": "#38BDF8",
     "installing": "#38BDF8",
     "staging": "#38BDF8",
+    "verifying": "#38BDF8",
     "rendering": "#F59E0B",
     "syncing": "#F59E0B",
     "baking": "#F59E0B",
@@ -44,6 +45,8 @@ _STATUS_COLORS = {
 
 class RenderNodeCard(QFrame):
     relaunch_requested = Signal(str)
+    frame_clicked = Signal(str)
+    clear_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -85,6 +88,17 @@ class RenderNodeCard(QFrame):
         self.lbl_eta.setStyleSheet("color: #94A3B8; font-size: 11px;")
         layout.addWidget(self.lbl_eta)
 
+        self.btn_frame = QPushButton()
+        self.btn_frame.setObjectName("SecondaryButton")
+        self.btn_frame.setFixedSize(160, 90)
+        self.btn_frame.setIconSize(QSize(152, 82))
+        self.btn_frame.setToolTip(self.tr("Open the latest live frame in Preview"))
+        self.btn_frame.clicked.connect(
+            lambda _checked=False: self.frame_clicked.emit(self._live_frame_path)
+        )
+        self.btn_frame.hide()
+        layout.addWidget(self.btn_frame)
+
         self.btn_relaunch = QPushButton(self.tr("Relaunch node"))
         self.btn_relaunch.setObjectName("SecondaryButton")
         self.btn_relaunch.hide()
@@ -93,12 +107,21 @@ class RenderNodeCard(QFrame):
         )
         layout.addWidget(self.btn_relaunch)
 
+        self.btn_clear = QPushButton(self.tr("Clear queued relaunch"))
+        self.btn_clear.setObjectName("SecondaryButton")
+        self.btn_clear.hide()
+        self.btn_clear.clicked.connect(
+            lambda _checked=False: self.clear_requested.emit(self._card_key)
+        )
+        layout.addWidget(self.btn_clear)
+
         self.logs_layout = QHBoxLayout()
         self.logs_layout.setSpacing(4)
         layout.addLayout(self.logs_layout)
         layout.addStretch()
         self._log_signature = ()
         self._card_key = ""
+        self._live_frame_path = ""
 
     def update_model(self, card) -> None:
         self._card_key = str(getattr(card, "key", "") or "")
@@ -150,6 +173,22 @@ class RenderNodeCard(QFrame):
         self.lbl_meta.setText(" · ".join(meta))
         self.lbl_message.setText(str(getattr(card, "message", "") or ""))
         self.progress.setValue(max(0, min(100, int(percent))))
+        live_frame = str(getattr(card, "live_frame_path", "") or "")
+        self._live_frame_path = live_frame
+        if live_frame:
+            pixmap = QPixmap(live_frame)
+            if not pixmap.isNull():
+                self.btn_frame.setIcon(QIcon(pixmap))
+                self.btn_frame.setToolTip(
+                    self.tr("Open frame from Node {0} in Preview").format(
+                        card.node + 1
+                    )
+                )
+                self.btn_frame.show()
+            else:
+                self.btn_frame.hide()
+        else:
+            self.btn_frame.hide()
         eta = float(getattr(card, "eta_seconds", 0.0) or 0.0)
         has_assignment = bool(getattr(card, "assignment", ()) or ())
         self.btn_relaunch.setVisible(
@@ -158,6 +197,12 @@ class RenderNodeCard(QFrame):
         self.btn_relaunch.setEnabled(
             status == "failed" and has_assignment and not is_local
         )
+        queued_relaunch = (
+            status == "queued"
+            and str(getattr(card, "run_label", "") or "") == "relaunch"
+        )
+        self.btn_clear.setVisible(queued_relaunch)
+        self.btn_clear.setEnabled(queued_relaunch)
         if getattr(card, "final", False):
             self.lbl_eta.setText("")
         elif eta > 0:

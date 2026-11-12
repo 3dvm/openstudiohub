@@ -579,7 +579,7 @@ def test_nodes_section_uses_the_new_title(qapp):
         section.button.text()
         for section in widget.findChildren(CollapsibleSection)
     ]
-    assert "Nodes / instances" in titles
+    assert "Nodes" in titles
     widget.deleteLater()
 
 
@@ -689,4 +689,530 @@ def test_offer_issue_panel_shows_near_offers_and_actions(qapp):
     ]
     assert "Lower Min RAM to 31 GB" in labels
     assert "Search other GPU profiles" in labels
+    widget.deleteLater()
+
+
+def test_similar_gpu_fill_controls_are_opt_in(qapp):
+    widget = _widget()
+
+    assert widget.chk_fill_similar.isChecked() is False
+    assert widget.combo_similar_mode.isEnabled() is False
+    assert widget.combo_similar_mode.currentData() == "floor"
+    assert widget.chk_allow_less_vram.isEnabled() is False
+
+    widget.chk_fill_similar.setChecked(True)
+    _set_backend(widget.combo_similar_mode, "ceiling")
+
+    assert widget.combo_similar_mode.isEnabled() is True
+    assert widget.chk_allow_less_vram.isEnabled() is True
+    widget.deleteLater()
+
+
+def test_shortfall_panel_offers_similar_fill_and_cap(qapp):
+    from types import SimpleNamespace
+
+    widget = _widget()
+    widget.vm.settings = SimpleNamespace(
+        render_backend="vast",
+        similar_gpu_mode="floor",
+        fill_similar_gpus=False,
+        fill_allow_less_vram=False,
+    )
+    widget.vm.offer = SimpleNamespace(gpu_name="RTX 3080")
+    widget.vm.offer_diagnostics = None
+    widget.vm.plan = SimpleNamespace(required_nodes=8)
+    widget.vm.candidate_offers = [
+        SimpleNamespace(
+            gpu_name="RTX 3080",
+            gpu_label="RTX 3080 10 GB",
+            price_per_hour=0.12,
+        )
+        for _ in range(4)
+    ]
+
+    widget._render_offer_issue()
+
+    assert widget.offer_issue_frame.isHidden() is False
+    assert "4 of 8" in widget.lbl_offer_issue_title.text()
+    labels = [
+        button.text()
+        for button in widget.offer_issue_frame.findChildren(
+            type(widget.btn_refresh_candidates)
+        )
+    ]
+    assert "Fill with similar GPUs" in labels
+    assert "Use 4 nodes instead" in labels
+    widget.deleteLater()
+
+
+def test_start_render_dialog_shows_upload_size(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QMessageBox
+
+    widget = _widget()
+    widget.vm.settings = SimpleNamespace(
+        render_backend="vast",
+        bake_geometry_nodes=None,
+    )
+    widget._plan = SimpleNamespace(
+        shots=(SimpleNamespace(geometry_bakes=(), dependencies_audited=True),),
+        total_frames=96,
+        required_nodes=2,
+        estimated_wall_seconds=3600.0,
+        estimated_cost=1.25,
+    )
+    monkeypatch.setattr(widget.vm, "bake_geometry_nodes_effective", lambda *_a: False)
+    monkeypatch.setattr(
+        widget.vm,
+        "staging_estimate",
+        lambda shots=None: SimpleNamespace(
+            bytes=1_000_000,
+            files=10,
+            exists=True,
+            entries=(),
+            images=(("prod/assets/studio.hdr", 1000),),
+        ),
+    )
+    monkeypatch.setattr(widget.vm, "start_render", lambda retry=False: False)
+    texts = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "exec",
+        lambda box: texts.append((box.text(), box.detailedText())) or QMessageBox.No,
+    )
+
+    widget._start_render()
+
+    assert texts
+    assert "Upload: 1.0 MB" in texts[0][0]
+    assert "10 file(s)" in texts[0][0]
+    assert "Images in upload: 1" in texts[0][0]
+    assert "prod/assets/studio.hdr" in texts[0][1]
+    widget.deleteLater()
+
+
+def test_vast_preview_dialog_shows_upload_size(qapp, monkeypatch):
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.domain.render.models import RenderQuality, RenderSettings, RenderShot
+
+    widget = _widget()
+    shot = RenderShot(
+        name="sh010",
+        blend_path=Path("/project/sh010.blend"),
+        relative_path="pro/shots/sq010/sh010/sh010-layout.blend",
+        sequence="sq010",
+        quality=RenderQuality(samples=128),
+        frame_start=101,
+        frame_end=196,
+        object_count=20,
+        mesh_count=10,
+        has_camera=True,
+    )
+    widget.vm.shots = [shot]
+    widget.vm.settings = RenderSettings(
+        render_backend="vast",
+        preview_backend="vast",
+        selected_shots=(shot.relative_path,),
+    )
+    _set_backend(widget.combo_preview_backend, "vast")
+    monkeypatch.setattr(
+        widget.vm,
+        "staging_estimate",
+        lambda shots=None: SimpleNamespace(
+            bytes=2_000_000, files=20, exists=True, entries=()
+        ),
+    )
+    monkeypatch.setattr(widget.vm, "preview_shots", lambda shots: True)
+    texts = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: texts.append(args[2]) or QMessageBox.Yes,
+    )
+
+    widget._preview_all()
+
+    assert texts
+    assert "Upload: 2.0 MB" in texts[0]
+    assert "20 file(s)" in texts[0]
+    widget.deleteLater()
+
+
+def test_shots_label_shows_cached_data_notice(qapp):
+    widget = _widget()
+
+    widget._on_shots_cache_loaded(True)
+    assert widget.lbl_shots_source.isHidden() is False
+    assert "Cached data" in widget.lbl_shots_source.text()
+
+    widget._on_shots_cache_loaded(False)
+    assert widget.lbl_shots_source.isHidden() is True
+    assert widget.lbl_shots_source.text() == ""
+    widget.deleteLater()
+
+
+def test_scan_and_vast_refresh_are_separate_buttons(qapp, monkeypatch):
+    widget = _widget()
+    scans = []
+    vast = []
+    monkeypatch.setattr(widget.vm, "scan", lambda **kwargs: scans.append(kwargs) or True)
+    monkeypatch.setattr(
+        widget.vm, "refresh_offer", lambda: vast.append(True) or True
+    )
+
+    widget.btn_refresh.click()
+    assert scans == [{"force": True}]
+    assert vast == []
+
+    widget.btn_refresh_candidates.click()
+    assert vast == [True]
+    assert scans == [{"force": True}]
+    assert "Refresh Vast" in widget.btn_refresh_candidates.text()
+    assert "Scan shots" in widget.btn_refresh.text()
+    widget.deleteLater()
+
+
+def test_vast_balance_signal_updates_the_label(qapp):
+    widget = _widget()
+    widget.vm.settings = SimpleNamespace(render_backend="vast", preview_backend="local")
+
+    widget.vm.vast_balance_ready.emit(12.5)
+
+    assert "12.50" in widget.lbl_balance.text()
+    widget.deleteLater()
+
+
+def test_node_card_shows_live_frame_thumbnail(qapp, tmp_path):
+    from PySide6.QtGui import QColor, QPixmap
+
+    from src.interfaces.qt.components.render_node_card import RenderNodeCard
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderNodeCardModel
+
+    image = tmp_path / "frame.png"
+    pixmap = QPixmap(20, 10)
+    pixmap.fill(QColor("red"))
+    pixmap.save(str(image), "PNG")
+    card = RenderNodeCardModel(
+        node=6,
+        status="rendering",
+        frames_done=1,
+        frames_expected=22,
+        live_frame_path=str(image),
+    )
+
+    widget = RenderNodeCard()
+    widget.update_model(card)
+
+    assert widget.btn_frame.isHidden() is False
+    widget.deleteLater()
+
+
+def test_live_frame_signal_adds_a_thumbnail_and_updates_preview(qapp, tmp_path):
+    from PySide6.QtGui import QColor, QPixmap
+
+    widget = _widget()
+    image = tmp_path / "live.png"
+    pixmap = QPixmap(20, 10)
+    pixmap.fill(QColor("blue"))
+    pixmap.save(str(image), "PNG")
+
+    widget._on_live_frame_ready("sh040", 120, str(image), 2)
+
+    assert widget.live_strip_layout.count() >= 2  # thumbnail + stretch
+    assert widget._current_preview == str(image)
+    widget.deleteLater()
+
+
+def test_dependencies_block_start_render(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.domain.render.models import DependencyIssue
+
+    widget = _widget()
+    shot = SimpleNamespace(
+        name="sh040",
+        dependencies_audited=True,
+        dependency_issues=(
+            DependencyIssue(
+                path="/outside/studio.hdr",
+                kind="image",
+                status="external",
+                owner="pro/shots/sq010/sh040/sh040.blend",
+            ),
+        ),
+    )
+    widget._plan = SimpleNamespace(
+        shots=(shot,),
+        total_frames=10,
+        required_nodes=1,
+        estimated_wall_seconds=60.0,
+        estimated_cost=0.1,
+    )
+    widget.vm.settings = SimpleNamespace(render_backend="vast", bake_geometry_nodes=None)
+    warnings = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda *args, **kwargs: warnings.append(args[2]),
+    )
+
+    widget._start_render()
+
+    assert warnings and "unresolved dependency" in warnings[0]
+    widget.deleteLater()
+
+
+def test_start_render_runs_pending_dependency_audit_first(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QMessageBox
+
+    widget = _widget()
+    widget._plan = SimpleNamespace(
+        shots=(SimpleNamespace(dependencies_audited=False),),
+        total_frames=10,
+        required_nodes=1,
+        estimated_wall_seconds=60.0,
+        estimated_cost=0.1,
+    )
+    widget.vm.settings = SimpleNamespace(render_backend="vast", bake_geometry_nodes=None)
+    audits = []
+    infos = []
+    monkeypatch.setattr(
+        widget.vm, "audit_dependencies", lambda: audits.append(True) or True
+    )
+    monkeypatch.setattr(
+        QMessageBox, "information", lambda *args, **kwargs: infos.append(args[2])
+    )
+
+    widget._start_render()
+
+    assert audits == [True]
+    assert infos and "audit" in infos[0].lower()
+    widget.deleteLater()
+
+
+def test_dependency_rows_use_blocking_checkboxes(qapp):
+    from types import SimpleNamespace
+
+    from src.domain.render.models import DependencyIssue
+
+    widget = _widget()
+    issue = DependencyIssue(
+        path="/outside/studio.hdr",
+        kind="image",
+        status="external",
+        owner="pro/shots/sq010/sh040/sh040.blend",
+        blocking=False,
+    )
+    shot = SimpleNamespace(
+        relative_path="pro/shots/sq010/sh040/sh040.blend",
+        dependencies_audited=True,
+        dependency_issues=(issue,),
+    )
+    widget._plan = SimpleNamespace(shots=(shot,), required_nodes=1)
+    monkeypatch = None
+    widget.vm.shots = [shot]
+    widget.vm.plan = widget._plan
+
+    widget._refresh_dependencies()
+
+    assert widget.dependency_rows_layout.count() >= 2
+    assert "0 marked blocking" in widget.lbl_dependencies.text()
+    widget.deleteLater()
+
+
+def test_unchecked_dependency_does_not_block_start_render(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from src.domain.render.models import DependencyIssue
+
+    widget = _widget()
+    issue = DependencyIssue(
+        path="/outside/studio.hdr",
+        kind="image",
+        status="external",
+        owner="pro/shots/sq010/sh040/sh040.blend",
+        blocking=False,
+    )
+    shot = SimpleNamespace(
+        geometry_bakes=(),
+        dependencies_audited=True,
+        dependency_issues=(issue,),
+    )
+    widget._plan = SimpleNamespace(
+        shots=(shot,),
+        total_frames=10,
+        required_nodes=1,
+        estimated_wall_seconds=60.0,
+        estimated_cost=0.1,
+    )
+    widget.vm.settings = SimpleNamespace(render_backend="vast", bake_geometry_nodes=None)
+    monkeypatch.setattr(widget.vm, "bake_geometry_nodes_effective", lambda *_a: False)
+    monkeypatch.setattr(
+        widget.vm,
+        "staging_estimate",
+        lambda shots=None: SimpleNamespace(
+            bytes=1, files=1, exists=True, entries=(), images=()
+        ),
+    )
+    monkeypatch.setattr(widget.vm, "start_render", lambda retry=False: False)
+    warnings = []
+    dialogs = []
+    monkeypatch.setattr(
+        QMessageBox, "warning", lambda *args, **kwargs: warnings.append(args[2])
+    )
+    monkeypatch.setattr(
+        QMessageBox, "exec", lambda box: dialogs.append(box.text()) or QMessageBox.No
+    )
+
+    widget._start_render()
+
+    assert warnings == []
+    assert dialogs and "Render 10 frame(s)" in dialogs[0]
+    widget.deleteLater()
+
+
+def test_shot_review_card_starts_collapsed_and_exposes_inspector_actions(qapp):
+    from src.interfaces.qt.components.shot_review_card import ShotReviewCard
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import ShotReviewModel
+
+    model = ShotReviewModel(
+        name="sh040",
+        sequence="sq010",
+        status="ready",
+        status_label="Ready",
+        status_tooltip="",
+        selected=True,
+        locked=False,
+        ready=True,
+        frames=10,
+        rendered=10,
+        approved=0,
+        missing=0,
+        frame_range="1–10",
+        engine="CYCLES",
+        resolution="1920×1080",
+        samples=128,
+        image_format="PNG",
+        measured_seconds=None,
+        warnings=(),
+        relative_path="pro/shots/sq010/sh040/sh040.blend",
+    )
+    card = ShotReviewCard()
+    card.update_model(model)
+    captured = []
+    card.inspector_requested.connect(lambda path, tab: captured.append((path, tab)))
+
+    assert card.content.isHidden() is True
+    card.btn_comments.click()
+    card.btn_dependencies.click()
+
+    assert captured == [
+        (model.relative_path, "comments"),
+        (model.relative_path, "dependencies"),
+    ]
+    card.deleteLater()
+
+
+def test_publish_tab_and_inspector_exist(qapp):
+    widget = _widget()
+
+    assert widget.inspector_tabs.count() == 3
+    assert [widget.inspector_tabs.tabText(i) for i in range(3)] == [
+        "Comments",
+        "Shot Dependencies",
+        "Publish Shot",
+    ]
+    assert widget.inspector_tabs.isHidden() is False
+    widget.btn_inspector_toggle.click()
+    assert widget.inspector_tabs.isHidden() is True
+    widget.deleteLater()
+
+
+def test_dependency_checkbox_uses_the_viewmodel_plan(qapp):
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QCheckBox
+
+    from src.domain.render.models import DependencyIssue
+
+    widget = _widget()
+    issue = DependencyIssue(
+        path="/outside/studio.hdr",
+        kind="image",
+        status="external",
+        owner="pro/shots/sq010/sh040/sh040.blend",
+        blocking=False,
+    )
+    shot = SimpleNamespace(
+        relative_path="pro/shots/sq010/sh040/sh040.blend",
+        dependencies_audited=True,
+        dependency_issues=(issue,),
+    )
+    widget.vm.shots = [shot]
+    widget.vm.plan = SimpleNamespace(shots=(shot,))
+    widget._plan = SimpleNamespace(
+        shots=(
+            SimpleNamespace(
+                relative_path=shot.relative_path,
+                dependencies_audited=True,
+                dependency_issues=(
+                    DependencyIssue(
+                        path=issue.path,
+                        kind=issue.kind,
+                        status=issue.status,
+                        owner=issue.owner,
+                        blocking=True,
+                    ),
+                ),
+            ),
+        )
+    )
+
+    widget._refresh_dependencies()
+
+    checkboxes = widget.dependency_rows_widget.findChildren(QCheckBox)
+    assert checkboxes and checkboxes[0].isChecked() is False
+    widget.deleteLater()
+
+
+def test_publish_tab_enables_with_one_rendered_frame(qapp, monkeypatch):
+    from types import SimpleNamespace
+
+    widget = _widget()
+    shot = SimpleNamespace(
+        name="sh040",
+        relative_path="pro/shots/sq010/sh040/sh040.blend",
+        frames=10,
+        frames_override=None,
+    )
+    widget._selected_shot = shot
+    widget.vm.kitsu_tasks = [
+        {
+            "id": "task-1",
+            "entity_name": "sh040",
+            "task_type_name": "render",
+            "task_status": {"name": "WIP"},
+            "assignees": [{"full_name": "Ernesto"}],
+        }
+    ]
+    widget.vm.kitsu_statuses = [{"id": "status-1", "name": "Review"}]
+    monkeypatch.setattr(widget.vm, "rendered_frame_numbers", lambda _shot: [101])
+    monkeypatch.setattr(widget.vm, "suggested_publish_version", lambda _shot: "v001")
+
+    widget._refresh_publish_tab()
+
+    assert widget.btn_publish.isEnabled() is True
+    assert "101–101" in widget.lbl_publish_range.text()
+    assert widget.combo_publish_task.count() == 1
     widget.deleteLater()

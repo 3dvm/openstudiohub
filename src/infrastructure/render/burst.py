@@ -41,7 +41,7 @@ from src.infrastructure.render.run_audit import RenderRunAuditLogger
 from src.infrastructure.render.staging import (
     STAGING_EXCLUDES,
     bake_cache_names,
-    scan_staging,
+    scan_staging_for_shots,
 )
 from src.infrastructure.render.vast import (
     DEFAULT_DISK_GB,
@@ -53,6 +53,75 @@ from src.infrastructure.render.vast import (
 )
 
 ProgressCallback = Callable[["BurstProgress"], None]
+
+_VERIFY_SCRIPT = r"""
+import hashlib
+import json
+import os
+import sys
+
+manifest = json.load(open(sys.argv[1], "r", encoding="utf-8"))
+root = sys.argv[2]
+missing = []
+bad = []
+for relative, expected in manifest.items():
+    path = os.path.join(root, relative)
+    if not os.path.isfile(path):
+        missing.append(relative)
+        continue
+    size = os.path.getsize(path)
+    if int(expected.get("bytes") or -1) != size:
+        bad.append({"path": relative, "reason": "size", "actual": size,
+                    "expected": expected.get("bytes")})
+        continue
+    digest = expected.get("sha256") or ""
+    if digest:
+        hasher = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                hasher.update(chunk)
+        actual = hasher.hexdigest()
+        if actual != digest:
+            bad.append({"path": relative, "reason": "sha256",
+                        "actual": actual, "expected": digest})
+print("OSVERIFY::" + json.dumps({"missing": missing, "bad": bad}))
+"""
+
+_PREFLIGHT_SCRIPT = r"""
+import bpy
+import json
+import os
+
+missing_images = []
+missing_libs = []
+for image in bpy.data.images:
+    if getattr(image, "packed_file", None) or not image.filepath:
+        continue
+    path = bpy.path.abspath(image.filepath)
+    if path and not os.path.isfile(path):
+        missing_images.append(image.filepath)
+for library in bpy.data.libraries:
+    path = bpy.path.abspath(library.filepath)
+    if path and not os.path.isfile(path):
+        missing_libs.append(library.filepath)
+for world in bpy.data.worlds:
+    tree = getattr(world, "node_tree", None)
+    if tree is None:
+        continue
+    for node in tree.nodes:
+        if getattr(node, "type", "") != "TEX_ENVIRONMENT":
+            continue
+        image = getattr(node, "image", None)
+        if image is None or getattr(image, "packed_file", None):
+            continue
+        path = bpy.path.abspath(image.filepath)
+        if path and not os.path.isfile(path):
+            missing_images.append(image.filepath)
+print("OSPREFLIGHT::" + json.dumps({
+    "missing_images": sorted(set(missing_images)),
+    "missing_libs": sorted(set(missing_libs)),
+}))
+"""
 
 _RENDER_SCRIPT = r"""
 import json
@@ -226,7 +295,9 @@ if config.get("bake_particles"):
     print("OSBAKE::done::%d" % baked, flush=True)
 
 output_dir = config["output_dir"]
+preview_dir = config.get("preview_dir") or os.path.join(output_dir, ".live")
 os.makedirs(output_dir, exist_ok=True)
+os.makedirs(preview_dir, exist_ok=True)
 for frame in config["frames"]:
     frame = int(frame)
     scene.frame_set(frame)
@@ -234,8 +305,28 @@ for frame in config["frames"]:
     started = time.monotonic()
     bpy.ops.render.render(write_still=True)
     elapsed = time.monotonic() - started
+    preview_path = os.path.join(preview_dir, "frame_%04d.png" % frame)
+    try:
+        image = bpy.data.images.get("Render Result")
+        settings = scene.render.image_settings
+        previous = (
+            getattr(settings, "file_format", ""),
+            getattr(settings, "color_mode", ""),
+            getattr(settings, "color_depth", ""),
+        )
+        settings.file_format = "PNG"
+        settings.color_mode = "RGBA"
+        settings.color_depth = "8"
+        image.save_render(preview_path, scene=scene)
+        settings.file_format, settings.color_mode, settings.color_depth = previous
+    except Exception:
+        preview_path = ""
     print(
-        "OSFRAME::" + json.dumps({"frame": frame, "seconds": round(elapsed, 3)}),
+        "OSFRAME::" + json.dumps({
+            "frame": frame,
+            "seconds": round(elapsed, 3),
+            "preview": preview_path,
+        }),
         flush=True,
     )
 """
@@ -261,6 +352,8 @@ class BurstProgress:
     shot_path: str = ""
     assignment: tuple[tuple[str, tuple[int, ...]], ...] = ()
     ok: bool = False
+    frame: int = 0
+    live_frame_path: str = ""
     bytes_done: int = 0
     bytes_total: int = 0
     files_total: int = 0
@@ -343,6 +436,10 @@ class RenderBurstRunner:
         bake_particles: bool = False,
         bake_geometry_nodes: bool = False,
         min_cpu_ram_gb: float = 0.0,
+        fill_similar_gpus: bool = False,
+        similar_gpu_mode: str = "floor",
+        fill_allow_less_vram: bool = False,
+        gpu_profile: str = "",
         audit: RenderRunAuditLogger | None = None,
         skip_existing: bool = False,
         run_id: str = "",
@@ -365,6 +462,10 @@ class RenderBurstRunner:
         self.bake_particles = bool(bake_particles)
         self.bake_geometry_nodes = bool(bake_geometry_nodes)
         self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
+        self.fill_similar_gpus = bool(fill_similar_gpus)
+        self.similar_gpu_mode = str(similar_gpu_mode or "floor")
+        self.fill_allow_less_vram = bool(fill_allow_less_vram)
+        self.gpu_profile = str(gpu_profile or "")
         self.audit = audit
         self.skip_existing = bool(skip_existing)
         self._output_roots = {
@@ -435,7 +536,7 @@ class RenderBurstRunner:
             )
 
         offers = self.provider.choose_offers(
-            plan.gpu_profile,
+            self.gpu_profile or plan.gpu_profile,
             count=len(initial_assignments),
             max_price_per_hour=self.max_price_per_hour or plan.price_per_hour,
             min_disk_gb=self.disk_gb,
@@ -443,27 +544,18 @@ class RenderBurstRunner:
             min_inet_down_mbps=self.min_inet_down_mbps,
             min_inet_up_mbps=self.min_inet_up_mbps,
             min_cpu_ram_gb=self.min_cpu_ram_gb,
+            fill_similar=self.fill_similar_gpus,
+            similar_mode=self.similar_gpu_mode,
+            allow_less_vram=self.fill_allow_less_vram,
         )
         if not offers:
             raise BurstError("No Vast.ai offer is available for this GPU profile.")
-
         if len(offers) < len(initial_assignments):
-            initial_assignments = [
-                assignment
-                for assignment in self._assign(shots, len(offers), plan)
-                if assignment
-            ]
-            if not initial_assignments:
-                return BurstReport(
-                    ok=False,
-                    message="No ready shots with frames to render.",
-                    nodes=(),
-                    frames_expected=0,
-                    frames_rendered=0,
-                    missing=(),
-                    wall_seconds=0.0,
-                    cost=0.0,
-                )
+            raise BurstError(
+                f"Only {len(offers)} Vast.ai offer(s) are available for "
+                f"{len(initial_assignments)} planned node(s). Refresh the plan, "
+                "fill with similar GPUs, or cap the node count."
+            )
 
         indices = (
             list(node_indices)
@@ -807,6 +899,8 @@ class RenderBurstRunner:
             self._install_blender(instance, index, progress)
             stage = "stage"
             self._stage_project(instance, index, progress, tasks)
+            stage = "verify"
+            self._preflight_assets(instance, index, tasks, progress)
 
             with tempfile.TemporaryDirectory(prefix="openstudio_burst_") as temp_dir:
                 temp = Path(temp_dir)
@@ -1082,6 +1176,150 @@ class RenderBurstRunner:
             raise BurstError(f"Blender install failed: {_tail(result.stderr or result.stdout)}")
         self._emit(progress, index, "setup", "Blender ready", instance_id=instance.id)
 
+    def _verify_upload(
+        self,
+        instance: VastInstance,
+        index: int,
+        plan,
+        progress: ProgressCallback | None,
+    ) -> None:
+        manifest = {
+            item.relative_path: {
+                "bytes": item.bytes,
+                "sha256": item.sha256,
+            }
+            for item in getattr(plan, "manifest", ()) or ()
+        }
+        if not manifest:
+            return
+        self._emit(
+            progress,
+            index,
+            "verify",
+            f"Verifying {len(manifest)} uploaded file(s)...",
+            instance_id=instance.id,
+        )
+        with tempfile.TemporaryDirectory(prefix="openstudio_verify_") as temp_dir:
+            temp = Path(temp_dir)
+            manifest_path = temp / "manifest.json"
+            script_path = temp / "verify.py"
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            script_path.write_text(_VERIFY_SCRIPT, encoding="utf-8")
+            self._scp(instance, manifest_path, "/root/os_verify_manifest.json")
+            self._scp(instance, script_path, "/root/os_verify.py")
+        remote_root = f"{self.work_root}/{self.production_folder}"
+        result = self._ssh(
+            instance,
+            "python3 /root/os_verify.py /root/os_verify_manifest.json "
+            f"'{remote_root}'",
+            timeout=600,
+        )
+        payload = None
+        for line in (result.stdout or "").splitlines():
+            if "OSVERIFY::" in line:
+                try:
+                    payload = json.loads(line.split("OSVERIFY::", 1)[1])
+                except ValueError:
+                    payload = None
+        if payload is None:
+            raise BurstError(
+                "Upload verification failed: no verification result from the node."
+            )
+        missing = list(payload.get("missing") or ())
+        bad = list(payload.get("bad") or ())
+        if missing or bad:
+            details = []
+            for item in missing[:5]:
+                details.append(f"missing: {item}")
+            for item in bad[:5]:
+                details.append(
+                    f"{item.get('reason')}: {item.get('path')} "
+                    f"({item.get('actual')} vs {item.get('expected')})"
+                )
+            raise BurstError(
+                "Upload verification failed: " + "; ".join(details)
+            )
+        self._emit(
+            progress,
+            index,
+            "verify",
+            f"Assets verified · {len(manifest)} file(s)",
+            instance_id=instance.id,
+        )
+
+    def _preflight_assets(
+        self,
+        instance: VastInstance,
+        index: int,
+        tasks: Sequence[BurstTask],
+        progress: ProgressCallback | None,
+    ) -> None:
+        if not tasks:
+            return
+        with tempfile.TemporaryDirectory(prefix="openstudio_preflight_") as temp_dir:
+            script = Path(temp_dir) / "preflight.py"
+            script.write_text(_PREFLIGHT_SCRIPT, encoding="utf-8")
+            self._scp(instance, script, "/root/os_preflight.py")
+        for task in tasks:
+            remote_blend = (
+                f"{self.work_root}/{self.production_folder}/{task.remote_blend}"
+            )
+            self._emit(
+                progress,
+                index,
+                "verify",
+                f"Preflight: {task.shot.name} libraries and images...",
+                instance_id=instance.id,
+                shot=task.shot.name,
+                shot_path=task.shot.relative_path,
+            )
+            command = (
+                "bash -lc \"cd '/root/openstudio' && "
+                "/root/blender/blender -b --factory-startup "
+                f"'{remote_blend}' --python /root/os_preflight.py\""
+            )
+            result = self._ssh(instance, command, timeout=600, check=False)
+            output = (result.stdout or "") + "\n" + (result.stderr or "")
+            low = output.lower()
+            warnings = (
+                "unrecognized file format",
+                "cannot find lib",
+                "linked data-blocks are missing",
+                "libraries and",
+            )
+            bad = [item for item in warnings if item in low]
+            payload = None
+            for line in output.splitlines():
+                if "OSPREFLIGHT::" in line:
+                    try:
+                        payload = json.loads(line.split("OSPREFLIGHT::", 1)[1])
+                    except ValueError:
+                        payload = None
+            missing_images = list((payload or {}).get("missing_images") or ())
+            missing_libs = list((payload or {}).get("missing_libs") or ())
+            if result.returncode != 0 or payload is None:
+                raise BurstError(
+                    f"Preflight failed for {task.shot.name}: Blender could not "
+                    f"open the scene (exit {result.returncode})."
+                )
+            if bad or missing_images or missing_libs:
+                details = list(bad)
+                details.extend(f"missing image: {item}" for item in missing_images[:5])
+                details.extend(f"missing library: {item}" for item in missing_libs[:5])
+                raise BurstError(
+                    f"Preflight failed for {task.shot.name}: "
+                    + "; ".join(details[:8])
+                )
+            self._emit(
+                progress,
+                index,
+                "verify",
+                f"Preflight OK: {task.shot.name}",
+                instance_id=instance.id,
+                shot=task.shot.name,
+                shot_path=task.shot.relative_path,
+            )
+
     def _stage_project(
         self,
         instance: VastInstance,
@@ -1090,9 +1328,10 @@ class RenderBurstRunner:
         tasks: Sequence[BurstTask] = (),
     ) -> None:
         exclude_names = self._plan_bake_cache_names
-        plan = scan_staging(
+        plan = scan_staging_for_shots(
             self.project_root,
             self.production_folder,
+            [task.shot for task in tasks],
             work_root=self.work_root,
             exclude_names=exclude_names,
         )
@@ -1139,14 +1378,19 @@ class RenderBurstRunner:
                     audit=False,
                 )
 
-            self._rsync(
-                instance,
-                entry.local_path,
-                entry.remote_path,
-                extra_excludes=exclude_names,
-                on_percent=on_percent,
-                timeout_seconds=_rsync_timeout(entry.bytes),
-            )
+            if entry.single_file:
+                remote_parent = entry.remote_path.rsplit("/", 1)[0]
+                self._ssh(instance, f"mkdir -p '{remote_parent}'")
+                self._scp(instance, entry.local_path, entry.remote_path)
+            else:
+                self._rsync(
+                    instance,
+                    entry.local_path,
+                    entry.remote_path,
+                    extra_excludes=exclude_names,
+                    on_percent=on_percent,
+                    timeout_seconds=_rsync_timeout(entry.bytes),
+                )
             uploaded_before += entry.bytes
         self._emit(
             progress,
@@ -1158,6 +1402,7 @@ class RenderBurstRunner:
             bytes_total=plan.bytes,
             files_total=plan.files,
         )
+        self._verify_upload(instance, index, plan, progress)
 
     # ------------------------------------------------------------------
     # Render
@@ -1194,6 +1439,7 @@ class RenderBurstRunner:
             "media_type": fmt.media_type,
             "proxy_dir": proxy_dir,
             "output_dir": output_dir,
+            "preview_dir": f"{output_dir}/.live",
             "frames": list(task.frames),
             "frame_start": min(task.frames),
             "frame_end": max(task.frames),
@@ -1274,16 +1520,35 @@ class RenderBurstRunner:
                     break
                 if "OSFRAME::" in line:
                     done += 1
+                    message = line.strip().split("OSFRAME::", 1)[1]
+                    frame = 0
+                    live_path = ""
+                    try:
+                        payload = json.loads(message)
+                        frame = int(payload.get("frame") or 0)
+                        preview = str(payload.get("preview") or "")
+                        if frame and preview:
+                            live_path = self._download_live_frame(
+                                instance,
+                                index,
+                                task,
+                                frame,
+                                preview,
+                            )
+                    except (TypeError, ValueError, BurstError):
+                        live_path = ""
                     self._emit(
                         progress,
                         index,
                         "frame",
-                        line.strip().split("OSFRAME::", 1)[1],
+                        message,
                         frames_done=done,
                         frames_total=expected,
                         instance_id=instance.id,
                         shot=shot.name,
                         shot_path=shot.relative_path,
+                        frame=frame,
+                        live_frame_path=live_path,
                     )
                 elif "OSBAKE::" in line:
                     self._emit(
@@ -1400,6 +1665,46 @@ class RenderBurstRunner:
             / task.output_subdir
             / f"frame_{frame:04d}.{extension}"
         )
+
+    def _download_live_frame(
+        self,
+        instance: VastInstance,
+        index: int,
+        task: BurstTask,
+        frame: int,
+        remote_path: str,
+    ) -> str:
+        output_root = task.output_root or self.output_root
+        local_dir = output_root / ".live" / self._run_id / str(index)
+        local_dir.mkdir(parents=True, exist_ok=True)
+        local_path = local_dir / f"frame_{frame:04d}.png"
+        command = [
+            "scp",
+            "-q",
+            "-i",
+            str(self.ssh_key_path),
+            "-P",
+            str(instance.ssh_port),
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            f"root@{instance.ssh_host}:{remote_path}",
+            str(local_path),
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if result.returncode != 0 or not local_path.is_file():
+            raise BurstError(
+                f"Could not download live frame: "
+                f"{_tail(result.stderr or result.stdout)}"
+            )
+        return str(local_path)
 
     # ------------------------------------------------------------------
     # SSH / rsync helpers
@@ -1608,6 +1913,8 @@ class RenderBurstRunner:
         shot_path: str = "",
         assignment: tuple[tuple[str, tuple[int, ...]], ...] = (),
         ok: bool = False,
+        frame: int = 0,
+        live_frame_path: str = "",
         bytes_done: int = 0,
         bytes_total: int = 0,
         files_total: int = 0,
@@ -1650,6 +1957,8 @@ class RenderBurstRunner:
                     shot_path=shot_path,
                     assignment=assignment,
                     ok=ok,
+                    frame=frame,
+                    live_frame_path=live_frame_path,
                     bytes_done=bytes_done,
                     bytes_total=bytes_total,
                     files_total=files_total,

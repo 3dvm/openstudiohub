@@ -413,3 +413,50 @@ def test_bake_cache_names_only_returns_blendcache_directories():
     )
 
     assert bake_cache_names((shot,)) == ("blendcache_sh040_seeds",)
+
+
+def test_run_does_not_silently_reduce_nodes(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import pytest
+
+    from src.infrastructure.render.burst import BurstError, BurstTask
+
+    key = tmp_path / "key"
+    key.write_text("key", encoding="utf-8")
+    runner = RenderBurstRunner(
+        FakeProvider(),
+        project_root=tmp_path,
+        output_root=tmp_path / "03_render",
+        ssh_key_path=key,
+        production_folder="02_archivos_de_produccion",
+        blender_version="5.2.3",
+    )
+    shot = _shot()
+    task = BurstTask(
+        shot=shot,
+        frames=(101,),
+        output_subdir="shots/sq010/sh010.render",
+    )
+    monkeypatch.setattr(
+        runner,
+        "_assign",
+        lambda *args, **kwargs: [[task], [task]],
+    )
+    monkeypatch.setattr(
+        runner.provider,
+        "choose_offers",
+        lambda *args, **kwargs: [SimpleNamespace(id=1, price_per_hour=0.1)],
+        raising=False,
+    )
+    monkeypatch.setattr(runner.provider, "balance", lambda: 10.0, raising=False)
+    plan = SimpleNamespace(
+        required_nodes=2,
+        shots=(shot,),
+        gpu_profile="rtx_3080",
+        price_per_hour=0.1,
+        estimated_cost=0.1,
+    )
+
+    with pytest.raises(BurstError, match="Only 1 Vast.ai offer"):
+        runner.run([shot], plan)

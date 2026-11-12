@@ -161,3 +161,34 @@ def test_scaled_measurement_is_flagged_as_estimated():
     )
     assert plan.confidence == "estimated"
     assert any("another GPU" in warning for warning in plan.warnings)
+
+
+def test_similar_gpu_profiles_floor_and_ceiling():
+    from src.domain.render.capacity import similar_gpu_profiles
+
+    floor = similar_gpu_profiles("rtx_3080", "floor")
+    assert "rtx_3070" not in floor
+    assert "rtx_4070" in floor
+    assert "rtx_3090" in floor
+
+    ceiling = similar_gpu_profiles("rtx_3080", "ceiling")
+    assert "rtx_3070" not in ceiling  # less VRAM by default
+    assert ceiling == ("rtx_4070",)
+
+    ceiling_low_vram = similar_gpu_profiles(
+        "rtx_3080", "ceiling", allow_less_vram=True
+    )
+    assert "rtx_3070" in ceiling_low_vram
+
+
+def test_measured_speed_factor_scales_measured_shots():
+    plan = RenderCapacityCalculator().plan(
+        [_shot(measured=40.5)],
+        target_hours=1,
+        gpu_profile="rtx_3070",
+        price_per_hour=0.1,
+        measured_speed_factor=0.8 / 0.65,
+    )
+
+    assert plan.total_gpu_seconds > 96 * 40.5
+    assert plan.required_nodes >= 2

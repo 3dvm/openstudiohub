@@ -9,7 +9,19 @@ releases may include larger UI or workflow changes.
 
 ### Added
 
-- The render **Plan** section is now **Nodes / instances** and leads with live
+- Vast staging now verifies every uploaded file remotely by size and SHA-256,
+  then runs a Blender preflight for linked libraries and world/HDRI images
+  before baking or rendering. Truncated uploads or missing libraries fail the
+  node immediately instead of rendering a scene with missing geometry/lighting.
+- Preview renders now appear in **Nodes** from the moment they start. Local
+  previews use one card; Vast previews use the real node card. Both track the
+  current shot and global preview progress.
+- Shot cards now start collapsed, select on any click, and embed Shot setup.
+  The new **Shot Inspector** groups Comments, Shot Dependencies and Publish Shot.
+- **Publish Shot** creates the low-quality Kitsu preview MP4 from all rendered
+  frames, fills missing frames with numbered placeholders, lets the TD edit the
+  version, and reports Kitsu permission errors.
+- The render **Plan** section is now **Nodes** and leads with live
   run data (nodes, rendered/expected frames, GPU-hours, cost and ETA) while a
   render is active. An empty pending plan no longer hides the active run behind
   `0 frames · 0.00 GPU-h`.
@@ -17,14 +29,53 @@ releases may include larger UI or workflow changes.
   and the smallest limit changes that would match. The panel can apply those
   fixes, search the other GPU profiles or switch to local without leaving the
   render panel.
+- Vast.ai plans can opt in to **fill missing nodes with similar GPUs**. The
+  selected GPU is the speed reference, with a **Speed priority** floor (same or
+  faster) or a **Budget priority** ceiling (same or slower; the plan is
+  recalculated with the slowest selected GPU). Budget mode can include GPUs
+  with less VRAM only after an extra confirmation and an OOM warning.
+- An unfillable Vast.ai plan now reports the exact shortfall and offers **Use N
+  nodes instead**; the burst no longer reduces the node count silently.
+- The **Start render**, Vast **preview** and single-shot render confirmations now
+  show the upload size and file count before renting a node. Benchmark and
+  relaunch dialogs keep their existing upload breakdown.
+- Opening the render panel no longer starts a Blender re-scan automatically. It
+  restores the cached shot list, marks it on the **Shots** label, and leaves the
+  refresh to the explicit **Scan shots** action.
+- Vast.ai uploads now stage only the selected shot folders and their linked
+  assets instead of the whole production folder. Other shots and their bake
+  caches are no longer uploaded; the dialog shows a per-folder upload
+  breakdown.
+- **Scan shots** (Shots) and **Refresh Vast** (Nodes) are now separate actions:
+  scanning `.blend` files no longer queries Vast.ai, and refreshing the Vast
+  balance/candidates no longer re-scans the project.
+- Every rendered frame is downloaded as a PNG preview to `03_render/.live/`.
+  Preview follows the latest frame and shows a live filmstrip; node cards show
+  their latest frame and can open it in Preview.
+- The **Start render** confirmation now lists every image file (texture/HDRI)
+  included in the node upload under **Show Details**, so the TD can verify the
+  scene dependencies before renting.
+- Start render now requires a completed recursive dependency audit. If the
+  cached shot list predates the audit, the Hub runs **Audit dependencies** first
+  and asks for a second click instead of showing an incomplete upload manifest.
+- Dependency issues are now selectable: each one has a **blocking** checkbox.
+  Unchecking every blocking issue allows the render to start; checked issues
+  keep it blocked.
+- Render dependency auditing is recursive across linked `.blend` libraries and
+  external images/HDRIs. Missing or external files block the render until fixed.
+- The **Dependencies** section can run `pack_all` + `unpack_all(USE_LOCAL)` on
+  the owning `.blend` files, leaving the commit manual.
+- Relaunch startup is atomic: failed starts are cleaned up, stale queued
+  relaunches can be cleared and retried instead of staying stuck.
 - Each shot can define its own **Preview frame**; without an override the
   configured mode (middle by default) is used.
 - **Benchmark** renders representative pending frames at final quality and
   saves them in the shot's render folder. Approved frames are never touched,
   and a fully approved shot is measured in `.benchmarks/` only.
 - Vast runs now announce how many files and bytes the node will receive, and
-  the node card shows live upload progress. Only the production folder
-  (`vfs_svn`) is staged; briefs and the shared folder are no longer uploaded.
+  the node card shows live upload progress. Only the selected shot folders and
+  their resolved dependencies are staged; other shots, briefs and the shared
+  folder are not uploaded.
 - Benchmarking shows its own node card and a confirmation dialog that names the
   exact `.blend`, the frames measured from the shot's scene range, the node and
   its price, and the production folder size before anything is rented.
@@ -55,7 +106,7 @@ releases may include larger UI or workflow changes.
   empty and the panel warns instead of showing every `.blend`.
 - Render scans are cached in the project's `vfs_local` folder
   (`render_scan_cache.json`). The panel shows the cached shots immediately and
-  refreshes in the background; **Re-scan** re-runs Blender for every file, and
+  refreshes in the background; **Scan shots** re-runs Blender for every file, and
   unchanged files are never probed twice.
 - Final renders store their per-shot median as a render reference. Remote and
   local references are kept separately, and an existing benchmark asks for
@@ -110,7 +161,7 @@ releases may include larger UI or workflow changes.
 - The render panel shows a four-column grid of node cards after the plan is
   calculated: candidate offers before renting, live per-node status during the
   run, and buttons to open the Hub, summary and Blender logs when each node
-  finishes. **Refresh candidates** re-queries the offers.
+  finishes. **Refresh Vast** re-queries the balance and offers.
 - Benchmarking now works without a previously scanned Vast.ai offer: it
   resolves one on demand.
 - The render panel has an integrated PNG sequence player for finished renders,

@@ -1,9 +1,15 @@
 """Unit tests for the render panel ViewModel plan recalculation."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from src.application.services.render_service import RenderService
-from src.domain.render.models import RenderQuality, RenderSettings, RenderShot
+from src.domain.render.models import (
+    RenderPlan,
+    RenderQuality,
+    RenderSettings,
+    RenderShot,
+)
 from src.interfaces.qt.viewmodels.render_panel_viewmodel import RenderPanelViewModel
 
 
@@ -1158,3 +1164,400 @@ def test_offer_blocked_keeps_structured_diagnostics(qapp, tmp_path):
     assert viewmodel.offer is None
     assert viewmodel.offer_diagnostics is diagnostics
     assert captured == [diagnostics]
+
+
+def test_effective_gpu_profile_uses_slowest_offer_in_ceiling_mode(qapp, tmp_path):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.settings = RenderSettings(
+        render_backend="vast",
+        gpu_profile="rtx_3080",
+        fill_similar_gpus=True,
+        similar_gpu_mode="ceiling",
+        fill_allow_less_vram=True,
+    )
+    viewmodel.candidate_offers = [
+        SimpleNamespace(gpu_profile="rtx_4070", gpu_name="RTX 4070"),
+        SimpleNamespace(gpu_profile="rtx_3070", gpu_name="RTX 3070"),
+    ]
+
+    assert viewmodel.effective_gpu_profile() == "rtx_3070"
+
+    viewmodel.settings = replace(viewmodel.settings, similar_gpu_mode="floor")
+    assert viewmodel.effective_gpu_profile() == "rtx_3080"
+
+
+def test_mixed_offer_cost_uses_each_node_price(qapp, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    shot = _shot()
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(
+        selected_shots=(shot.relative_path,),
+        render_backend="vast",
+        gpu_profile="rtx_3080",
+        fill_similar_gpus=True,
+        similar_gpu_mode="floor",
+    )
+    viewmodel.offer = SimpleNamespace(price_per_hour=0.1)
+    viewmodel.candidate_offers = [
+        SimpleNamespace(
+            gpu_profile="rtx_3080",
+            gpu_label="RTX 3080 10 GB",
+            gpu_name="RTX 3080",
+            price_per_hour=0.1,
+            gpu_ram_gb=10.0,
+        ),
+        SimpleNamespace(
+            gpu_profile="rtx_3090",
+            gpu_label="RTX 3090 24 GB",
+            gpu_name="RTX 3090",
+            price_per_hour=0.2,
+            gpu_ram_gb=24.0,
+        ),
+    ]
+    fake_plan = RenderPlan(
+        shots=(shot,),
+        skipped=(),
+        unmeasured=(),
+        gpu_profile="rtx_3080",
+        target_seconds=3600.0,
+        utilization=0.85,
+        setup_seconds=600.0,
+        price_per_hour=0.1,
+        total_gpu_seconds=1000.0,
+        required_nodes=2,
+        estimated_wall_seconds=3600.0,
+        estimated_cost=0.1,
+        confidence="measured",
+        warnings=(),
+    )
+    monkeypatch.setattr(viewmodel.service, "plan", lambda *a, **k: fake_plan)
+    monkeypatch.setattr(viewmodel, "_save_settings", lambda: None)
+
+    viewmodel.recalculate()
+
+    assert viewmodel.plan.estimated_cost == (0.1 + 0.2)
+    assert any("same or faster" in item for item in viewmodel.plan.warnings)
+
+
+def test_start_render_blocks_when_offers_are_short(qapp, tmp_path):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    shot = _shot()
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(
+        selected_shots=(shot.relative_path,), render_backend="vast"
+    )
+    viewmodel.offer = SimpleNamespace(price_per_hour=0.1)
+    viewmodel.candidate_offers = [SimpleNamespace(id=1)]
+    errors = []
+    viewmodel.render_error.connect(errors.append)
+    fake_plan = SimpleNamespace(
+        shots=(shot,),
+        total_frames=96,
+        required_nodes=8,
+        estimated_cost=1.0,
+    )
+
+    assert viewmodel._start_render_plan(fake_plan) is False
+    assert "Only 1 of 8 node offers" in errors[0]
+
+
+def test_fill_with_similar_profiles_enables_opt_in_and_retries(
+    qapp, tmp_path, monkeypatch
+):
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.settings = RenderSettings(render_backend="vast")
+    started = []
+    monkeypatch.setattr(viewmodel, "_save_settings", lambda: None)
+    monkeypatch.setattr(viewmodel, "recalculate", lambda: None)
+    monkeypatch.setattr(
+        viewmodel, "refresh_candidates", lambda: started.append("refresh") or True
+    )
+
+    assert (
+        viewmodel.fill_with_similar_profiles("ceiling", allow_less_vram=True)
+        is True
+    )
+
+    assert viewmodel.settings.fill_similar_gpus is True
+    assert viewmodel.settings.similar_gpu_mode == "ceiling"
+    assert viewmodel.settings.fill_allow_less_vram is True
+    assert started == ["refresh"]
+
+
+def test_staging_estimate_excludes_bake_caches_when_enabled(
+    qapp, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.settings = RenderSettings(
+        render_backend="vast", bake_geometry_nodes=True
+    )
+    shot = replace(
+        _shot(),
+        geometry_bakes=(
+            SimpleNamespace(cache_dir_name="blendcache_sh010"),
+        ),
+    )
+    captured = {}
+
+    def fake_staging(root, *, exclude_names=(), shots=None):
+        captured["exclude_names"] = tuple(exclude_names)
+        captured["shots"] = list(shots or ())
+        return SimpleNamespace(bytes=1, files=1, exists=True, entries=())
+
+    monkeypatch.setattr(viewmodel.service, "staging_estimate", fake_staging)
+
+    result = viewmodel.staging_estimate([shot])
+
+    assert result is not None
+    assert captured["exclude_names"] == ("blendcache_sh010",)
+
+
+def test_select_project_does_not_rescan_automatically(qapp, tmp_path, monkeypatch):
+    viewmodel = RenderPanelViewModel(RenderService())
+    scans = []
+    monkeypatch.setattr(viewmodel, "scan", lambda **kwargs: scans.append(kwargs) or True)
+    monkeypatch.setattr(viewmodel.service, "cached_shots", lambda *a, **k: None)
+
+    viewmodel.select_project("p0005", "id", tmp_path)
+
+    assert scans == []
+
+
+def test_cached_shots_emit_the_cache_notice(qapp, tmp_path, monkeypatch):
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    viewmodel.settings = RenderSettings()
+    notices = []
+    viewmodel.shots_cache_loaded.connect(notices.append)
+    monkeypatch.setattr(
+        viewmodel.service, "cached_shots", lambda *a, **k: [_shot()]
+    )
+    monkeypatch.setattr(viewmodel, "recalculate", lambda: None)
+    monkeypatch.setattr(viewmodel, "_emit_shot_reviews", lambda: None)
+    monkeypatch.setattr(viewmodel, "_save_settings", lambda: None)
+
+    viewmodel._load_cached_shots()
+
+    assert notices == [True]
+
+
+def test_shot_scan_keeps_the_current_vast_state(qapp, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    offer = SimpleNamespace(gpu_name="RTX 3080", price_per_hour=0.12)
+    candidates = [offer]
+    viewmodel.offer = offer
+    viewmodel.balance = 12.0
+    viewmodel.candidate_offers = candidates
+    monkeypatch.setattr(viewmodel, "recalculate", lambda: None)
+    monkeypatch.setattr(viewmodel, "_emit_shot_reviews", lambda: None)
+    monkeypatch.setattr(viewmodel, "_save_settings", lambda: None)
+    monkeypatch.setattr(viewmodel, "_write_status", lambda **kwargs: None)
+    plan = RenderPlan(
+        shots=(),
+        skipped=(),
+        unmeasured=(),
+        gpu_profile="rtx_3080",
+        target_seconds=3600.0,
+        utilization=0.85,
+        setup_seconds=600.0,
+        price_per_hour=0.0,
+        total_gpu_seconds=0.0,
+        required_nodes=0,
+        estimated_wall_seconds=0.0,
+        estimated_cost=0.0,
+        confidence="measured",
+    )
+
+    viewmodel._on_scan_shots_ready([], plan, None, 0.0, [])
+
+    assert viewmodel.offer is offer
+    assert viewmodel.balance == 12.0
+    assert viewmodel.candidate_offers == candidates
+
+
+def test_burst_frame_progress_emits_live_frame(qapp):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel._ensure_node_card("", 2)
+    live = []
+    viewmodel.live_frame_ready.connect(
+        lambda shot, frame, path, node: live.append((shot, frame, path, node))
+    )
+
+    viewmodel._on_burst_progress_status(
+        SimpleNamespace(
+            node=2,
+            stage="frame",
+            message='{"frame": 120, "seconds": 60.0}',
+            frames_done=1,
+            frames_total=22,
+            instance_id=77,
+            gpu_name="RTX 3090",
+            region="US",
+            price_per_hour=0.2,
+            offer_id=10,
+            shot="sh040",
+            frame=120,
+            live_frame_path="/tmp/live/frame_0120.png",
+        )
+    )
+
+    assert live == [
+        ("sh040", 120, "/tmp/live/frame_0120.png", 2)
+    ]
+
+
+def test_clear_queued_relaunch_removes_only_that_run(qapp, tmp_path):
+    from datetime import datetime, timezone
+
+    from src.interfaces.qt.viewmodels.render_panel_viewmodel import (
+        RenderNodeCardModel,
+        RenderRunState,
+    )
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    viewmodel.project_root = tmp_path
+    shot = _shot()
+    plan = viewmodel._plan_for_shots([shot])
+    card = RenderNodeCardModel(
+        node=6,
+        status="queued",
+        run_id="relaunch-run",
+        run_label="relaunch",
+        assignment=((shot.relative_path, (101,)),),
+    )
+    run = RenderRunState(
+        run_id="relaunch-run",
+        backend="vast",
+        plan=plan,
+        gpu_profile="rtx_3080",
+        cards={6: card},
+        label="relaunch",
+        relaunch_key=card.key,
+        started_at=datetime.now(timezone.utc),
+    )
+    viewmodel._runs = {run.run_id: run}
+    viewmodel._relaunch_active = {card.key}
+    viewmodel.node_cards = [card]
+
+    assert viewmodel.clear_queued_relaunch(card) is True
+    assert "relaunch-run" not in viewmodel._runs
+    assert card.key not in viewmodel._relaunch_active
+    assert card.status == "failed"
+
+
+def test_dependencies_audited_updates_the_shot_list(qapp, monkeypatch):
+    from dataclasses import replace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    old = _shot()
+    viewmodel.shots = [old]
+    viewmodel.settings = RenderSettings(selected_shots=(old.relative_path,))
+    monkeypatch.setattr(viewmodel, "recalculate", lambda: None)
+    monkeypatch.setattr(viewmodel, "_emit_shot_reviews", lambda: None)
+    updated = replace(
+        old,
+        dependencies_audited=True,
+        dependencies=("02_archivos_de_produccion/pro/assets/studio.hdr",),
+    )
+
+    viewmodel._on_dependencies_audited([updated])
+
+    assert viewmodel.shots[0].dependencies_audited is True
+    assert viewmodel.shots[0].dependencies == (
+        "02_archivos_de_produccion/pro/assets/studio.hdr",
+    )
+
+
+def test_dependency_blocking_can_be_toggled_off(qapp, monkeypatch):
+    from dataclasses import replace as dataclass_replace
+
+    from src.domain.render.models import DependencyIssue
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    shot = replace(
+        _shot(),
+        dependencies_audited=True,
+        dependency_issues=(
+            DependencyIssue(
+                path="/outside/studio.hdr",
+                kind="image",
+                status="external",
+                owner="pro/shots/sq010/sh040/sh040.blend",
+            ),
+        ),
+    )
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(selected_shots=(shot.relative_path,))
+    monkeypatch.setattr(viewmodel, "recalculate", lambda: None)
+
+    assert len(viewmodel.blocking_dependency_issues()) == 1
+
+    viewmodel.set_dependency_blocking(
+        shot.dependency_issues[0], False
+    )
+
+    assert viewmodel.blocking_dependency_issues() == []
+
+
+def test_preview_creates_a_node_card_and_tracks_progress(
+    qapp, tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    viewmodel = RenderPanelViewModel(RenderService())
+    shot = _shot()
+    viewmodel.project_root = tmp_path
+    viewmodel.shots = [shot]
+    viewmodel.settings = RenderSettings(
+        selected_shots=(shot.relative_path,), preview_backend="local"
+    )
+    monkeypatch.setattr(
+        viewmodel.workers, "start", lambda *args, **kwargs: True
+    )
+
+    assert viewmodel.preview_shots([shot]) is True
+
+    card = viewmodel._preview_cards[0]
+    assert card.run_label == "preview"
+    assert card.frames_expected == 1
+    assert card.frames_done == 0
+    assert card.status == "queued"
+
+    viewmodel._on_preview_progress_status("sh010", 1, 1, 2.5)
+    assert card.current_shot == "sh010"
+    assert card.status == "rendering"
+    assert card.seconds_per_frame == 2.5
+
+    viewmodel.preview_paths = {}
+    monkeypatch.setattr(viewmodel, "_save_preview_index", lambda: None)
+    monkeypatch.setattr(viewmodel, "_write_status", lambda **kwargs: None)
+    monkeypatch.setattr(viewmodel, "preview_ready", SimpleNamespace(emit=lambda *a: None))
+    viewmodel._on_preview_ready("sh010", str(tmp_path / "frame.png"))
+    assert card.frames_done == 1
+    assert card.progress_percent == 100.0
+
+    viewmodel._finish_audit = lambda *a, **k: None
+    viewmodel.preview_running = SimpleNamespace(emit=lambda *a: None)
+    viewmodel.preview_finished = SimpleNamespace(emit=lambda *a: None)
+    viewmodel._write_status = lambda **kwargs: None
+    viewmodel._on_previews_finished(1, 1, [], None)
+    assert card.status == "completed"
+    assert card.final is True

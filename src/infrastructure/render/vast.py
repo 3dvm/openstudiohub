@@ -17,11 +17,14 @@ import json
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Sequence
 
-from src.domain.render.capacity import GPU_PROFILES
+from src.domain.render.capacity import (
+    GPU_PROFILES,
+    similar_gpu_profiles,
+)
 from src.domain.render.offers import (
     OfferAlternative,
     OfferDiagnostics,
@@ -77,6 +80,8 @@ class VastOffer:
     inet_up_mbps: float
     geolocation: str
     raw: dict
+    gpu_profile: str = ""
+    gpu_label: str = ""
 
     def snapshot(self) -> OfferSnapshot:
         return OfferSnapshot(
@@ -91,6 +96,8 @@ class VastOffer:
             inet_down_mbps=self.inet_down_mbps,
             inet_up_mbps=self.inet_up_mbps,
             geolocation=self.geolocation,
+            gpu_profile=self.gpu_profile,
+            gpu_label=self.gpu_label,
         )
 
     @classmethod
@@ -242,10 +249,14 @@ class VastProvider:
         min_inet_down_mbps: float = 0.0,
         min_inet_up_mbps: float = 0.0,
         min_cpu_ram_gb: float = 0.0,
+        fill_similar: bool = False,
+        similar_mode: str = "floor",
+        allow_less_vram: bool = False,
     ) -> list[VastOffer]:
         profile = GPU_PROFILES.get(gpu_profile)
         if profile is None:
             raise VastOfferError(f"Unknown GPU profile: {gpu_profile}")
+        wanted = max(1, int(count or 1))
         offers, diagnostics = self._evaluate_profile(
             profile,
             max_price_per_hour=max_price_per_hour,
@@ -257,12 +268,43 @@ class VastProvider:
             min_inet_up_mbps=min_inet_up_mbps,
             min_cpu_ram_gb=min_cpu_ram_gb,
         )
-        if not offers:
+        selected = list(offers)
+        seen = {offer.id for offer in selected}
+        if fill_similar and len(selected) < wanted:
+            for key in similar_gpu_profiles(
+                gpu_profile,
+                similar_mode,
+                allow_less_vram=allow_less_vram,
+            ):
+                fallback = GPU_PROFILES.get(key)
+                if fallback is None:
+                    continue
+                extra, _fallback_diagnostics = self._evaluate_profile(
+                    fallback,
+                    max_price_per_hour=max_price_per_hour,
+                    min_disk_gb=min_disk_gb,
+                    min_reliability=min_reliability,
+                    min_cuda=min_cuda,
+                    preferred_region=preferred_region,
+                    min_inet_down_mbps=min_inet_down_mbps,
+                    min_inet_up_mbps=min_inet_up_mbps,
+                    min_cpu_ram_gb=min_cpu_ram_gb,
+                )
+                for offer in extra:
+                    if offer.id in seen:
+                        continue
+                    selected.append(offer)
+                    seen.add(offer.id)
+                    if len(selected) >= wanted:
+                        break
+                if len(selected) >= wanted:
+                    break
+        if not selected:
             raise VastOfferError(
                 _diagnostics_message(diagnostics),
                 diagnostics=diagnostics,
             )
-        return offers[: max(1, int(count))]
+        return selected[:wanted]
 
     def search_other_profiles(
         self,
@@ -348,17 +390,30 @@ class VastProvider:
             min_disk_gb=int(min_disk_gb),
             min_cuda=str(min_cuda),
         )
-        diagnostics = build_diagnostics(
-            [offer.snapshot() for offer in candidates if offer.id],
-            limits,
-            query=query,
-        )
+        snapshots = [
+            replace(
+                offer.snapshot(),
+                gpu_profile=profile.key,
+                gpu_label=profile.label,
+            )
+            for offer in candidates
+            if offer.id
+        ]
+        diagnostics = build_diagnostics(snapshots, limits, query=query)
         passing_ids = {
             report.offer.offer_id
             for report in diagnostics.candidates
             if report.passing
         }
-        filtered = [offer for offer in candidates if offer.id in passing_ids]
+        filtered = [
+            replace(
+                offer,
+                gpu_profile=profile.key,
+                gpu_label=profile.label,
+            )
+            for offer in candidates
+            if offer.id in passing_ids
+        ]
         filtered.sort(
             key=lambda offer: (
                 0 if (prefer_us and is_us_geolocation(offer.geolocation)) else 1,

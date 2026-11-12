@@ -24,7 +24,6 @@ from src.application.services.launch_service import LaunchService
 from src.application.services.render_service import RenderService
 from src.application.services.task_file_resolver import TaskFileResolver
 from src.domain.render.frames import representative_frames as _representative_frames  # noqa: F401
-from src.domain.render.bakes import min_cpu_ram_gb_effective
 from src.domain.render.image_formats import image_format
 from src.domain.render.models import RenderPlan, RenderSettings, RenderShot
 from src.infrastructure.qt_worker import ManagedWorker
@@ -55,6 +54,10 @@ class RenderBurstWorker(ManagedWorker):
         bake_geometry_nodes: bool = False,
         min_cpu_ram_gb: float = 0.0,
         node_indices: list[int] | None = None,
+        fill_similar_gpus: bool = False,
+        similar_gpu_mode: str = "floor",
+        fill_allow_less_vram: bool = False,
+        gpu_profile: str = "",
     ) -> None:
         super().__init__()
         self.service = service
@@ -70,6 +73,10 @@ class RenderBurstWorker(ManagedWorker):
         self.bake_geometry_nodes = bool(bake_geometry_nodes)
         self.min_cpu_ram_gb = float(min_cpu_ram_gb or 0.0)
         self.node_indices = list(node_indices) if node_indices is not None else None
+        self.fill_similar_gpus = bool(fill_similar_gpus)
+        self.similar_gpu_mode = str(similar_gpu_mode or "floor")
+        self.fill_allow_less_vram = bool(fill_allow_less_vram)
+        self.gpu_profile = str(gpu_profile or "")
         self.runner = None
 
     def run(self) -> None:
@@ -86,6 +93,10 @@ class RenderBurstWorker(ManagedWorker):
                 skip_existing=self.skip_existing,
                 bake_geometry_nodes=self.bake_geometry_nodes,
                 min_cpu_ram_gb=self.min_cpu_ram_gb,
+                fill_similar_gpus=self.fill_similar_gpus,
+                similar_gpu_mode=self.similar_gpu_mode,
+                fill_allow_less_vram=self.fill_allow_less_vram,
+                gpu_profile=self.gpu_profile,
             )
             report = self.runner.run(
                 self.plan.shots,
@@ -195,44 +206,22 @@ class RenderPanelScanWorker(ManagedWorker):
                 save_cache=tasks_ok,
             )
             selected = self.service.selected_shots(shots, self.settings)
+            audited = self.service.audit_dependencies(
+                self.project_root,
+                selected,
+            )
+            by_path = {shot.relative_path: shot for shot in audited}
+            shots = [by_path.get(shot.relative_path, shot) for shot in shots]
+            selected = [by_path[shot.relative_path] for shot in selected]
             pending = self.service.pending_shots(
                 self.project_root, selected, task_type=self.settings.task_type
             )
-            min_ram = min_cpu_ram_gb_effective(self.settings, pending)
-            offer = None
-            balance = 0.0
-            price = 0.0
-            offer_warning = ""
-            offer_diagnostics = None
-            needs_vast_offer = (
-                self.settings.render_backend == "vast"
-                or self.settings.preview_backend == "vast"
-            )
-            if needs_vast_offer:
-                try:
-                    offer = self.service.cheapest_offer(
-                        self.settings.gpu_profile,
-                        max_price_per_hour=self.settings.max_price_per_hour,
-                        preferred_region=self.settings.preferred_region,
-                        min_inet_down_mbps=self.settings.min_inet_down_mbps,
-                        min_inet_up_mbps=self.settings.min_inet_up_mbps,
-                        min_cpu_ram_gb=min_ram,
-                    )
-                    if self.settings.render_backend == "vast":
-                        price = offer.price_per_hour
-                except VastOfferError as error:
-                    offer_warning = str(error)
-                    offer_diagnostics = getattr(error, "diagnostics", None)
-                try:
-                    balance = self.service.vast_balance()
-                except Exception:  # noqa: BLE001
-                    balance = 0.0
             plan = self.service.plan(
                 self.project_root,
                 target_hours=self.settings.target_hours,
                 gpu_profile=self.settings.gpu_profile,
                 quality_override=self.settings.final_quality,
-                price_per_hour=price,
+                price_per_hour=0.0,
                 max_nodes=self.settings.max_nodes,
                 budget=self.settings.budget,
                 shots=pending,
@@ -240,41 +229,7 @@ class RenderPanelScanWorker(ManagedWorker):
             plan = self.service.adjust_plan_for_backend(
                 plan, self.settings.render_backend, self.settings.local_speed_factor
             )
-            candidates = []
-            if self.settings.render_backend == "vast" and plan.required_nodes > 0:
-                try:
-                    candidates = self.service.candidate_offers(
-                        self.settings.gpu_profile,
-                        count=plan.required_nodes,
-                        max_price_per_hour=self.settings.max_price_per_hour,
-                        preferred_region=self.settings.preferred_region,
-                        min_inet_down_mbps=self.settings.min_inet_down_mbps,
-                        min_inet_up_mbps=self.settings.min_inet_up_mbps,
-                        min_cpu_ram_gb=min_ram,
-                    )
-                except VastOfferError as error:
-                    offer_warning = offer_warning or str(error)
-                    offer_diagnostics = (
-                        offer_diagnostics or getattr(error, "diagnostics", None)
-                    )
-                if candidates and len(candidates) < plan.required_nodes:
-                    from dataclasses import replace as _replace
-
-                    plan = _replace(
-                        plan,
-                        warnings=tuple(plan.warnings)
-                        + (
-                            f"Only {len(candidates)} candidate offer(s) for "
-                            f"{plan.required_nodes} node(s); Vast.ai availability may change.",
-                        ),
-                    )
-            if offer_warning:
-                from dataclasses import replace as _replace
-
-                plan = _replace(plan, warnings=tuple(plan.warnings) + (offer_warning,))
-            if offer_diagnostics is not None:
-                self.offer_blocked.emit(offer_diagnostics)
-            self.shots_ready.emit(shots, plan, offer, balance, candidates)
+            self.shots_ready.emit(shots, plan, None, 0.0, [])
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))
 
@@ -308,6 +263,9 @@ class RenderCandidatesWorker(ManagedWorker):
                 min_inet_down_mbps=self.settings.min_inet_down_mbps,
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
                 min_cpu_ram_gb=self.min_cpu_ram_gb,
+                fill_similar=self.settings.fill_similar_gpus,
+                similar_mode=self.settings.similar_gpu_mode,
+                allow_less_vram=self.settings.fill_allow_less_vram,
             )
             self.candidates_ready.emit(offers)
         except VastOfferError as error:
@@ -350,6 +308,9 @@ class RenderOfferWorker(ManagedWorker):
                 min_inet_down_mbps=self.settings.min_inet_down_mbps,
                 min_inet_up_mbps=self.settings.min_inet_up_mbps,
                 min_cpu_ram_gb=self.min_cpu_ram_gb,
+                fill_similar=self.settings.fill_similar_gpus,
+                similar_mode=self.settings.similar_gpu_mode,
+                allow_less_vram=self.settings.fill_allow_less_vram,
             )
             try:
                 balance = self.service.vast_balance()
@@ -397,6 +358,60 @@ class RenderAlternativeOffersWorker(ManagedWorker):
             self.alternatives_ready.emit(list(alternatives or ()))
         except Exception as error:  # noqa: BLE001
             self.error.emit(str(error))
+
+
+class RenderDependencyAuditWorker(ManagedWorker):
+    """Recursively audit the selected shots before rendering."""
+
+    audited = Signal(list)
+    error = Signal(str)
+
+    def __init__(
+        self,
+        service: RenderService,
+        project_root: Path,
+        shots: list[RenderShot],
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.project_root = Path(project_root)
+        self.shots = list(shots or ())
+
+    def run(self) -> None:
+        try:
+            self.audited.emit(
+                self.service.audit_dependencies(
+                    self.project_root, self.shots
+                )
+            )
+        except Exception as error:  # noqa: BLE001
+            self.error.emit(str(error))
+
+
+class DependencyFixWorker(ManagedWorker):
+    """Run pack/unpack on the .blend files that own external dependencies."""
+
+    fixed = Signal(bool, str)
+
+    def __init__(
+        self,
+        service: RenderService,
+        project_root: Path,
+        owners: list[str],
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.project_root = Path(project_root)
+        self.owners = list(owners or ())
+
+    def run(self) -> None:
+        try:
+            ok, message = self.service.fix_external_dependencies(
+                self.project_root, self.owners
+            )
+            self.fixed.emit(ok, message)
+        except Exception as error:  # noqa: BLE001
+            self.fixed.emit(False, str(error))
 
 
 class RenderPreviewWorker(ManagedWorker):
@@ -714,6 +729,93 @@ class RenderPreviewVideoWorker(ManagedWorker):
         self._cancelled = True
 
 
+class PublishShotWorker(ManagedWorker):
+    finished_publish = Signal(bool, str, str)  # ok, message, video path
+
+    def __init__(
+        self,
+        service: RenderService,
+        production_service,
+        project_id: str,
+        project_root: Path,
+        shot: RenderShot,
+        settings: RenderSettings,
+        *,
+        task_id: str,
+        task_status: dict,
+        comment: str,
+        version: str,
+        first_frame: int,
+        last_frame: int,
+        set_thumbnail: bool = False,
+    ) -> None:
+        super().__init__()
+        self.service = service
+        self.production_service = production_service
+        self.project_id = project_id
+        self.project_root = Path(project_root)
+        self.shot = shot
+        self.settings = settings
+        self.task_id = task_id
+        self.task_status = task_status
+        self.comment = comment
+        self.version = version
+        self.first_frame = int(first_frame)
+        self.last_frame = int(last_frame)
+        self.set_thumbnail = bool(set_thumbnail)
+
+    def run(self) -> None:
+        video = ""
+        try:
+            video_path = self.service.create_publish_video(
+                self.project_root,
+                self.shot,
+                self.settings,
+                first_frame=self.first_frame,
+                last_frame=self.last_frame,
+                version=self.version,
+            )
+            video = str(video_path)
+            task = self.production_service.kitsu.get_task(self.task_id)
+            revision = None
+            digits = "".join(ch for ch in self.version if ch.isdigit())
+            if digits:
+                revision = int(digits)
+            self.production_service.kitsu.publish_preview(
+                task,
+                self.task_status,
+                comment=self.comment,
+                preview_file_path=video,
+                revision=revision,
+                set_thumbnail=self.set_thumbnail,
+            )
+            self.finished_publish.emit(
+                True,
+                f"Published {self.shot.name} to Kitsu.",
+                video,
+            )
+        except Exception as error:  # noqa: BLE001
+            self.finished_publish.emit(False, str(error), video)
+
+
+class KitsuTasksWorker(ManagedWorker):
+    tasks_ready = Signal(list)
+    error = Signal(str)
+
+    def __init__(self, production_service, project_id: str) -> None:
+        super().__init__()
+        self.production_service = production_service
+        self.project_id = project_id
+
+    def run(self) -> None:
+        try:
+            self.tasks_ready.emit(
+                self.production_service.get_project_task_board(self.project_id)
+            )
+        except Exception as error:  # noqa: BLE001
+            self.error.emit(str(error))
+
+
 class KitsuStatusesWorker(ManagedWorker):
     statuses_ready = Signal(list)
     error = Signal(str)
@@ -994,6 +1096,10 @@ class RenderBenchmarkWorker(ManagedWorker):
                 run_id=self.run_id,
                 bake_geometry_nodes=self.bake_geometry_nodes,
                 min_cpu_ram_gb=self.min_cpu_ram_gb,
+                fill_similar_gpus=self.settings.fill_similar_gpus,
+                similar_gpu_mode=self.settings.similar_gpu_mode,
+                fill_allow_less_vram=self.settings.fill_allow_less_vram,
+                gpu_profile=self.settings.gpu_profile,
             )
             self.runner = runner
             timings: list[float] = []
@@ -1112,6 +1218,10 @@ class RenderBenchmarkBatchWorker(ManagedWorker):
                 run_id=self.run_id,
                 bake_geometry_nodes=self.bake_geometry_nodes,
                 min_cpu_ram_gb=self.min_cpu_ram_gb,
+                fill_similar_gpus=self.settings.fill_similar_gpus,
+                similar_gpu_mode=self.settings.similar_gpu_mode,
+                fill_allow_less_vram=self.settings.fill_allow_less_vram,
+                gpu_profile=self.settings.gpu_profile,
             )
             self.runner = runner
             timings: dict[str, list[float]] = {}
